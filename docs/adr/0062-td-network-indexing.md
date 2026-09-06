@@ -168,12 +168,31 @@ plan doc above):
    under the snapshot's grandparent (`Graph/x.tdgraph.json` next to `Scripts/`) first, then
    as written — the first existing candidate wins, else the path is used as written so the
    edge still exists for an unindexed file. Because module-summary chunks never become graph
-   nodes, `GraphIntegration._two_pass_build` retargets every such edge onto the file's
-   lowest-start-line real chunk whenever the file has chunks in the batch, stamping
-   `retargeted: true` / `original_target`; the count surfaces as the
-   `scripted_by_retargeted` build stat. On an incremental build the `.py` may be absent from
-   the batch, in which case the edge lands on a phantom module node until the next full
-   reindex.
+   nodes, the edge first lands on a `symbol_name` phantom for the module id; a storage-wide
+   post-pass, `GraphIntegration.retarget_scripted_by_edges()`, then moves every `via: file`
+   edge whose target is still a phantom onto the file's lowest-start-line real chunk
+   (non-pseudo-language nodes only), stamping `retargeted: true` / `original_target` and
+   pruning the orphaned phantom. The pass is keyed on `graph.schema.is_phantom_node`, never on
+   node existence, and is idempotent. It runs from `_two_pass_build` when the batch carried
+   such an edge (count surfaces as the `scripted_by_retargeted` build stat) and, decisively,
+   from `IndexWriteStage.retarget_td_script_edges()` after `add_to_index` on both the full
+   pass and every incremental pass (not behind `inject_on_incremental`), gated on
+   `td_network_indexing_enabled()`. Edges for files with no indexed chunks stay on their
+   phantom and are retried on the next pass. When `remove_file_nodes` drops a script's
+   chunks, any retargeted in-edge is parked back on its module phantom so the next pass lands
+   it on the file's new first chunk.
+
+   *Why a post-pass (2026-09-05 diagnosis).* The first cut retargeted inside
+   `_two_pass_build` only, keyed on the module id not yet being a node. On a real reindex
+   (SDTD_040_Beta, 214 `via: file` edges, 0 retargeted) that never fired: under the hybrid
+   indexer `CodeIndexManager.add_embeddings` writes each chunk's relationship edges through
+   the per-chunk `GraphIntegration.add_chunk` path *before* `populate_from_embeddings` runs
+   the batch build on the same shared `CodeGraphStorage`, so the phantom module node already
+   exists and the existence guard skipped every edge; with a bare `CodeIndexManager` the batch
+   build never runs at all, and a `.py` arriving in a later batch was equally invisible.
+   Reproduced deterministically in seconds with a temp-dir storage (per-chunk-only,
+   production order, and cross-batch all RED; batch-only GREEN), now pinned by
+   `tests/unit/search/test_graph_integration.py::TestScriptedByRetarget` on a real storage.
 
    **Name-resolution fence (same change).** PASS 1 of the two-pass build indexed every spec's
    `name` for call-target resolution, so a Python call to `view` could bind to a TD operator

@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
+from chunking.language_registry import td_network_indexing_enabled
 from chunking.python_ast_chunker import CodeChunk
 from embeddings.chunk_cache import ChunkEmbeddingCache, resolve_chunk_cache
 from merkle.merkle_dag import MerkleDAG
@@ -132,6 +133,10 @@ class IndexWriteStage:
 
         # Add all embeddings to index at once
         chunks_added = self.add_to_index(all_embedding_results)
+
+        # Join TD scripted_by/via=file edges onto their script chunks (no-op
+        # unless TD network indexing is enabled).
+        self.retarget_td_script_edges()
 
         # Inject cross-module call edges from the resolver pipeline.
         # Must run after add_embeddings (graph populated) and before
@@ -351,6 +356,29 @@ class IndexWriteStage:
 
         cg_cfg = getattr(get_search_config(), "call_graph", None)
         return inject_call_edges(storage, meta_store, project_path, cg_cfg)
+
+    def retarget_td_script_edges(self) -> int:
+        """Join TD ``scripted_by``/``via=file`` edges onto real script chunks.
+
+        Delegates to ``GraphIntegration.retarget_scripted_by_edges`` (ADR-0062
+        C6). Runs after :meth:`add_to_index` on both index passes -- the full
+        pass (:meth:`run`) and the incremental pass
+        (``IncrementalIndexer.incremental_index``, unconditionally, not behind
+        ``inject_on_incremental``) -- because the per-chunk ``add_chunk`` write
+        lands those edges on a phantom module node and only a storage-wide
+        pass after the whole batch can see the script's chunks. Gated on
+        ``td_network_indexing_enabled()`` (the single ADR-0062 feature gate)
+        so non-TD projects pay nothing.
+
+        Returns:
+            Number of edges retargeted; 0 when gated off or no graph.
+        """
+        if not td_network_indexing_enabled():
+            return 0
+        graph_integration = getattr(self._indexer, "_graph", None)
+        if graph_integration is None:
+            return 0
+        return graph_integration.retarget_scripted_by_edges()
 
     def inject_call_edges_if_enabled(self, project_path: str) -> InjectionStats:
         """Run :meth:`inject_call_edges` only when the incremental opt-in is set.

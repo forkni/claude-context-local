@@ -1204,6 +1204,7 @@ class CodeGraphStorage:
 
         # Collect IDs first to avoid mutating the graph during iteration
         to_remove = [n for n in self.graph.nodes() if n.startswith(prefix)]
+        restore = self._collect_retargeted_in_edges(to_remove)
 
         for node_id in to_remove:
             # Clean _name_index before removing the node
@@ -1216,12 +1217,85 @@ class CodeGraphStorage:
             # networkx automatically removes all incident edges when a node is removed
             self.graph.remove_node(node_id)
 
+        for edge in restore:
+            self.add_relationship_edge(edge)
+
         if to_remove:
             self._bump_version()
             self.logger.debug(
                 f"[GRAPH_PRUNE] Removed {len(to_remove)} nodes for '{normalized}'"
             )
         return len(to_remove)
+
+    def _collect_retargeted_in_edges(
+        self, doomed: Collection[str]
+    ) -> "list[RelationshipEdge]":
+        """Edges to re-point at their ``original_target`` before ``doomed`` go.
+
+        A TD ``scripted_by``/``via=file`` edge that
+        ``GraphIntegration.retarget_scripted_by_edges`` moved onto a script's
+        first chunk would silently vanish with that chunk on an incremental
+        reindex of the script. Returning it to the module-summary phantom
+        (``retargeted``/``original_target`` stripped) keeps the join alive so
+        the next post-pass lands it on the file's new first chunk. Edges whose
+        source is itself being removed are dropped -- the source's own
+        re-index re-emits them.
+        """
+        from chunking.relationships.relationship_types import (
+            RelationshipEdge,
+            RelationshipType,
+        )
+
+        doomed_set = set(doomed)
+        restore: list[RelationshipEdge] = []
+        for node_id in doomed:
+            for source, _, data in self.graph.in_edges(node_id, data=True):
+                original = data.get("original_target")
+                if not data.get("retargeted") or not original or source in doomed_set:
+                    continue
+                metadata = {
+                    k: v
+                    for k, v in data.items()
+                    if k
+                    not in (
+                        EDGE_ATTR_TYPE,
+                        EDGE_ATTR_LINE,
+                        EDGE_ATTR_CONFIDENCE,
+                        "retargeted",
+                        "original_target",
+                    )
+                }
+                restore.append(
+                    RelationshipEdge(
+                        source_id=source,
+                        target_name=original,
+                        relationship_type=RelationshipType(data[EDGE_ATTR_TYPE]),
+                        line_number=data.get(EDGE_ATTR_LINE, 0),
+                        confidence=data.get(EDGE_ATTR_CONFIDENCE, 1.0),
+                        metadata=metadata,
+                    )
+                )
+        return restore
+
+    def remove_edge(self, source_id: str, target_id: str, key: str) -> bool:
+        """Remove one edge by ``(source, target, key)``; return whether it existed.
+
+        ``key`` is the MultiDiGraph edge key -- the relationship-type string for
+        edges written by ``add_relationship_edge`` / ``add_call_edge``. Nodes
+        are left in place; call ``prune_orphan_symbol_nodes`` afterwards to
+        drop a phantom target this leaves with no edges.
+
+        Args:
+            source_id: Source chunk id (any path separator; normalised).
+            target_id: Target node id exactly as stored.
+            key: Edge key (relationship type).
+        """
+        source = normalize_path(source_id)
+        if not self.graph.has_edge(source, target_id, key):
+            return False
+        self.graph.remove_edge(source, target_id, key)
+        self._bump_version()
+        return True
 
     def prune_orphan_symbol_nodes(self) -> int:
         """Remove placeholder symbol nodes left with no remaining edges.

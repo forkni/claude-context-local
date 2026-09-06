@@ -715,6 +715,88 @@ class TestInjectCallEdgesIfEnabled:
         assert stats is sentinel
 
 
+class TestRetargetTdScriptEdges:
+    """The stage owns the TD ``scripted_by``/``via=file`` post-pass hook
+    (ADR-0062 C6): gated on ``td_network_indexing_enabled()``, delegating to
+    ``GraphIntegration.retarget_scripted_by_edges`` on the indexer's graph,
+    and positioned after ``add_to_index`` and before ``inject_call_edges``.
+    """
+
+    @staticmethod
+    def _make_stage(indexer=None) -> IndexWriteStage:
+        return IndexWriteStage(
+            embedder=Mock(),
+            indexer=indexer if indexer is not None else Mock(),
+            snapshot_manager=Mock(),
+            build_metadata_fn=Mock(return_value={}),
+            clear_gpu_fn=Mock(),
+        )
+
+    @staticmethod
+    def _patch_gate(enabled: bool):
+        return patch(
+            "search.index_write_stage.td_network_indexing_enabled",
+            return_value=enabled,
+        )
+
+    def test_gate_off_is_zero_work(self) -> None:
+        indexer = Mock()
+        stage = self._make_stage(indexer)
+        with self._patch_gate(enabled=False):
+            assert stage.retarget_td_script_edges() == 0
+
+        indexer._graph.retarget_scripted_by_edges.assert_not_called()
+
+    def test_gate_on_delegates_and_returns_count(self) -> None:
+        indexer = Mock()
+        indexer._graph.retarget_scripted_by_edges.return_value = 3
+        stage = self._make_stage(indexer)
+        with self._patch_gate(enabled=True):
+            assert stage.retarget_td_script_edges() == 3
+
+        indexer._graph.retarget_scripted_by_edges.assert_called_once_with()
+
+    def test_gate_on_without_graph_is_zero(self) -> None:
+        indexer = Mock(spec=[])  # no `_graph` attribute at all
+        stage = self._make_stage(indexer)
+        with self._patch_gate(enabled=True):
+            assert stage.retarget_td_script_edges() == 0
+
+    def test_run_calls_hook_between_add_and_inject(self) -> None:
+        call_order: list[str] = []
+        embed_result = Mock()
+        embed_result.metadata = {}
+        stage, _, indexer, _, _, _, dag = _make_stage(embed_results=[embed_result])
+        indexer.add_embeddings.side_effect = lambda *a, **kw: call_order.append("add")
+
+        with (
+            patch.object(
+                stage,
+                "retarget_td_script_edges",
+                side_effect=lambda: call_order.append("retarget") or 0,
+            ),
+            patch.object(
+                stage,
+                "inject_call_edges",
+                side_effect=lambda *a, **kw: (
+                    call_order.append("inject") or InjectionStats()
+                ),
+            ),
+        ):
+            stage.run(
+                all_chunks=[_make_chunk()],
+                project_name="p",
+                dag=dag,
+                all_files=[],
+                supported_files=[],
+                start_time=time.time(),
+                repo_profile=None,
+                project_path="/fake/project",
+            )
+
+        assert call_order == ["add", "retarget", "inject"]
+
+
 # ---------------------------------------------------------------------------
 # MultiDiGraph edge-injection correctness (#3 follow-up)
 # ---------------------------------------------------------------------------

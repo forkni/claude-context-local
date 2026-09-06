@@ -319,6 +319,12 @@ class IncrementalIndexer:
 
             chunks_added = self._add_new_chunks(changes, project_path, project_name)
 
+            # Join TD scripted_by/via=file edges onto the (re)indexed script
+            # chunks. Always-on (unlike resolver re-injection below): the edge
+            # is restored to its module phantom by remove_file_nodes and would
+            # otherwise stay dead-ended until the next full reindex.
+            self._index_write_stage.retarget_td_script_edges()
+
             # Validate index consistency after operations
             _consistency_target = self._consistency_target()
             if _consistency_target is not None:

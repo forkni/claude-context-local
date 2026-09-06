@@ -2429,6 +2429,42 @@ class TestIncrementalCallEdgeInjection:
         assert result.call_edges_injected == 7
         assert result.call_edge_resolvers == ("pyan", "libcst")
 
+    def test_retargets_td_script_edges_after_adding_chunks(self):
+        """The TD ``scripted_by``/``via=file`` post-pass runs on every
+        incremental pass, after the new chunks land and independently of the
+        ``inject_on_incremental`` gate (ADR-0062 C6): ``remove_file_nodes``
+        parks a retargeted edge back on its module phantom, and only this hook
+        moves it onto the re-indexed file's new first chunk."""
+        indexer = self._make_indexer()
+        stage = indexer._index_write_stage
+        call_order: list[str] = []
+        real_add = indexer._add_new_chunks
+
+        def _add(*args, **kwargs):
+            call_order.append("add")
+            return real_add(*args, **kwargs)
+
+        with (
+            patch.object(indexer, "_add_new_chunks", side_effect=_add),
+            patch.object(
+                stage,
+                "retarget_td_script_edges",
+                side_effect=lambda: call_order.append("retarget") or 0,
+            ) as mock_retarget,
+            patch.object(
+                stage,
+                "inject_call_edges_if_enabled",
+                side_effect=lambda *a, **kw: (
+                    call_order.append("inject") or InjectionStats()
+                ),
+            ),
+        ):
+            result = self._run_incremental_with_changes(indexer)
+
+        assert result.success is True
+        mock_retarget.assert_called_once_with()
+        assert call_order == ["add", "retarget", "inject"]
+
 
 class TestDuplicateContentReporting:
     """Workstream B2 -- `_report_duplicate_content` byte-identical groups.

@@ -1,11 +1,15 @@
 """Unit tests for GraphIntegration class."""
 
+import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
 from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
+from graph.graph_storage import CodeGraphStorage
+from graph.schema import is_phantom_node
 from search.graph_integration import GraphIntegration
 
 
@@ -1578,109 +1582,195 @@ def _file_edge(source_id, file="Scripts/X__td.py", synced=True):
 
 class TestScriptedByRetarget(TestCase):
     """``scripted_by``/``via=file`` edges are retargeted from the (never
-    materialised) module-summary id onto the file's first real chunk."""
+    materialised) module-summary id onto the file's first real chunk.
+
+    Runs against a real ``CodeGraphStorage``: the retarget is a storage-wide
+    post-pass (``GraphIntegration.retarget_scripted_by_edges``), and the bug it
+    fixes only shows when the per-chunk ``add_chunk`` path has already written
+    the phantom module node before any batch build runs -- a ``Mock`` storage
+    cannot reproduce that.
+    """
 
     OP = "Graph/net.tdgraph.json:10-20:operator:info1"
+    PY_FILE = "Scripts/X__td.py"
+    PY_SETUP = "Scripts/X__td.py:5-12:function:setup"
+    PY_ONSTART = "Scripts/X__td.py:30-40:function:onStart"
 
-    def _make_graph(self, *, contains=False):
-        storage = Mock()
-        storage.__len__ = Mock(return_value=0)
-        storage.__contains__ = Mock(return_value=contains)
-        return GraphIntegration.from_storage(storage), storage
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.storage = CodeGraphStorage(
+            project_id="td_retarget", storage_dir=Path(self.temp_dir)
+        )
+        self.graph = GraphIntegration.from_storage(self.storage)
+        self.edge = _file_edge(self.OP, file=self.PY_FILE)
 
-    def test_retargets_to_lowest_start_line_chunk(self):
-        graph, storage = self._make_graph()
-        edge = _file_edge(self.OP)
-        specs = [
-            _spec("Scripts/X__td.py:30-40:function:onStart", "onStart"),
-            _spec("Scripts/X__td.py:5-12:function:setup", "setup"),
-            _spec(
-                self.OP,
-                "info1",
-                language="td_network",
-                chunk_type="operator",
-                relationships=[edge],
-            ),
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    # -- helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _meta(
+        chunk_id,
+        name,
+        *,
+        language="python",
+        chunk_type="function",
+        relationships=(),
+    ):
+        """Metadata dict shaped like ``Embedder._build_chunk_metadata``."""
+        return {
+            "chunk_type": chunk_type,
+            "name": name,
+            "file_path": chunk_id.split(":")[0],
+            "language": language,
+            "calls": [],
+            "relationships": [r.to_dict() for r in relationships],
+        }
+
+    def _result(self, chunk_id, name, **kw):
+        """EmbeddingResult stand-in for ``populate_from_embeddings``."""
+        return SimpleNamespace(
+            chunk_id=chunk_id, metadata=self._meta(chunk_id, name, **kw)
+        )
+
+    def _td(self):
+        return self._result(
+            self.OP,
+            "info1",
+            language="td_network",
+            chunk_type="operator",
+            relationships=[self.edge],
+        )
+
+    def _py_setup(self):
+        return self._result(self.PY_SETUP, "setup")
+
+    def _py_onstart(self):
+        return self._result(self.PY_ONSTART, "onStart")
+
+    def _add_chunk(self, result):
+        self.graph.add_chunk(result.chunk_id, result.metadata)
+
+    def _file_edges(self):
+        return [
+            (target, data)
+            for _, target, data in self.storage.graph.out_edges(self.OP, data=True)
+            if data.get("type") == "scripted_by" and data.get("via") == "file"
         ]
-        stats = graph._two_pass_build(specs, clear=False)
 
-        self.assertEqual(stats["scripted_by_retargeted"], 1)
-        self.assertEqual(stats["rel_edges"], 1)
-        added = storage.add_relationship_edge.call_args.args[0]
-        self.assertEqual(added.source_id, self.OP)
-        self.assertEqual(added.target_name, "Scripts/X__td.py:5-12:function:setup")
-        self.assertEqual(added.relationship_type, RelationshipType.SCRIPTED_BY)
-        self.assertIs(added.metadata["retargeted"], True)
-        self.assertEqual(added.metadata["original_target"], edge.target_name)
-        self.assertEqual(added.metadata["file"], "Scripts/X__td.py")
-        self.assertIs(added.metadata["synced"], True)
-        # Original edge object is left untouched.
-        self.assertNotIn("retargeted", edge.metadata)
+    def _assert_retargeted(self, target=None):
+        target = target or self.PY_SETUP
+        rows = self._file_edges()
+        self.assertEqual(len(rows), 1)
+        got_target, data = rows[0]
+        self.assertEqual(got_target, target)
+        self.assertIs(data["retargeted"], True)
+        self.assertEqual(data["original_target"], self.edge.target_name)
+        self.assertEqual(data["file"], self.PY_FILE)
+        self.assertIs(data["synced"], True)
+        self.assertEqual(data["resolver_source"], "td_live")
+        self.assertEqual(data["confidence"], 0.98)
+        # The module phantom is pruned once nothing points at it.
+        self.assertNotIn(self.edge.target_name, self.storage.graph)
+
+    def _assert_phantom_target(self):
+        rows = self._file_edges()
+        self.assertEqual(len(rows), 1)
+        got_target, data = rows[0]
+        self.assertEqual(got_target, self.edge.target_name)
+        self.assertNotIn("retargeted", data)
+        self.assertTrue(is_phantom_node(self.storage.graph.nodes[got_target]))
+
+    # -- regression: production ordering ----------------------------------
+
+    def test_production_order_add_chunk_then_populate_from_embeddings(self):
+        """``HybridSearcher.add_embeddings`` order: the dense index's per-chunk
+        ``add_chunk`` writes the edge (and its phantom module node) first, then
+        ``populate_from_embeddings`` runs the batch build on the same storage.
+        Before the fix the batch retarget saw the phantom as an existing node
+        and left the edge dead-ended."""
+        td, py1, py2 = self._td(), self._py_setup(), self._py_onstart()
+        for r in (td, py1, py2):
+            self._add_chunk(r)
+        self._assert_phantom_target()
+
+        self.graph.populate_from_embeddings([td, py1, py2])
+
+        self._assert_retargeted()
+
+    def test_bare_indexer_add_chunk_then_post_pass(self):
+        """``CodeIndexManager``-only path: ``add_chunk`` for every chunk, then
+        the write stage's post-pass."""
+        for r in (self._td(), self._py_onstart(), self._py_setup()):
+            self._add_chunk(r)
+
+        self.assertEqual(self.graph.retarget_scripted_by_edges(), 1)
+        self._assert_retargeted()
+
+    def test_bare_indexer_python_first(self):
+        for r in (self._py_setup(), self._py_onstart(), self._td()):
+            self._add_chunk(r)
+
+        self.assertEqual(self.graph.retarget_scripted_by_edges(), 1)
+        self._assert_retargeted()
+
+    def test_post_pass_is_idempotent(self):
+        for r in (self._td(), self._py_setup()):
+            self._add_chunk(r)
+        self.assertEqual(self.graph.retarget_scripted_by_edges(), 1)
+        before = dict(self._file_edges()[0][1])
+
+        self.assertEqual(self.graph.retarget_scripted_by_edges(), 0)
+
+        self.assertEqual(self._file_edges()[0][1], before)
+        self._assert_retargeted()
+
+    def test_cross_batch_populate(self):
+        """The ``.py`` arriving in a later batch than the operator must still
+        be joined (incremental passes, batched full passes). The later batch
+        carries no ``via=file`` edge, so ``_two_pass_build`` itself skips the
+        post-pass; the write stage runs it after every batch
+        (``IndexWriteStage.retarget_td_script_edges``), which is what joins
+        the edge here."""
+        self.graph.populate_from_embeddings([self._td()])
+        self._assert_phantom_target()
+
+        self.graph.populate_from_embeddings([self._py_setup()])
+        self._assert_phantom_target()
+
+        self.assertEqual(self.graph.retarget_scripted_by_edges(), 1)
+
+        self._assert_retargeted()
+
+    # -- guards -------------------------------------------------------------
 
     def test_no_chunks_for_file_keeps_phantom_target(self):
-        graph, storage = self._make_graph()
-        edge = _file_edge(self.OP)
-        specs = [
-            _spec("Scripts/Other.py:1-3:function:f", "f"),
-            _spec(
-                self.OP,
-                "info1",
-                language="td_network",
-                chunk_type="operator",
-                relationships=[edge],
-            ),
-        ]
-        stats = graph._two_pass_build(specs, clear=False)
+        self._add_chunk(self._td())
+        self._add_chunk(self._result("Scripts/Other.py:1-3:function:f", "f"))
 
-        self.assertEqual(stats["scripted_by_retargeted"], 0)
-        added = storage.add_relationship_edge.call_args.args[0]
-        self.assertIs(added, edge)
-        self.assertEqual(added.target_name, "Scripts/X__td.py:0-0:module:X__td")
-
-    def test_existing_module_node_is_not_retargeted(self):
-        graph, storage = self._make_graph(contains=True)
-        edge = _file_edge(self.OP)
-        specs = [
-            _spec("Scripts/X__td.py:5-12:function:setup", "setup"),
-            _spec(
-                self.OP,
-                "info1",
-                language="td_network",
-                chunk_type="operator",
-                relationships=[edge],
-            ),
-        ]
-        stats = graph._two_pass_build(specs, clear=False)
-        self.assertEqual(stats["scripted_by_retargeted"], 0)
-        self.assertIs(storage.add_relationship_edge.call_args.args[0], edge)
+        self.assertEqual(self.graph.retarget_scripted_by_edges(), 0)
+        self._assert_phantom_target()
 
     def test_pseudo_language_chunks_never_serve_as_retarget_candidates(self):
         """A td_network chunk that happens to share the .py path key must not
         be picked as the file's entry chunk."""
-        graph, storage = self._make_graph()
-        edge = _file_edge(self.OP)
-        specs = [
-            _spec(
+        self._add_chunk(self._td())
+        self._add_chunk(
+            self._result(
                 "Scripts/X__td.py:1-2:operator:weird",
                 "weird",
                 language="td_network",
                 chunk_type="operator",
-            ),
-            _spec(
-                self.OP,
-                "info1",
-                language="td_network",
-                chunk_type="operator",
-                relationships=[edge],
-            ),
-        ]
-        stats = graph._two_pass_build(specs, clear=False)
-        self.assertEqual(stats["scripted_by_retargeted"], 0)
+            )
+        )
+
+        self.assertEqual(self.graph.retarget_scripted_by_edges(), 0)
+        self._assert_phantom_target()
 
     def test_other_scripted_by_edges_pass_through(self):
-        graph, storage = self._make_graph()
         host = "Graph/net.tdgraph.json:1-5:operator:comp1"
-        edge = RelationshipEdge(
+        callbacks_edge = RelationshipEdge(
             source_id=host,
             target_name=self.OP,
             relationship_type=RelationshipType.SCRIPTED_BY,
@@ -1692,19 +1782,58 @@ class TestScriptedByRetarget(TestCase):
                 "via": "callbacks",
             },
         )
-        specs = [
-            _spec(
+        self._add_chunk(
+            self._result(
                 host,
                 "comp1",
                 language="td_network",
                 chunk_type="operator",
-                relationships=[edge],
+                relationships=[callbacks_edge],
+            )
+        )
+        self._add_chunk(
+            self._result(self.OP, "info1", language="td_network", chunk_type="operator")
+        )
+
+        self.assertEqual(self.graph.retarget_scripted_by_edges(), 0)
+        data = self.storage.graph.get_edge_data(host, self.OP)
+        self.assertEqual(len(data), 1)
+        (edge_data,) = data.values()
+        self.assertEqual(edge_data["via"], "callbacks")
+        self.assertNotIn("retargeted", edge_data)
+
+    # -- batch build surface ----------------------------------------------
+
+    def test_two_pass_build_reports_retarget_stat(self):
+        specs = [
+            _spec(self.PY_ONSTART, "onStart"),
+            _spec(self.PY_SETUP, "setup"),
+            _spec(
+                self.OP,
+                "info1",
+                language="td_network",
+                chunk_type="operator",
+                relationships=[self.edge],
             ),
-            _spec(self.OP, "info1", language="td_network", chunk_type="operator"),
         ]
-        stats = graph._two_pass_build(specs, clear=False)
+        stats = self.graph._two_pass_build(specs, clear=False)
+
+        self.assertEqual(stats["scripted_by_retargeted"], 1)
+        self.assertEqual(stats["rel_edges"], 1)
+        self._assert_retargeted()
+        # Original edge object is left untouched.
+        self.assertNotIn("retargeted", self.edge.metadata)
+
+    def test_two_pass_build_without_file_edges_skips_post_pass(self):
+        storage = Mock()
+        storage.__len__ = Mock(return_value=0)
+        graph = GraphIntegration.from_storage(storage)
+        specs = [_spec("a.py:1-2:function:f", "f")]
+        with patch.object(graph, "retarget_scripted_by_edges") as post_pass:
+            stats = graph._two_pass_build(specs, clear=False)
+
+        post_pass.assert_not_called()
         self.assertEqual(stats["scripted_by_retargeted"], 0)
-        self.assertIs(storage.add_relationship_edge.call_args.args[0], edge)
 
 
 class TestNameResolutionFence(TestCase):

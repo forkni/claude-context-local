@@ -16,11 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `scripted_by` edge (`via: file`, confidence 0.98, `resolver_source: td_live`) from each
   scripted DAT operator chunk to the synced `.py`/`.glsl` file's module id. Paths are
   normalised, re-rooted against the snapshot's grandparent when that file exists, and rejected
-  (DEBUG log) when absolute or escaping the index root. `GraphIntegration._two_pass_build`
-  retargets the edge onto the file's lowest-start-line real chunk when the file is in the
-  batch (`retargeted: true`, `original_target`; new `scripted_by_retargeted` build stat), so
-  `find_connections` on a `*__td.py` function lists the operator and `find_path` can walk
-  operator → function.
+  (DEBUG log) when absolute or escaping the index root. A storage-wide, idempotent post-pass
+  (`GraphIntegration.retarget_scripted_by_edges()`, run by
+  `IndexWriteStage.retarget_td_script_edges()` after every full and incremental index pass
+  and by `_two_pass_build` when the batch carried such an edge) moves the edge off its
+  phantom module node onto the file's lowest-start-line real chunk (`retargeted: true`,
+  `original_target`; `scripted_by_retargeted` build stat), so `find_connections` on a
+  `*__td.py` function lists the operator and `find_path` can walk operator → function.
+  `CodeGraphStorage.remove_edge(source, target, key)` added; `remove_file_nodes` parks a
+  retargeted in-edge back on its module phantom so an incremental re-index of the script
+  keeps the join.
 - **`CodeGraphStorage.get_nodes_by_name(name, exclude_languages=None)`** and
   **`get_node_language(chunk_id)`** — language-aware name lookup used by the resolver fence
   below; default behaviour unchanged.
@@ -69,6 +74,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **TD `scripted_by` / `via: file` edges dead-ended on phantom module nodes** (ADR-0062 C6).
+  On a full reindex of a real project all 214 such edges targeted
+  `Scripts/<x>.py:0-0:module:<stem>` phantoms, 0 carried `retargeted`, and `find_path` from a
+  DAT's host operator to a function in its synced script reported no path. Two joint causes:
+  the per-chunk `CodeIndexManager.add_embeddings` → `GraphIntegration.add_chunk` path wrote
+  the edge verbatim first (creating the phantom), and the batch-only retarget in
+  `_two_pass_build` then skipped it because its guard tested node *existence* rather than
+  phantom-ness — it also could never see a `.py` that landed in a later batch. Replaced by
+  the storage-wide phantom-keyed post-pass described under Added; regression tests run the
+  production `add_chunk`-then-`populate_from_embeddings` order on a real `CodeGraphStorage`.
 - **Pseudo-language operator names no longer resolve Python call targets** (ADR-0062
   "name-resolution fence"). PASS 1 of the two-pass graph build indexed every chunk's name, so a
   Python call to `view` could bind to a TD operator named `view` (17 spurious

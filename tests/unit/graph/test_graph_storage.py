@@ -576,6 +576,157 @@ class TestCodeGraphStorage:
         # Caller node still present
         assert "src/main.py:1-5:function:main" in graph_storage
 
+    # -- remove_edge ----------------------------------------------------------
+
+    def test_remove_edge_removes_and_bumps_version(self, graph_storage):
+        graph_storage.add_node(
+            "src/main.py:1-5:function:main", "main", "function", "src/main.py"
+        )
+        graph_storage.add_node(
+            "src/auth.py:10-20:function:do_auth", "do_auth", "function", "src/auth.py"
+        )
+        graph_storage.graph.add_edge(
+            "src/main.py:1-5:function:main",
+            "src/auth.py:10-20:function:do_auth",
+            key="calls",
+            type="calls",
+        )
+        before = graph_storage.version
+
+        removed = graph_storage.remove_edge(
+            "src\\main.py:1-5:function:main",
+            "src/auth.py:10-20:function:do_auth",
+            "calls",
+        )
+
+        assert removed is True
+        assert not graph_storage.graph.has_edge(
+            "src/main.py:1-5:function:main",
+            "src/auth.py:10-20:function:do_auth",
+            "calls",
+        )
+        # Nodes are left in place.
+        assert "src/main.py:1-5:function:main" in graph_storage
+        assert "src/auth.py:10-20:function:do_auth" in graph_storage
+        assert graph_storage.version > before
+
+    def test_remove_edge_missing_returns_false_without_bump(self, graph_storage):
+        graph_storage.add_node("a.py:1-5:function:a", "a", "function", "a.py")
+        before = graph_storage.version
+
+        assert (
+            graph_storage.remove_edge("a.py:1-5:function:a", "nope", "calls") is False
+        )
+        assert graph_storage.version == before
+
+    def test_remove_edge_only_removes_the_keyed_edge(self, graph_storage):
+        src, dst = "a.py:1-5:function:a", "b.py:1-5:function:b"
+        graph_storage.add_node(src, "a", "function", "a.py")
+        graph_storage.add_node(dst, "b", "function", "b.py")
+        graph_storage.graph.add_edge(src, dst, key="calls", type="calls")
+        graph_storage.graph.add_edge(src, dst, key="imports", type="imports")
+
+        assert graph_storage.remove_edge(src, dst, "calls") is True
+
+        assert not graph_storage.graph.has_edge(src, dst, "calls")
+        assert graph_storage.graph.has_edge(src, dst, "imports")
+
+    # -- remove_file_nodes: retargeted scripted_by restore ---------------------
+
+    @staticmethod
+    def _scripted_by(source, target, **metadata):
+        from chunking.relationships.relationship_types import (
+            RelationshipEdge,
+            RelationshipType,
+        )
+
+        return RelationshipEdge(
+            source_id=source,
+            target_name=target,
+            relationship_type=RelationshipType.SCRIPTED_BY,
+            line_number=0,
+            confidence=0.98,
+            metadata={
+                "td_edge_type": "scripted_by",
+                "via": "file",
+                "file": "Scripts/X__td.py",
+                "synced": True,
+                "resolver_source": "td_live",
+                **metadata,
+            },
+        )
+
+    def test_remove_file_nodes_restores_retargeted_edge_to_original_target(
+        self, graph_storage
+    ):
+        """Removing a script's chunks must not silently drop a TD ``scripted_by``
+        edge that was retargeted onto one of them; it goes back to its module
+        phantom so the next post-pass can land it on the file's new chunks."""
+        op = "Graph/net.tdgraph.json:10-20:operator:info1"
+        py_setup = "Scripts/X__td.py:5-12:function:setup"
+        module = "Scripts/X__td.py:0-0:module:X__td"
+        graph_storage.add_node(
+            op, "info1", "operator", "Graph/net.tdgraph.json", "td_network"
+        )
+        graph_storage.add_node(py_setup, "setup", "function", "Scripts/X__td.py")
+        graph_storage.add_relationship_edge(
+            self._scripted_by(op, py_setup, retargeted=True, original_target=module)
+        )
+        assert module not in graph_storage
+
+        removed = graph_storage.remove_file_nodes("Scripts/X__td.py")
+
+        assert removed == 1
+        assert py_setup not in graph_storage
+        assert module in graph_storage
+        assert graph_storage.graph.nodes[module]["type"] == "symbol_name"
+        edges = graph_storage.graph.get_edge_data(op, module)
+        assert edges is not None and len(edges) == 1
+        (data,) = edges.values()
+        assert data["type"] == "scripted_by"
+        assert data["via"] == "file"
+        assert data["file"] == "Scripts/X__td.py"
+        assert data["synced"] is True
+        assert data["resolver_source"] == "td_live"
+        assert data["confidence"] == 0.98
+        assert "retargeted" not in data
+        assert "original_target" not in data
+
+    def test_remove_file_nodes_does_not_restore_when_source_also_removed(
+        self, graph_storage
+    ):
+        """If the operator chunk goes too (its own network file is being
+        re-indexed) the edge is dropped: the operator's re-index re-emits it."""
+        op = "Scripts/X__td.py:1-2:operator:odd"  # same path prefix as the script
+        py_setup = "Scripts/X__td.py:5-12:function:setup"
+        module = "Scripts/X__td.py:0-0:module:X__td"
+        graph_storage.add_node(op, "odd", "operator", "Scripts/X__td.py", "td_network")
+        graph_storage.add_node(py_setup, "setup", "function", "Scripts/X__td.py")
+        graph_storage.add_relationship_edge(
+            self._scripted_by(op, py_setup, retargeted=True, original_target=module)
+        )
+
+        removed = graph_storage.remove_file_nodes("Scripts/X__td.py")
+
+        assert removed == 2
+        assert module not in graph_storage
+        assert len(graph_storage) == 0
+
+    def test_remove_file_nodes_ignores_unretargeted_in_edges(self, graph_storage):
+        op = "Graph/net.tdgraph.json:10-20:operator:info1"
+        py_setup = "Scripts/X__td.py:5-12:function:setup"
+        graph_storage.add_node(
+            op, "info1", "operator", "Graph/net.tdgraph.json", "td_network"
+        )
+        graph_storage.add_node(py_setup, "setup", "function", "Scripts/X__td.py")
+        graph_storage.add_relationship_edge(self._scripted_by(op, py_setup))
+
+        removed = graph_storage.remove_file_nodes("Scripts/X__td.py")
+
+        assert removed == 1
+        assert list(graph_storage.graph.out_edges(op)) == []
+        assert len(graph_storage) == 1
+
     def test_remove_file_nodes_normalizes_windows_path(self, graph_storage):
         """Backslash-separated paths are normalized and match forward-slash chunk_ids."""
         graph_storage.add_node(

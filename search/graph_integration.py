@@ -18,6 +18,13 @@ except ImportError:
 
 from chunking.language_registry import PSEUDO_LANGUAGES
 from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
+from graph.schema import (
+    EDGE_ATTR_CONFIDENCE,
+    EDGE_ATTR_LINE,
+    EDGE_ATTR_TYPE,
+    NODE_ATTR_LANGUAGE,
+    is_phantom_node,
+)
 from search.chunk_id import is_chunk_id as _is_chunk_id
 from search.config import get_search_config
 from utils.path_utils import normalize_path
@@ -37,6 +44,12 @@ def _chunk_start_line(chunk_id: str) -> int:
         except (ValueError, IndexError):
             pass
     return 2**31
+
+
+def _is_file_scripted_by(metadata: "dict[str, Any] | None") -> bool:
+    """True for a TD ``scripted_by`` edge that joins a DAT to its synced file."""
+    meta = metadata or {}
+    return meta.get("td_edge_type") == "scripted_by" and meta.get("via") == "file"
 
 
 def is_pseudo_language_node(storage: Any, chunk_id: str) -> bool:
@@ -682,12 +695,15 @@ class GraphIntegration:
 
         TD ``scripted_by`` edges with ``via == "file"`` target a module-summary
         id (``<file>.py:0-0:module:<stem>``) that never becomes a graph node.
-        When the referenced file has chunks in this batch the edge is
-        retargeted to the file's lowest-start-line chunk and stamped
-        ``metadata["retargeted"] = True`` (``original_target`` keeps the module
-        id). On an incremental build (``clear=False``) the ``.py`` may be absent
-        from the batch, in which case the edge lands on a phantom module node
-        until the next full reindex.
+        They are added verbatim here (landing on a phantom module node) and
+        then moved onto the file's lowest-start-line real chunk by the
+        storage-wide post-pass :meth:`retarget_scripted_by_edges`, which this
+        method runs once at the end whenever the batch carried such an edge.
+        The post-pass is storage-wide rather than batch-scoped because the
+        ``.py`` chunks routinely arrive in a different batch (or a different
+        incremental pass) than the DAT operator chunk, and because the
+        per-chunk :meth:`add_chunk` path -- which runs *before* this method
+        under ``HybridSearcher.add_embeddings`` -- creates the phantom first.
 
         Args:
             specs: Pre-normalised _BuildSpec items (None already filtered out).
@@ -715,8 +731,6 @@ class GraphIntegration:
 
         # === PASS 1: add nodes + build symbol-resolution map ===
         name_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
-        # file -> chunk ids of real (non-pseudo) chunks, for scripted_by retargeting
-        file_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
         nodes_added = 0
 
         for spec in specs:
@@ -734,8 +748,6 @@ class GraphIntegration:
                 # never call targets (see method docstring / ADR-0062).
                 if spec.language in PSEUDO_LANGUAGES:
                     continue
-
-                file_to_chunk_ids[spec.chunk_id.split(":", 1)[0]].append(spec.chunk_id)
 
                 # Index names for call-target resolution (skip "unknown" placeholder)
                 if spec.name and spec.name != "unknown":
@@ -794,7 +806,7 @@ class GraphIntegration:
         ambiguous_edges = 0
         phantom_edges = 0
         rel_edges = 0
-        scripted_by_retargeted = 0
+        file_scripted_by_edges = 0
 
         for spec in specs:
             try:
@@ -876,15 +888,19 @@ class GraphIntegration:
                             phantom_edges += 1
 
                 for rel in spec.relationships:
-                    retargeted = self._retarget_scripted_by(rel, file_to_chunk_ids)
-                    if retargeted is not None:
-                        rel = retargeted
-                        scripted_by_retargeted += 1
+                    if _is_file_scripted_by(rel.metadata):
+                        file_scripted_by_edges += 1
                     self.storage.add_relationship_edge(rel)
                     rel_edges += 1
 
             except Exception as e:  # noqa: BLE001 - resilience: per-spec edge failure, continue with remaining specs
                 self._logger.warning(f"Failed to add edges for {spec.chunk_id}: {e}")
+
+        # Only pay the storage-wide scan when this batch actually carried a
+        # via=file scripted_by edge (keeps Mock-storage builds untouched).
+        scripted_by_retargeted = (
+            self.retarget_scripted_by_edges() if file_scripted_by_edges else 0
+        )
 
         return {
             "nodes_added": nodes_added,
@@ -896,35 +912,84 @@ class GraphIntegration:
             "scripted_by_retargeted": scripted_by_retargeted,
         }
 
-    def _retarget_scripted_by(
-        self, rel: RelationshipEdge, file_to_chunk_ids: dict[str, list[str]]
-    ) -> RelationshipEdge | None:
-        """Retarget a TD ``scripted_by``/``via=file`` edge onto a real chunk.
+    def retarget_scripted_by_edges(self) -> int:
+        """Move TD ``scripted_by``/``via=file`` edges off phantom module nodes.
 
-        Returns a new edge aimed at the lowest-start-line chunk of the file
-        named in ``rel.metadata["file"]`` when that file has chunks in the
-        current batch and the original module-summary target is not already a
-        graph node; otherwise ``None`` (caller adds ``rel`` unchanged).
+        Storage-wide post-pass (ADR-0062 C6). Every such edge is emitted by
+        ``TDNetworkChunker`` against the synced script's module-summary id
+        (``<file>.py:0-0:module:<stem>``), which never becomes a graph node,
+        so on arrival it lands on a ``symbol_name`` phantom. This pass finds
+        every ``via == "file"`` edge whose target is still a phantom and, when
+        the graph holds real (non-pseudo-language) chunks for
+        ``metadata["file"]``, re-points it at the file's lowest-start-line
+        chunk, stamping ``retargeted: True`` and ``original_target``. Phantoms
+        left with no edges are pruned. Edges for files with no indexed chunks
+        stay on their phantom and are retried on the next call.
+
+        Runs from :meth:`_two_pass_build` (batch builds) and from
+        ``IndexWriteStage.retarget_td_script_edges`` after each index pass,
+        so it must be -- and is -- idempotent: a second call returns 0.
+
+        Returns:
+            Number of edges retargeted in this call.
         """
-        meta = rel.metadata or {}
-        if meta.get("td_edge_type") != "scripted_by" or meta.get("via") != "file":
-            return None
-        candidates = file_to_chunk_ids.get(meta.get("file", ""))
-        if not candidates or rel.target_name in self.storage:
-            return None
-        new_target = min(candidates, key=_chunk_start_line)
-        return RelationshipEdge(
-            source_id=rel.source_id,
-            target_name=new_target,
-            relationship_type=rel.relationship_type,
-            line_number=rel.line_number,
-            confidence=rel.confidence,
-            metadata={
-                **meta,
-                "retargeted": True,
-                "original_target": rel.target_name,
-            },
-        )
+        if self.storage is None:
+            return 0
+        graph = self.storage.graph
+
+        pending = [
+            (source, target, key, data)
+            for source, target, key, data in graph.edges(keys=True, data=True)
+            if data.get(EDGE_ATTR_TYPE) == RelationshipType.SCRIPTED_BY.value
+            and data.get("via") == "file"
+            and not data.get("retargeted")
+            and is_phantom_node(graph.nodes[target])
+        ]
+        if not pending:
+            return 0
+
+        file_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
+        for node_id, node_data in graph.nodes(data=True):
+            if is_phantom_node(node_data):
+                continue
+            if node_data.get(NODE_ATTR_LANGUAGE) in PSEUDO_LANGUAGES:
+                continue
+            file_to_chunk_ids[node_id.split(":", 1)[0]].append(node_id)
+
+        retargeted = 0
+        for source, target, key, data in pending:
+            candidates = file_to_chunk_ids.get(data.get("file", ""))
+            if not candidates:
+                continue
+            new_target = min(candidates, key=_chunk_start_line)
+            metadata = {
+                k: v
+                for k, v in data.items()
+                if k not in (EDGE_ATTR_TYPE, EDGE_ATTR_LINE, EDGE_ATTR_CONFIDENCE)
+            }
+            metadata["retargeted"] = True
+            metadata["original_target"] = target
+            if not self.storage.remove_edge(source, target, key):
+                continue
+            self.storage.add_relationship_edge(
+                RelationshipEdge(
+                    source_id=source,
+                    target_name=new_target,
+                    relationship_type=RelationshipType.SCRIPTED_BY,
+                    line_number=data.get(EDGE_ATTR_LINE, 0),
+                    confidence=data.get(EDGE_ATTR_CONFIDENCE, 1.0),
+                    metadata=metadata,
+                )
+            )
+            retargeted += 1
+
+        if retargeted:
+            self.storage.prune_orphan_symbol_nodes()
+            self._logger.info(
+                f"[TD_SCRIPTED_BY] retargeted {retargeted} scripted_by edge(s) "
+                "onto real script chunks"
+            )
+        return retargeted
 
     def add_chunk(self, chunk_id: str, metadata: dict[str, Any]) -> None:
         """Add chunk to call graph storage.
@@ -932,6 +997,11 @@ class GraphIntegration:
         Per-chunk tracing was replaced with aggregate counters
         (`self._chunk_stats`), flushed by `log_chunk_add_summary()` -- see
         that method's docstring for why.
+
+        Relationship edges are written verbatim. TD ``scripted_by``/``via=file``
+        edges therefore land on a phantom module node here and are joined to
+        the script's real chunks afterwards by :meth:`retarget_scripted_by_edges`
+        (run by the write stage after the whole batch), not per chunk.
 
         Args:
             chunk_id: Unique chunk identifier
