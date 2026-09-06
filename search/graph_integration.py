@@ -1184,7 +1184,8 @@ class GraphIntegration:
             f"({stats.get('resolved_edges', 0)} resolved, "
             f"{stats.get('ambiguous_edges', 0)} ambiguous, "
             f"{stats.get('phantom_edges', 0)} phantom), "
-            f"{stats.get('rel_edges', 0)} relationship edges"
+            f"{stats.get('rel_edges', 0)} relationship edges, "
+            f"{stats.get('containment_edges', 0)} containment edges"
         )
 
     def build_graph_from_chunks(self, chunks) -> None:

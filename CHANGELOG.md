@@ -34,7 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through `shares_tag`/`calls`. `GraphIntegration` now emits one `contains` edge
   (confidence 1.0, `via: parent_chunk_id`, `resolver_source: chunker`) from the class chunk
   to each such member on both write paths (`add_chunk` and `_two_pass_build`; new
-  `containment_edges` counter in the `[GRAPH_ADD_CHUNK]` summary and build stats).
+  `containment_edges` counter in the `_two_pass_build` stats dict, surfaced at INFO in the
+  `Populated graph from embeddings:` log line that every reindex prints —
+  `[GRAPH_ADD_CHUNK]`'s own `containment_edges=%d` field is DEBUG-only and not visible by default).
   `CodeGraphStorage.add_relationship_edge` now creates the same `symbol_name` placeholder for
   an absent *source* node as it already did for targets, so a method landing before its
   class yields a recognisable phantom that `add_node` promotes rather than an attribute-less
@@ -111,10 +113,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names into the summary text; zero golds in either golden dataset reference a `:module:` chunk,
   so exposure is nil. Corrected golden-dataset `:decorated_definition:` counts while auditing this:
   24 in `golden_dataset.json` (7 classes), 36 in `golden_dataset_expanded.json` (10 classes). No
-  reindex, benchmark run, or canon re-pin was performed for this change (scope decision) — the
-  2026-09-05 canon pin (`evaluation/CANON_20260905_REBASELINE.md`), already stale from the
-  `parent_chunk_id` fix below, is stale a second time; the eventual re-pin measures both changes
-  together. See `docs/adr/0063-python-decorated-class-container-traversal.md`.
+  reindex, benchmark run, or canon re-pin was performed for this change at the time it landed
+  (scope decision) — both this change and the `parent_chunk_id` fix below were later measured
+  together in the 2026-09-05b re-pin (`evaluation/CANON_20260905B_ADR0063_REBASELINE.md`), which
+  discharges the "stale twice over" note this bullet originally carried. See
+  `docs/adr/0063-python-decorated-class-container-traversal.md`.
 - **Decorated methods never got a `parent_chunk_id`.** The class→method `contains` edge (added
   above) is driven by `parent_chunk_id`, but `multi_language_chunker.py`'s assignment gate only
   admitted `chunk_type in ("method", "function")` — a decorated member (`@property`,
@@ -129,9 +132,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unparented by design (out of scope — see the follow-up ADR-0038 note), and a nested
   *decorated* class now gets an edge while a nested *plain* class still does not (accepted
   asymmetry, 0 instances in this repo, pinned with a characterization test). Adds ~128 new
-  `contains` edges on a full reindex of this repo — **the 2026-09-05 canon pin
-  (`evaluation/CANON_20260905_REBASELINE.md`) is stale pending a re-pin**, deliberately deferred
-  to a dedicated session per this change's scope decision. The chunk-shape half of this gap
+  `contains` edges on a full reindex of this repo — deliberately deferred to a dedicated session
+  per this change's scope decision; measured together with the chunk-shape fix above in the
+  2026-09-05b re-pin (`evaluation/CANON_20260905B_ADR0063_REBASELINE.md`). The chunk-shape half of this gap
   (methods of a `@dataclass`-decorated class never becoming chunks at all) is a separate,
   deferred change — see `docs/adr/0038-cpp-only-container-traversal-seam.md`.
 - **TD `scripted_by` / `via: file` edges dead-ended on phantom module nodes** (ADR-0062 C6).
@@ -210,6 +213,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   undocumented 2026-09-03 re-pin (`evaluation/CANON_20260903_REBASELINE.md`: 63q 0.8429, 133q
   0.6332, F-via-similar 0.8856) that was never picked up in `docs/BENCHMARKS.md`/`CLAUDE.md`
   until now. See `docs/BENCHMARKS.md` for the full table.
+- **Retrieval canon re-pinned 2026-09-05b** (`evaluation/CANON_20260905B_ADR0063_REBASELINE.md`)
+  after `721ccde` + `135007c`/ADR-0063 (decorated Python classes become container nodes, so their
+  methods are chunked and gain `parent_chunk_id`/`contains` edges): full force reindex (234 files
+  / 2,945 chunks, +74; 30,286 edges incl. 1,095 `contains`, +201), 63q determinism reconfirmed
+  bit-identical. 63q MRR **0.8164**, 133q **0.6286**, F-via-similar **0.8671** — deltas vs the
+  2026-09-05 pin (−0.0070/+0.0063/−0.0026) inside the ±0.02 drift band on both MRR and recall@20;
+  gate PASSED, read as noise around a flat baseline — the new chunks and `contains` edges moved no
+  metric near a threshold crossing. This is the first empirical measurement of ADR-0063 on the
+  real corpus, and the first to attribute the `contains`-edge delta correctly between the two
+  commits (+51 from the 23 newly-chunked decorated classes, +150 from `721ccde` retroactively
+  parenting decorated methods in already-chunked classes) rather than leaving it as an unquantified
+  IOU. See `docs/BENCHMARKS.md` for the full table.
 - **Ranking policy keys TD chunks explicitly** (ADR-0062 Part D2) — `search/ranking_policy.py`
   boosts the `operator` kind like `function` (1.2 / 1.15 / 1.2) and remaps the TD chunker's
   per-op-type `class` chunks to `td_class`, which carries the `module` (summary) multiplier

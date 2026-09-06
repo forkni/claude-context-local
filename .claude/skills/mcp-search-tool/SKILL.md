@@ -40,9 +40,9 @@ candidates, not definitive answers — always scan all returned results.**
 duplicate figures elsewhere — every other reference file in this skill points back to `docs/BENCHMARKS.md` instead of restating numbers that will
 drift out of date on the next benchmark run.
 
-**Current headline (2026-09-01 P0 re-baseline, canonical 63-query set, hybrid, k=10, intent-on, deterministic PYTHONHASHSEED=0):** MRR
-**0.8419**, Recall@5 0.6432, Recall@10 0.7553, NDCG@5 0.6763, pool_hit_rate 1.0000 (single-round capture on the seed-pinned harness, which was
-shown bit-identical r1==r2 on the previous substrate). Expanded 133-query set: MRR 0.6378. Provenance: `evaluation/CANON_20260901_REBASELINE.md`.
+**Current headline (2026-09-05b ADR-0063 re-pin, canonical 63-query set, hybrid, k=10, intent-on, deterministic PYTHONHASHSEED=0):** MRR
+**0.8164**, Recall@5 0.6390, Recall@10 0.7612, NDCG@5 0.6678, pool_hit_rate 1.0000 (r2 confirmed bit-identical to r1 on this substrate).
+Expanded 133-query set: MRR 0.6286. Provenance: `evaluation/CANON_20260905B_ADR0063_REBASELINE.md`.
 The dataset has been repaired and expanded multiple times since earlier benchmark runs (comparability breaks are
 logged in `docs/BENCHMARKS.md`) — do not compare an older cached number here against a fresh run without checking both the dataset size/date and the
 config it ran under. Engine default is `k=7`; pass it explicitly when correctness matters. Use `k=10` for architectural/global queries.

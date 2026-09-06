@@ -153,9 +153,15 @@ encloses another chunk. Declined.
   around its container types — but they remain gated on ADR-0038's reopening condition (a real
   project driving the need). This ADR does not reopen or resolve that condition.
 - **Retrieval canon.** `evaluation/CANON_20260905_REBASELINE.md` was already stale from `721ccde`
-  (the assignment-half fix); this change makes it stale a second time, before a re-pin ever
+  (the assignment-half fix); this change made it stale a second time, before a re-pin ever
   happened. Per this change's scope decision, no reindex, benchmark run, or canon re-pin was
-  performed here — the eventual re-pin will measure both changes together, not in isolation.
+  performed at the time this ADR landed — both changes were later measured together in
+  `evaluation/CANON_20260905B_ADR0063_REBASELINE.md` (63q MRR 0.8164, 133q 0.6286, F-via-similar
+  0.8671; all deltas vs the 09-05 pin inside the ±0.02 drift band, gate PASSED). That doc also
+  reconciles the exact `contains`-edge attribution between the two commits: +51 from the 23
+  decorated classes this ADR newly chunks, +150 from `721ccde` parenting decorated methods in
+  already-chunked classes — considerably more than this ADR's own "34 new edges" estimate, which
+  never accounted for `721ccde`'s contribution.
 
 ## Verification
 
