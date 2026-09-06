@@ -94,6 +94,7 @@ class TestGuardrails:
             "search_mode.bm25_reserved_slots",
             "graph_enhanced.centrality_alpha",
             "graph_enhanced.centrality_exclude_phantoms",
+            "graph_enhanced.centrality_exclude_containment",
             "graph_enhanced.drop_ambiguous_traversal_edges",
             "reranker.single_pass",
             "reranker.hop1_reserved_slots",

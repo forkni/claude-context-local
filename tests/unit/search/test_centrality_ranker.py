@@ -937,3 +937,62 @@ class TestApplyNameMatchBoost:
             result, "XMLNode", "xml node data", "xml node data"
         )
         assert result["blended_score"] == pytest.approx(1.3, abs=0.001)
+
+
+# ---------------------------------------------------------------------------
+# centrality_exclude_containment (contains-centrality isolation, 2026-09-06)
+# ---------------------------------------------------------------------------
+
+
+def test_get_centrality_scores_passes_exclude_containment_false_when_no_config(
+    mock_graph_query_engine,
+):
+    """No config must call compute_centrality with exclude_containment=False."""
+    ranker = CentralityRanker(mock_graph_query_engine, method="pagerank", alpha=0.3)
+    ranker.get_centrality_scores()
+    _, kwargs = mock_graph_query_engine.compute_centrality.call_args
+    assert kwargs["exclude_containment"] is False
+
+
+def test_get_centrality_scores_passes_exclude_containment_true_when_configured(
+    mock_graph_query_engine,
+):
+    """config.centrality_exclude_containment=True must thread through to
+    compute_centrality's exclude_containment kwarg."""
+    from search.config import GraphEnhancedConfig
+
+    config = GraphEnhancedConfig(centrality_exclude_containment=True)
+    ranker = CentralityRanker(
+        mock_graph_query_engine, method="pagerank", alpha=0.3, config=config
+    )
+    ranker.get_centrality_scores()
+    _, kwargs = mock_graph_query_engine.compute_centrality.call_args
+    assert kwargs["exclude_containment"] is True
+    assert kwargs["exclude_phantoms"] is False
+
+
+def test_composite_cache_key_distinct_across_all_flag_combinations(
+    mock_graph_query_engine,
+):
+    """All four (exclude_phantoms, exclude_containment) combinations must land
+    in distinct storage-cache slots so rankers never serve each other's scores."""
+    from search.config import GraphEnhancedConfig
+
+    combos = [(False, False), (True, False), (False, True), (True, True)]
+    for phantoms, containment in combos:
+        config = GraphEnhancedConfig(
+            centrality_exclude_phantoms=phantoms,
+            centrality_exclude_containment=containment,
+        )
+        CentralityRanker(
+            mock_graph_query_engine, method="pagerank", alpha=0.3, config=config
+        ).get_centrality_scores()
+
+    cache = mock_graph_query_engine.storage._centrality_cache
+    assert set(cache) == {
+        "pagerank",
+        "pagerank:no_phantoms",
+        "pagerank:no_contains",
+        "pagerank:no_phantoms:no_contains",
+    }
+    assert mock_graph_query_engine.compute_centrality.call_count == len(combos)

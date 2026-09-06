@@ -687,6 +687,7 @@ High-centrality chunks (base classes, utility functions, heavily-imported module
 | `centrality_boost_factor` | `5.0` | Multiplier: `boost = centrality × factor` |
 | `centrality_boost_cap` | `0.15` | Maximum additive boost to blended_score |
 | `centrality_exclude_phantoms` | `False` | Exclude phantom placeholder nodes (unresolved call/symbol targets, e.g. `str`/`int`/`__init__`) from centrality computation. **File-only** — not settable via `configure_*` MCP tools; it's a `FORBIDDEN_AUTO_TUNE_KEYS` entry pending a pre-registered A/B (ADR-0055), so it must be hand-edited in `search_config.json` and is intentionally not exposed for MCP-driven tuning. |
+| `centrality_exclude_containment` | `False` | Exclude class → method `contains` edges (emitted from `parent_chunk_id`) from centrality computation, scoring PageRank on the call/type/import topology alone. Isolation knob for the `contains`-centrality channel (`evaluation/CONTAINS_CENTRALITY_ISOLATION_20260906.md`). **File-only** — a `FORBIDDEN_AUTO_TUNE_KEYS` entry pending its paired A/B; hand-edit in `search_config.json` or pass `--set graph_enhanced.centrality_exclude_containment=true` to the SSCG benchmark harness. |
 
 ### File-Role Tagging (`role:src/test/doc/config`)
 

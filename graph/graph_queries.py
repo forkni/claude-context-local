@@ -26,6 +26,12 @@ from .schema import (
 )
 
 
+# ``RelationshipType.CONTAINS.value`` -- spelled out here so this module keeps
+# graph/ free of an import-time dependency on chunking.relationships (the
+# storage layer imports RelationshipType lazily for the same reason).
+CONTAINMENT_EDGE_TYPE = "contains"
+
+
 @dataclass
 class RelationshipEntry:
     """A single relationship edge in the code graph.
@@ -532,21 +538,37 @@ class GraphQueryEngine:
 
         return leaf_functions
 
-    def _phantom_filtered_graph(self, exclude_phantoms: bool):
-        """Return the raw multigraph, or a node-filtered subgraph view with
-        phantom placeholder nodes removed when ``exclude_phantoms`` is True.
+    def _scoring_graph_view(
+        self, exclude_phantoms: bool, exclude_containment: bool = False
+    ):
+        """Return the raw multigraph, or a read-only filtered view of it.
 
-        Read-only view (``Graph.subgraph``) -- never mutates
-        ``self.storage.graph``. See ``_is_phantom_node`` for the predicate.
+        ``exclude_phantoms`` drops phantom placeholder nodes (see
+        ``_is_phantom_node``); ``exclude_containment`` drops every
+        ``contains`` edge (class → method containment, emitted from
+        ``parent_chunk_id`` by ``search/graph_integration.py``) so centrality
+        can be scored on the call/type/import topology alone. Edges are
+        matched on their multigraph key, which ``CodeGraphStorage
+        .add_relationship_edge`` sets to the relationship-type value.
+
+        Read-only view (``nx.subgraph_view``) -- never mutates
+        ``self.storage.graph``. Both filters default off, returning the raw
+        graph object itself so the unfiltered path stays byte-identical.
         """
         graph = self.storage.graph
-        if not exclude_phantoms:
+        if not exclude_phantoms and not exclude_containment:
             return graph
-        return graph.subgraph(
-            n for n, d in graph.nodes(data=True) if not _is_phantom_node(d)
-        )
+        filters: dict[str, Any] = {}
+        if exclude_phantoms:
+            nodes = graph.nodes
+            filters["filter_node"] = lambda n: not _is_phantom_node(nodes[n])
+        if exclude_containment:
+            filters["filter_edge"] = lambda u, v, k: k != CONTAINMENT_EDGE_TYPE
+        return nx.subgraph_view(graph, **filters)
 
-    def _simple_digraph_view(self, exclude_phantoms: bool = False) -> "nx.DiGraph":
+    def _simple_digraph_view(
+        self, exclude_phantoms: bool = False, exclude_containment: bool = False
+    ) -> "nx.DiGraph":
         """Collapse the MultiDiGraph to a simple DiGraph (one edge per (u,v) pair).
 
         Used to preserve pre-multigraph parity for degree-based and pagerank
@@ -555,16 +577,23 @@ class GraphQueryEngine:
         Args:
             exclude_phantoms: When True, phantom placeholder nodes (see
                 ``_is_phantom_node``) are removed before collapsing.
+            exclude_containment: When True, ``contains`` edges are removed
+                before collapsing (see ``_scoring_graph_view``).
 
         .. note::
             TODO: switch ``degree`` and ``pagerank`` to native MultiDiGraph counts
             (degree = total relationship sites, pagerank weighted by edge multiplicity)
             once dedicated value-shift tests are written.  Deferred from Batch 2A.
         """
-        return nx.DiGraph(self._phantom_filtered_graph(exclude_phantoms))
+        return nx.DiGraph(
+            self._scoring_graph_view(exclude_phantoms, exclude_containment)
+        )
 
     def compute_centrality(
-        self, method: str = "degree", exclude_phantoms: bool = False
+        self,
+        method: str = "degree",
+        exclude_phantoms: bool = False,
+        exclude_containment: bool = False,
     ) -> dict[str, float]:
         """
         Compute centrality scores for functions.
@@ -575,6 +604,10 @@ class GraphQueryEngine:
                 call/symbol targets, e.g. "str"/"int"/"__init__") are excluded
                 from the graph before scoring, for all four methods. Default
                 False preserves the pre-existing byte-identical behavior.
+            exclude_containment: When True, class → method ``contains`` edges
+                are excluded from the graph before scoring, for all four
+                methods (``GraphEnhancedConfig.centrality_exclude_containment``).
+                Default False preserves the pre-existing byte-identical behavior.
 
         Returns:
             Dictionary mapping chunk_id → centrality score (float for all methods)
@@ -582,20 +615,23 @@ class GraphQueryEngine:
         if method == "degree":
             # Route through simple DiGraph view to preserve pre-multigraph parity.
             # TODO: embrace multigraph counts once dedicated value-shift tests exist.
-            simple = self._simple_digraph_view(exclude_phantoms=exclude_phantoms)
+            simple = self._simple_digraph_view(
+                exclude_phantoms=exclude_phantoms,
+                exclude_containment=exclude_containment,
+            )
             return {node: float(deg) for node, deg in simple.degree()}
         elif method == "betweenness":
             # betweenness_centrality is invariant to parallel edges (unweighted
             # shortest paths), so no projection needed.
             # pyrefly: ignore [missing-attribute]
             return nx.betweenness_centrality(
-                self._phantom_filtered_graph(exclude_phantoms)
+                self._scoring_graph_view(exclude_phantoms, exclude_containment)
             )
         elif method == "closeness":
             # closeness_centrality is invariant to parallel edges.
             # pyrefly: ignore [missing-attribute]
             return nx.closeness_centrality(
-                self._phantom_filtered_graph(exclude_phantoms)
+                self._scoring_graph_view(exclude_phantoms, exclude_containment)
             )
         elif method == "pagerank":
             # Route through simple DiGraph view to preserve pre-multigraph parity.
@@ -603,7 +639,10 @@ class GraphQueryEngine:
             # dedicated value-shift tests are written.
             # pyrefly: ignore [missing-attribute]
             return nx.pagerank(
-                self._simple_digraph_view(exclude_phantoms=exclude_phantoms)
+                self._simple_digraph_view(
+                    exclude_phantoms=exclude_phantoms,
+                    exclude_containment=exclude_containment,
+                )
             )
         else:
             raise ValueError(

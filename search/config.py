@@ -1330,6 +1330,29 @@ class GraphEnhancedConfig:
             ),
         ),
     )
+    # Excludes class -> method `contains` edges (emitted from parent_chunk_id,
+    # 1,095 on this repo's own index) from centrality computation, scoring
+    # PageRank on the call/type/import topology alone. Isolation knob for the
+    # 2026-09-05b canon's open item: `contains` never reaches ego/multi-hop
+    # traversal, so the BM25-adaptive centrality boost is its only ranking
+    # channel. Offline probe (scripts/benchmark/probe_contains_centrality.py,
+    # 2026-09-06) found 7/2,651 real chunks change boost, 6 golden-relevant,
+    # all by <= 0.0032 blended_score. Benchmark-locked pending the paired A/B
+    # (evaluation/CONTAINS_CENTRALITY_ISOLATION_20260906.md); default False
+    # keeps every path byte-identical.
+    centrality_exclude_containment: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="centrality_exclude_containment",
+            reader="search/centrality_ranker.py",
+            benchmark_locked=(
+                "[pending] contains-centrality isolation A/B "
+                "(evaluation/CONTAINS_CENTRALITY_ISOLATION_20260906.md): offline probe "
+                "found 6 golden-relevant boost movers, all <= 0.0032 blended_score; "
+                "paired A/B result not yet recorded, stays default-off"
+            ),
+        ),
+    )
     # Post-centrality result cap: total results kept = k * this multiplier
     # (k primary + (multiplier-1)*k graph/ego/parent context chunks)
     max_results_multiplier: int = field(

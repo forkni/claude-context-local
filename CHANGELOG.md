@@ -47,6 +47,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and PageRank centrality (`_simple_digraph_view` applies no relation-type filter) — so the
   retrieval canons were re-run on the next full reindex regardless; see the 2026-09-05 re-pin
   below. Requires a reindex to populate on an existing index.
+- **`graph_enhanced.centrality_exclude_containment`** (default `false`, benchmark-locked) —
+  opt-in knob that drops every class → method `contains` edge from centrality computation
+  (all four methods, via the new read-only `GraphQueryEngine._scoring_graph_view`), so
+  PageRank scores the call/type/import topology alone. Built to isolate the `contains`
+  centrality channel from the +74-chunk pool-composition channel the 2026-09-05b re-pin left
+  entangled: `contains` never reaches ego/multi-hop traversal, so the BM25-adaptive
+  centrality boost is its only ranking path. Offline probe
+  (`scripts/benchmark/probe_contains_centrality.py`, 2026-09-06): 7 of 2,651 real chunks change
+  boost, 6 golden-relevant, all by ≤ 0.0032 `blended_score`. Cache key gains a `:no_contains`
+  suffix alongside `:no_phantoms`; traversal (`find_connections`/`find_path`) is untouched.
+  Paired A/B disposition: `evaluation/CONTAINS_CENTRALITY_ISOLATION_20260906.md`.
 - **`CodeGraphStorage.get_nodes_by_name(name, exclude_languages=None)`** and
   **`get_node_language(chunk_id)`** — language-aware name lookup used by the resolver fence
   below; default behaviour unchanged.

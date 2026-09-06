@@ -106,11 +106,19 @@ class CentralityRanker:
         """
         storage = self.graph_query_engine.storage
         exclude_phantoms = bool(self.config and self.config.centrality_exclude_phantoms)
+        exclude_containment = bool(
+            self.config and self.config.centrality_exclude_containment
+        )
         # Composite cache key: CodeGraphStorage's centrality cache is keyed on
         # method alone (version-tagged for graph-mutation safety, not for
         # scoring flags), so two rankers in one process with different
-        # exclude_phantoms values would otherwise serve each other's scores.
-        cache_key = f"{self.method}:no_phantoms" if exclude_phantoms else self.method
+        # exclude_phantoms / exclude_containment values would otherwise serve
+        # each other's scores.
+        cache_key = self.method
+        if exclude_phantoms:
+            cache_key += ":no_phantoms"
+        if exclude_containment:
+            cache_key += ":no_contains"
 
         cached = storage.get_cached_centrality(cache_key)
         if cached is not None:
@@ -132,7 +140,9 @@ class CentralityRanker:
         # Compute centrality scores
         try:
             raw_scores = self.graph_query_engine.compute_centrality(
-                method=self.method, exclude_phantoms=exclude_phantoms
+                method=self.method,
+                exclude_phantoms=exclude_phantoms,
+                exclude_containment=exclude_containment,
             )
         # ExceptionReplacer: convergence failure is untestable in unit tests.
         except nx.PowerIterationFailedConvergence:  # pragma: no mutate
