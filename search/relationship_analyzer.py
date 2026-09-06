@@ -941,78 +941,67 @@ class RelationshipAnalyzer:
             if "file" in result:
                 result["file"] = normalize_path(result["file"])
             return result
-        if hasattr(result, "metadata"):
-            file_path = result.metadata.get(
-                "file", result.metadata.get("file_path", "")
-            )
-            return {
-                "chunk_id": chunk_id,
-                "file": normalize_path(file_path) if file_path else "",
-                "lines": (
-                    f"{result.metadata.get('start_line', 0)}"
-                    f"-{result.metadata.get('end_line', 0)}"
-                ),
-                "kind": result.metadata.get("chunk_type", "unknown"),
-                "score": result.score,
-            }
-        file_path = getattr(result, "file_path", getattr(result, "relative_path", ""))
-        return {
-            "chunk_id": chunk_id,
-            "file": normalize_path(file_path) if file_path else "",
-            "lines": (
-                f"{getattr(result, 'start_line', 0)}-{getattr(result, 'end_line', 0)}"
-            ),
-            "kind": getattr(result, "chunk_type", "unknown"),
-            "score": getattr(result, "similarity_score", 0.0),
-        }
+        projected = self._project_result(result, chunk_id, include_score=True)
+        file_value = projected["file"]
+        projected["file"] = normalize_path(file_value) if file_value else ""
+        return projected
 
     def _extract_result_info(self, result: Any, chunk_id: str) -> dict[str, Any]:
-        if hasattr(result, "metadata"):
-            return {
-                "chunk_id": chunk_id,
-                "file": result.metadata.get(
-                    "file", result.metadata.get("file_path", "")
-                ),
-                "lines": (
-                    f"{result.metadata.get('start_line', 0)}"
-                    f"-{result.metadata.get('end_line', 0)}"
-                ),
-                "kind": result.metadata.get("chunk_type", "unknown"),
-            }
-        return {
-            "chunk_id": chunk_id,
-            "file": getattr(result, "file_path", getattr(result, "relative_path", "")),
-            "lines": (
-                f"{getattr(result, 'start_line', 0)}-{getattr(result, 'end_line', 0)}"
-            ),
-            "kind": getattr(result, "chunk_type", "unknown"),
-        }
+        return self._project_result(result, chunk_id, include_score=False)
 
     def _extract_symbol_info(
         self, result: Any, target_id: str, symbol_name: str | None
     ) -> dict[str, Any]:
+        return self._project_result(
+            result,
+            target_id,
+            include_score=False,
+            name=symbol_name or target_id.split(":")[-1],
+        )
+
+    @staticmethod
+    def _project_result(
+        result: Any,
+        chunk_id: str,
+        *,
+        include_score: bool,
+        name: str | None = None,
+    ) -> dict[str, Any]:
+        """Shared core of the three result -> display dict adapters.
+
+        Handles both SearchResult shapes (``.metadata`` dict vs. flat
+        attributes). Callers are responsible for any `file` normalization —
+        this core never calls normalize_path, so the two non-normalizing
+        adapters (`_extract_result_info`, `_extract_symbol_info`) get it for
+        free, and `_result_to_dict` applies it as its own post-step.
+        """
         if hasattr(result, "metadata"):
-            return {
-                "chunk_id": target_id,
-                "file": result.metadata.get(
-                    "file", result.metadata.get("file_path", "")
-                ),
-                "lines": (
-                    f"{result.metadata.get('start_line', 0)}"
-                    f"-{result.metadata.get('end_line', 0)}"
-                ),
-                "kind": result.metadata.get("chunk_type", "unknown"),
-                "name": symbol_name or target_id.split(":")[-1],
-            }
-        return {
-            "chunk_id": target_id,
-            "file": getattr(result, "file_path", getattr(result, "relative_path", "")),
-            "lines": (
-                f"{getattr(result, 'start_line', 0)}-{getattr(result, 'end_line', 0)}"
-            ),
-            "kind": getattr(result, "chunk_type", "unknown"),
-            "name": symbol_name or target_id.split(":")[-1],
+            meta = result.metadata
+            file_value = meta.get("file", meta.get("file_path", ""))
+            start = meta.get("start_line", 0)
+            end = meta.get("end_line", 0)
+            kind = meta.get("chunk_type", "unknown")
+            score = result.score if include_score else None
+        else:
+            file_value = getattr(
+                result, "file_path", getattr(result, "relative_path", "")
+            )
+            start = getattr(result, "start_line", 0)
+            end = getattr(result, "end_line", 0)
+            kind = getattr(result, "chunk_type", "unknown")
+            score = getattr(result, "similarity_score", 0.0) if include_score else None
+
+        projected: dict[str, Any] = {
+            "chunk_id": chunk_id,
+            "file": file_value,
+            "lines": f"{start}-{end}",
+            "kind": kind,
         }
+        if include_score:
+            projected["score"] = score
+        if name is not None:
+            projected["name"] = name
+        return projected
 
     @staticmethod
     def _extract_normalized_path(item: dict[str, Any]) -> str:
