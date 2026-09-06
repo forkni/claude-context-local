@@ -947,17 +947,25 @@ class RelationshipAnalyzer:
         return projected
 
     def _extract_result_info(self, result: Any, chunk_id: str) -> dict[str, Any]:
-        return self._project_result(result, chunk_id, include_score=False)
+        projected = self._project_result(result, chunk_id, include_score=False)
+        file_value = projected["file"]
+        if file_value:
+            projected["file"] = normalize_path(file_value)
+        return projected
 
     def _extract_symbol_info(
         self, result: Any, target_id: str, symbol_name: str | None
     ) -> dict[str, Any]:
-        return self._project_result(
+        projected = self._project_result(
             result,
             target_id,
             include_score=False,
             name=symbol_name or target_id.split(":")[-1],
         )
+        file_value = projected["file"]
+        if file_value:
+            projected["file"] = normalize_path(file_value)
+        return projected
 
     @staticmethod
     def _project_result(
@@ -971,9 +979,9 @@ class RelationshipAnalyzer:
 
         Handles both SearchResult shapes (``.metadata`` dict vs. flat
         attributes). Callers are responsible for any `file` normalization —
-        this core never calls normalize_path, so the two non-normalizing
-        adapters (`_extract_result_info`, `_extract_symbol_info`) get it for
-        free, and `_result_to_dict` applies it as its own post-step.
+        this core never calls normalize_path; each of the three adapters
+        applies it as its own post-step, so falsy-file handling can stay
+        adapter-specific.
         """
         if hasattr(result, "metadata"):
             meta = result.metadata

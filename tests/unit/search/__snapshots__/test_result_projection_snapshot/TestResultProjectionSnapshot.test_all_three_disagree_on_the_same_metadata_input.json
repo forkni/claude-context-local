@@ -1,13 +1,13 @@
 {
   "_extract_result_info": {
     "chunk_id": "cid",
-    "file": "search\\relationship_analyzer.py",
+    "file": "search/relationship_analyzer.py",
     "kind": "method",
     "lines": "100-200"
   },
   "_extract_symbol_info": {
     "chunk_id": "pkg/mod.py:method:Foo.bar",
-    "file": "search\\relationship_analyzer.py",
+    "file": "search/relationship_analyzer.py",
     "kind": "method",
     "lines": "100-200",
     "name": "bar"

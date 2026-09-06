@@ -1264,7 +1264,7 @@ class TestResultProjectionCharacterization(TestCase):
         out = analyzer._result_to_dict(result, "cid")
         self.assertEqual(out["file"], "")
 
-    def test_extract_result_info_metadata_branch_does_not_normalize_or_score(self):
+    def test_extract_result_info_metadata_branch_normalizes_but_no_score(self):
         analyzer = _bare_analyzer()
         result = _MetadataResult(
             metadata={
@@ -1279,14 +1279,14 @@ class TestResultProjectionCharacterization(TestCase):
             out,
             {
                 "chunk_id": "cid",
-                "file": "search\\relationship_analyzer.py",  # NOT normalized
+                "file": "search/relationship_analyzer.py",  # normalized (Commit 2)
                 "lines": "10-20",
                 "kind": "method",
             },
         )
         self.assertNotIn("score", out)
 
-    def test_extract_result_info_fallback_branch_does_not_normalize_or_score(self):
+    def test_extract_result_info_fallback_branch_normalizes_but_no_score(self):
         analyzer = _bare_analyzer()
         result = _FallbackResult(
             file_path="chunking\\tree_sitter.py",
@@ -1296,10 +1296,12 @@ class TestResultProjectionCharacterization(TestCase):
             similarity_score=0.99,
         )
         out = analyzer._extract_result_info(result, "cid")
-        self.assertEqual(out["file"], "chunking\\tree_sitter.py")  # NOT normalized
+        self.assertEqual(
+            out["file"], "chunking/tree_sitter.py"
+        )  # normalized (Commit 2)
         self.assertNotIn("score", out)
 
-    def test_extract_symbol_info_metadata_branch_adds_name_no_normalize_no_score(self):
+    def test_extract_symbol_info_metadata_branch_adds_name_normalizes_no_score(self):
         analyzer = _bare_analyzer()
         result = _MetadataResult(
             metadata={
@@ -1314,7 +1316,7 @@ class TestResultProjectionCharacterization(TestCase):
             out,
             {
                 "chunk_id": "pkg/mod.py:method:Foo.bar",
-                "file": "search\\relationship_analyzer.py",  # NOT normalized
+                "file": "search/relationship_analyzer.py",  # normalized (Commit 2)
                 "lines": "10-20",
                 "kind": "method",
                 "name": "bar",
@@ -1330,12 +1332,10 @@ class TestResultProjectionCharacterization(TestCase):
     def test_all_three_disagree_on_the_same_metadata_input(self):
         """The centerpiece characterization: one input, three different shapes.
 
-        Same backslash-bearing metadata fed to all three adapters produces
-        three different `file` strings (normalized vs. not) and two different
-        key sets (score present/absent, name present/absent). What this
-        pins is what a future unification step must NOT change without a
-        deliberate, separately-gated commit (see plan Commit 2). The
-        cross-adapter *snapshot* form of this same input lives in
+        Since Commit 2 (normalize_path uniformity), all three now agree on
+        the `file` string; they still disagree on key sets (score
+        present/absent, name present/absent) -- that axis is untouched.
+        The cross-adapter *snapshot* form of this same input lives in
         tests/unit/search/test_result_projection_snapshot.py.
         """
         analyzer = _bare_analyzer()
@@ -1362,7 +1362,7 @@ class TestResultProjectionCharacterization(TestCase):
             analyzer._extract_result_info(result, "cid"),
             {
                 "chunk_id": "cid",
-                "file": "search\\relationship_analyzer.py",  # NOT normalized
+                "file": "search/relationship_analyzer.py",  # normalized (Commit 2)
                 "lines": "100-200",
                 "kind": "method",
             },
@@ -1371,7 +1371,7 @@ class TestResultProjectionCharacterization(TestCase):
             analyzer._extract_symbol_info(result, "pkg/mod.py:method:Foo.bar", "bar"),
             {
                 "chunk_id": "pkg/mod.py:method:Foo.bar",
-                "file": "search\\relationship_analyzer.py",  # NOT normalized
+                "file": "search/relationship_analyzer.py",  # normalized (Commit 2)
                 "lines": "100-200",
                 "kind": "method",
                 "name": "bar",

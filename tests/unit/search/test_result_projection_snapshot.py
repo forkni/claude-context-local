@@ -67,11 +67,9 @@ class TestResultProjectionSnapshot:
     def test_all_three_disagree_on_the_same_metadata_input(self, snapshot):
         """The centerpiece: one input, three different output shapes.
 
-        Same backslash-bearing metadata fed to all three adapters produces
-        three different `file` strings (normalized vs. not) and two
-        different key sets (score present/absent, name present/absent).
-        This is exactly what a future unification step must not change
-        without a deliberate, separately-gated commit (see plan Commit 2).
+        Since Commit 2 (normalize_path uniformity), all three agree on the
+        `file` string; they still disagree on key sets (score
+        present/absent, name present/absent) -- that axis is untouched.
         """
         analyzer = _bare_analyzer()
         result = _MetadataResult(
