@@ -907,9 +907,21 @@ class MultiLanguageChunker:
                     (tchunk.start_line, tchunk.end_line, chunk_id)
                 )
 
-            # Determine parent_chunk_id for methods
+            # Determine parent_chunk_id for methods. "decorated_definition" is
+            # included because a decorated member (e.g. @property, @staticmethod)
+            # keeps its wrapper node type as chunk_type -- chunk_type is baked
+            # into chunk_id, so remapping it to "method" would move every
+            # decorated chunk's id and break golden-dataset references. The
+            # parent_name conjunct is what keeps module-level decorated
+            # functions unparented. Unlike the "function" arm, this arm
+            # bypasses parent_type entirely -- safe today only because Python
+            # has no namespace container and C++ has no decorated definitions.
             parent_chunk_id = None
-            if parent_name and chunk_type in ("method", "function"):
+            if parent_name and chunk_type in (
+                "method",
+                "function",
+                "decorated_definition",
+            ):
                 # Look up the enclosing class's chunk_id (innermost span
                 # containing this chunk, among same-named containers)
                 parent_chunk_id = self._resolve_parent_chunk_id(

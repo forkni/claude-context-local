@@ -93,6 +93,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Decorated methods never got a `parent_chunk_id`.** The class→method `contains` edge (added
+  above) is driven by `parent_chunk_id`, but `multi_language_chunker.py`'s assignment gate only
+  admitted `chunk_type in ("method", "function")` — a decorated member (`@property`,
+  `@staticmethod`, `@cached_property`, …) keeps its tree-sitter wrapper type,
+  `"decorated_definition"`, as its `chunk_type` (deliberately: `chunk_type` is baked into
+  `chunk_id`, so remapping it to `"method"` would move every decorated chunk's id and break
+  golden-dataset references), so it fell through the gate and stayed unparented even though its
+  undecorated siblings did not. Measured: **128 decorated methods** on the indexed corpus
+  (557 repo-wide) were invisible to class→method containment — `find_path` from a class to one
+  of its own decorated methods reported no path. Gate widened to also admit
+  `"decorated_definition"`; `split_block` fragments of a large decorated method remain
+  unparented by design (out of scope — see the follow-up ADR-0038 note), and a nested
+  *decorated* class now gets an edge while a nested *plain* class still does not (accepted
+  asymmetry, 0 instances in this repo, pinned with a characterization test). Adds ~128 new
+  `contains` edges on a full reindex of this repo — **the 2026-09-05 canon pin
+  (`evaluation/CANON_20260905_REBASELINE.md`) is stale pending a re-pin**, deliberately deferred
+  to a dedicated session per this change's scope decision. The chunk-shape half of this gap
+  (methods of a `@dataclass`-decorated class never becoming chunks at all) is a separate,
+  deferred change — see `docs/adr/0038-cpp-only-container-traversal-seam.md`.
 - **TD `scripted_by` / `via: file` edges dead-ended on phantom module nodes** (ADR-0062 C6).
   On a full reindex of a real project all 214 such edges targeted
   `Scripts/<x>.py:0-0:module:<stem>` phantoms, 0 carried `retargeted`, and `find_path` from a
@@ -204,6 +223,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Migration
 
+- **Reindex required to see `parent_chunk_id` on decorated methods.** File content is unchanged
+  by this fix, so `index_directory(..., incremental=True)` (the default) will not re-chunk
+  already-indexed Python files and previously-emitted decorated-method chunks will keep
+  `parent_chunk_id: null`. Run a full (non-incremental) reindex to populate the new values and
+  their `contains` edges; `INDEX_VERSION` is not bumped (ADR-0037 precedent — this changes
+  neither the BM25 document format nor the metadata schema).
 - **Opting in to `.tdgraph.json` indexing.** Set `"chunking": {"enable_td_network_indexing": true}`
   in a project's `search_config.json`, then run a non-incremental reindex
   (`index_directory(..., incremental=False)`) — a new extension means new files, not a format

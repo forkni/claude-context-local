@@ -1939,6 +1939,7 @@ class TestClassContainsMethodEdge(TestCase):
     CLS = "Scripts/Logger__td.py:17-57:class:Logger"
     METH = "Scripts/Logger__td.py:23-31:method:Logger.log"
     FUNC = "Scripts/Logger__td.py:60-70:function:helper"
+    DECO_METH = "Scripts/Logger__td.py:33-37:decorated_definition:Logger.cached_value"
 
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
@@ -1986,6 +1987,18 @@ class TestClassContainsMethodEdge(TestCase):
     def _func(self):
         return SimpleNamespace(
             chunk_id=self.FUNC, metadata=self._meta(self.FUNC, "helper", "function")
+        )
+
+    def _deco_meth(self):
+        return SimpleNamespace(
+            chunk_id=self.DECO_METH,
+            metadata=self._meta(
+                self.DECO_METH,
+                "cached_value",
+                "decorated_definition",
+                parent_name="Logger",
+                parent_chunk_id=self.CLS,
+            ),
         )
 
     def _contains_edges(self):
@@ -2040,6 +2053,20 @@ class TestClassContainsMethodEdge(TestCase):
         self.graph.add_chunk(self.FUNC, self._func().metadata)
 
         self.assertEqual(self.graph._chunk_stats["containment_edges"], 1)
+
+    def test_decorated_definition_gets_containment_edge(self):
+        """``decorated_definition`` is in ``SEMANTIC_TYPES``, so a decorated
+        method's ``parent_chunk_id`` produces the same class->member edge as
+        a plain method (chunking/multi_language_chunker.py's widened gate)."""
+        self.graph.add_chunk(self.CLS, self._cls().metadata)
+        self.graph.add_chunk(self.DECO_METH, self._deco_meth().metadata)
+
+        edges = self._contains_edges()
+        self.assertEqual([(u, v) for u, v, _ in edges], [(self.CLS, self.DECO_METH)])
+        (_, _, data) = edges[0]
+        self.assertEqual(data["confidence"], 1.0)
+        self.assertEqual(data["via"], "parent_chunk_id")
+        self.assertEqual(data["resolver_source"], "chunker")
 
     # -- batch _two_pass_build path -----------------------------------------
 

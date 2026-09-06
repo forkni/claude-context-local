@@ -80,6 +80,35 @@ the one-line spec change for either is mechanically identical to what `CppChunke
   until the reopening condition below is acted on.
 - The Rust and C# instances are recorded here (not left as an undocumented "noticed in passing")
   specifically so re-discovering this from a support report or a future audit isn't necessary.
+- **Python has a third instance, found 2026-09-05** while fixing the `parent_chunk_id` assignment
+  gate for decorated methods (see `CHANGELOG.md` `[Unreleased]`/`### Fixed`): `decorated_definition`
+  is splittable (`language_registry.py:422`) but, like Rust's `impl_item` and C#'s
+  `namespace_declaration`, not a container. `@dataclass class X: def method(self): ...` chunks
+  the whole decorated class as one opaque blob; `method` never surfaces as its own chunk.
+  Measured on this repo: **76 decorated classes swallowing 72 methods**. The assignment-gate fix
+  landed deliberately without this half — container registration for `class`/`struct`/`union`/
+  `namespace` chunk types (`multi_language_chunker.py:905`) is provably dead code for a decorated
+  class today, since no child chunk ever exists to look it up.
+
+  **The naive fix is wrong — verified in-memory, not just by reading.** Simply adding
+  `"decorated_definition"` to `_CONTAINER_NODE_TYPES` makes traversal recurse into the wrapper
+  node's children, where the inner `class_definition` is *itself* splittable *and already* a
+  container — producing a duplicate, self-parented class chunk:
+
+  ```
+  decorated_definition  name='Decorated'     parent=None         lines=4-12
+  class_definition      name='Decorated'     parent='Decorated'  lines=5-12   <-- duplicate
+  function_definition   name='dec_cls_meth'  parent='Decorated'  lines=8-12
+  ```
+
+  The correct shape traverses the **inner class node's children directly, skipping the wrapper**
+  — this needs a `_is_container_node(node)` predicate seam (e.g. "is this node, or a single
+  non-decorator child of it, a container type") rather than the current frozenset membership
+  test on `node.type` alone. That seam change is out of scope for a container-set override alone
+  and needs its own design, its own `tests/fixtures/chunker_corpus/sample.py` extension, its own
+  `test_chunker_metadata_parity[py]` snapshot re-record, and its own full-reindex canon re-pin
+  (`evaluation/CANON_20260905_REBASELINE.md` is stale for this reason alone once it lands, on top
+  of the `contains`-edge drift already recorded there).
 
 ## Reopening condition
 
@@ -105,4 +134,5 @@ Two terms introduced by this fix, also recorded in `CONTEXT.md`:
   stopping at its boundary; anything nested inside it is absorbed into that one chunk rather than
   surfacing separately. This was the *only* behavior available before this fix, and remains the
   default for any splittable node type not listed in `_CONTAINER_NODE_TYPES` (e.g. Rust's
-  `impl_item`, C#'s `namespace_declaration` — see Consequences above).
+  `impl_item`, C#'s `namespace_declaration`, Python's `decorated_definition` when it wraps a
+  class — see Consequences above).
