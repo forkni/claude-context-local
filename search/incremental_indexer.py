@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from chunking.repo_profiler import RepoProfile
 
+    from .filters import PathFilter
     from .resource_refresh import ResourceRefresher
 
 from chunking.multi_language_chunker import MultiLanguageChunker
@@ -683,15 +684,7 @@ class IncrementalIndexer:
             self._report_duplicate_content(dag, supported_files)
             self._report_extension_skip_histogram(all_files, supported_files)
 
-            # Per-pattern diagnostics: a pattern that matched nothing is the
-            # exact silent-failure class this whole filtering system exists to
-            # catch (e.g. a typo'd or absent package name under
-            # site-packages) — surface it loudly instead of quietly indexing
-            # whatever ancestor files happened to survive.
-            for unmatched in self._path_filter.unmatched_patterns():
-                logger.warning(
-                    f"[FULL_INDEX] Directory filter pattern matched 0 files/dirs: {unmatched!r}"
-                )
+            self._warn_unmatched_patterns(self._path_filter, "FULL_INDEX")
             if self._path_filter.all_includes_unmatched():
                 error = (
                     f"All include_dirs patterns matched 0 files: {self.include_dirs}. "
@@ -881,6 +874,22 @@ class IncrementalIndexer:
             List of supported file paths
         """
         return [f for f in all_files if self._is_supported_file(project_path, f)]
+
+    @staticmethod
+    def _warn_unmatched_patterns(path_filter: PathFilter, log_prefix: str) -> None:
+        """Log each include/exclude pattern that matched 0 files/dirs.
+
+        A pattern that matched nothing is the exact silent-failure class
+        this whole filtering system exists to catch (e.g. a typo'd or
+        absent package name under site-packages) — surface it loudly
+        instead of quietly indexing whatever ancestor files happened to
+        survive. Shared by the full-index tree walk and the incremental
+        per-change filter, which previously duplicated this loop.
+        """
+        for unmatched in path_filter.unmatched_patterns():
+            logger.warning(
+                f"[{log_prefix}] Directory filter pattern matched 0 files/dirs: {unmatched!r}"
+            )
 
     def _report_duplicate_content(
         self, dag: MerkleDAG, supported_files: list[str]
@@ -1106,17 +1115,8 @@ class IncrementalIndexer:
         # self._path_filter — set from the DAG in incremental_index/
         # _full_index; lazily built here if unset, e.g. direct calls).
         path_filter = self._get_path_filter(project_path)
-
-        supported_files = [
-            f
-            for f in files_to_index
-            if self.chunker.is_supported(f) and path_filter.should_index_file(f)
-        ]
-
-        for unmatched in path_filter.unmatched_patterns():
-            logger.warning(
-                f"[INCREMENTAL] Directory filter pattern matched 0 files/dirs: {unmatched!r}"
-            )
+        supported_files = self._get_supported_files(project_path, files_to_index)
+        self._warn_unmatched_patterns(path_filter, "INCREMENTAL")
 
         # Collect all chunks first, then embed in a single pass
         # Use parallel chunking for improved performance

@@ -162,6 +162,17 @@ class CodeIndexManager:
         return self._faiss_index.is_on_gpu
 
     @property
+    def graph_integration(self) -> GraphIntegration:
+        """Access to the graph integration layer.
+
+        Public accessor over ``_graph`` so callers depending on
+        :class:`~search.index_write_stage.IndexWriteTarget` reach it without
+        touching a private attribute (see ``HybridSearcher.graph_integration``
+        for the sibling adapter).
+        """
+        return self._graph
+
+    @property
     def metadata_store(self) -> MetadataStore:
         """Access to metadata storage layer.
 

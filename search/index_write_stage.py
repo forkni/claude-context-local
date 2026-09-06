@@ -7,7 +7,8 @@ import time
 import traceback
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from chunking.language_registry import td_network_indexing_enabled
 from chunking.python_ast_chunker import CodeChunk
@@ -17,14 +18,49 @@ from merkle.snapshot_manager import SnapshotManager
 
 from .call_edge_injection import InjectionStats, inject_call_edges
 from .config import get_search_config
-from .indexer import CodeIndexManager as Indexer
 
 
 if TYPE_CHECKING:
     from chunking.repo_profiler import RepoProfile
+    from embeddings.embedder import EmbeddingResult
+    from search.graph_integration import GraphIntegration
+    from search.metadata import MetadataStore
 
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class IndexWriteTarget(Protocol):
+    """What the index write pass needs from an indexer.
+
+    Two adapters satisfy this structurally: ``CodeIndexManager`` (the plain
+    on-disk index) and ``HybridSearcher`` (which forwards each member to its
+    own wrapped ``CodeIndexManager`` / ``IndexSynchronizer``). Neither
+    subclasses this protocol or imports it — see ``ResourceRefresher``
+    (``search/resource_refresh.py``) for the precedent this mirrors.
+
+    ``graph_integration`` and ``metadata_store`` are required members (not
+    optional/duck-typed via ``getattr``) because both adapters always
+    construct them at ``__init__`` time — ``metadata_store`` is never
+    ``None``; ``graph_integration`` may be ``None`` on ``HybridSearcher`` if
+    graph storage failed to load, matching its own ``graph_storage``
+    property.
+    """
+
+    storage_dir: Path
+
+    @property
+    def graph_integration(self) -> GraphIntegration | None: ...
+
+    @property
+    def metadata_store(self) -> MetadataStore: ...
+
+    def add_embeddings(self, embedding_results: list[EmbeddingResult]) -> None: ...
+
+    def save_indices(self) -> None: ...
+
+    def resync_if_desynced(self, log_prefix: str = ...) -> tuple[bool, int]: ...
 
 
 @dataclass
@@ -62,7 +98,7 @@ class IndexWriteStage:
     def __init__(
         self,
         embedder: Any,
-        indexer: Indexer,
+        indexer: IndexWriteTarget,
         snapshot_manager: SnapshotManager,
         build_metadata_fn: Callable[..., dict[str, Any]],
         clear_gpu_fn: Callable[[str], None],
@@ -330,7 +366,7 @@ class IndexWriteStage:
                 :meth:`run`).
         """
         # Resolve graph storage.
-        graph_integration = getattr(self._indexer, "_graph", None)
+        graph_integration = self._indexer.graph_integration
         if graph_integration is None:
             logger.warning(
                 "[CALL_EDGES] Graph integration not available — skipping edge injection"
@@ -343,16 +379,8 @@ class IndexWriteStage:
             )
             return InjectionStats(error="graph storage not available")
 
-        # Resolve metadata store.
-        dense_index = getattr(self._indexer, "dense_index", None)
-        meta_store = (
-            getattr(dense_index, "metadata_store", None) if dense_index else None
-        )
-        if meta_store is None:
-            logger.warning(
-                "[CALL_EDGES] Metadata store not available — skipping edge injection"
-            )
-            return InjectionStats(error="metadata store not available")
+        # Resolve metadata store (always present per IndexWriteTarget).
+        meta_store = self._indexer.metadata_store
 
         cg_cfg = getattr(get_search_config(), "call_graph", None)
         return inject_call_edges(storage, meta_store, project_path, cg_cfg)
@@ -375,7 +403,7 @@ class IndexWriteStage:
         """
         if not td_network_indexing_enabled():
             return 0
-        graph_integration = getattr(self._indexer, "_graph", None)
+        graph_integration = self._indexer.graph_integration
         if graph_integration is None:
             return 0
         return graph_integration.retarget_scripted_by_edges()

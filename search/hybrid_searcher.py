@@ -27,6 +27,7 @@ from graph.graph_storage import CodeGraphStorage
 from graph.traversal_policy import TraversalPolicy
 from search.config import SearchMode, get_search_config
 from search.graph_integration import GraphIntegration
+from search.metadata import MetadataStore
 from utils.observability import traced_block
 from utils.otel_attributes import (
     ATTR_CAPTURE_QUERY,
@@ -444,6 +445,27 @@ class HybridSearcher(BaseSearcher):
         self._graph = (
             GraphIntegration.from_storage(value) if value is not None else None
         )
+
+    @property
+    def graph_integration(self) -> GraphIntegration | None:
+        """Access to the graph integration layer.
+
+        Public accessor over ``_graph`` so callers depending on
+        :class:`~search.index_write_stage.IndexWriteTarget` reach it without
+        touching a private attribute (see ``CodeIndexManager.graph_integration``
+        for the sibling adapter). ``None`` when graph storage failed to load
+        (see ``graph_storage`` setter).
+        """
+        return self._graph
+
+    @property
+    def metadata_store(self) -> MetadataStore:
+        """Access to the metadata storage layer.
+
+        Forwards to ``self.dense_index.metadata_store`` — the underlying
+        ``CodeIndexManager`` this searcher wraps.
+        """
+        return self.dense_index.metadata_store
 
     @property
     def stats(self) -> dict[str, Any]:

@@ -242,7 +242,7 @@ class TestInjectCallEdgesMinConfidence:
     @staticmethod
     def _make_stage_for_injection() -> IndexWriteStage:
         """Return an IndexWriteStage whose _indexer has all the attributes
-        inject_call_edges accesses (graph, dense_index.metadata_store)."""
+        inject_call_edges accesses (graph_integration, metadata_store)."""
         import networkx as nx
 
         g = nx.MultiDiGraph()
@@ -258,12 +258,10 @@ class TestInjectCallEdgesMinConfidence:
         graph_integration.storage = storage
 
         meta_store = Mock()
-        dense_index = Mock()
-        dense_index.metadata_store = meta_store
 
         indexer = Mock()
-        indexer._graph = graph_integration
-        indexer.dense_index = dense_index
+        indexer.graph_integration = graph_integration
+        indexer.metadata_store = meta_store
 
         stage = IndexWriteStage(
             embedder=Mock(),
@@ -513,12 +511,10 @@ class TestInjectCallEdgesResolverSelection:
         graph_integration.storage = storage
 
         meta_store = Mock()
-        dense_index = Mock()
-        dense_index.metadata_store = meta_store
 
         indexer = Mock()
-        indexer._graph = graph_integration
-        indexer.dense_index = dense_index
+        indexer.graph_integration = graph_integration
+        indexer.metadata_store = meta_store
 
         stage = IndexWriteStage(
             embedder=Mock(),
@@ -745,19 +741,20 @@ class TestRetargetTdScriptEdges:
         with self._patch_gate(enabled=False):
             assert stage.retarget_td_script_edges() == 0
 
-        indexer._graph.retarget_scripted_by_edges.assert_not_called()
+        indexer.graph_integration.retarget_scripted_by_edges.assert_not_called()
 
     def test_gate_on_delegates_and_returns_count(self) -> None:
         indexer = Mock()
-        indexer._graph.retarget_scripted_by_edges.return_value = 3
+        indexer.graph_integration.retarget_scripted_by_edges.return_value = 3
         stage = self._make_stage(indexer)
         with self._patch_gate(enabled=True):
             assert stage.retarget_td_script_edges() == 3
 
-        indexer._graph.retarget_scripted_by_edges.assert_called_once_with()
+        indexer.graph_integration.retarget_scripted_by_edges.assert_called_once_with()
 
     def test_gate_on_without_graph_is_zero(self) -> None:
-        indexer = Mock(spec=[])  # no `_graph` attribute at all
+        indexer = Mock(spec=["graph_integration"])
+        indexer.graph_integration = None
         stage = self._make_stage(indexer)
         with self._patch_gate(enabled=True):
             assert stage.retarget_td_script_edges() == 0
@@ -850,12 +847,9 @@ class TestInjectCallEdgesMultiGraph:
         graph_integration = Mock()
         graph_integration.storage = storage
 
-        dense_index = Mock()
-        dense_index.metadata_store = Mock()
-
         indexer = Mock()
-        indexer._graph = graph_integration
-        indexer.dense_index = dense_index
+        indexer.graph_integration = graph_integration
+        indexer.metadata_store = Mock()
 
         stage = IndexWriteStage(
             embedder=Mock(),
