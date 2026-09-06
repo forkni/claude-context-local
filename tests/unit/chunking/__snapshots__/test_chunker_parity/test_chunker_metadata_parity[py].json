@@ -1,7 +1,7 @@
 [
   {
     "content": "def add(x: int, y: int) -> int:\n    \"\"\"Add two numbers.\"\"\"\n    return x + y",
-    "end_line": 6,
+    "end_line": 8,
     "language": "python",
     "metadata": {
       "complexity_score": 1,
@@ -10,24 +10,24 @@
       "node_type": "function_definition",
       "param_count": 2
     },
-    "start_line": 4,
+    "start_line": 6,
     "type": "function_definition"
   },
   {
     "content": "class Greeter:\n    \"\"\"A simple greeter class.\"\"\"\n\n    def greet(self, name: str) -> str:\n        \"\"\"Return a greeting string.\"\"\"\n        return f\"Hello, {name}\"",
-    "end_line": 14,
+    "end_line": 16,
     "language": "python",
     "metadata": {
       "docstring": "A simple greeter class.",
       "name": "Greeter",
       "node_type": "class_definition"
     },
-    "start_line": 9,
+    "start_line": 11,
     "type": "class_definition"
   },
   {
     "content": "def greet(self, name: str) -> str:\n        \"\"\"Return a greeting string.\"\"\"\n        return f\"Hello, {name}\"",
-    "end_line": 14,
+    "end_line": 16,
     "language": "python",
     "metadata": {
       "complexity_score": 1,
@@ -38,12 +38,12 @@
       "parent_name": "Greeter",
       "parent_type": "class"
     },
-    "start_line": 12,
+    "start_line": 14,
     "type": "function_definition"
   },
   {
     "content": "def _passthrough(f):\n    return f",
-    "end_line": 18,
+    "end_line": 20,
     "language": "python",
     "metadata": {
       "complexity_score": 1,
@@ -51,12 +51,12 @@
       "node_type": "function_definition",
       "param_count": 1
     },
-    "start_line": 17,
+    "start_line": 19,
     "type": "function_definition"
   },
   {
     "content": "@_passthrough\ndef decorated_fn() -> None:\n    \"\"\"A decorated no-op function.\"\"\"\n    pass",
-    "end_line": 24,
+    "end_line": 26,
     "language": "python",
     "metadata": {
       "complexity_score": 1,
@@ -67,7 +67,39 @@
       "name": "decorated_fn",
       "node_type": "decorated_definition"
     },
-    "start_line": 21,
+    "start_line": 23,
     "type": "decorated_definition"
+  },
+  {
+    "content": "@dataclass\nclass Boxed:\n    \"\"\"A decorated (dataclass) class with one method.\"\"\"\n\n    value: int = 0\n\n    def unwrap(self) -> int:\n        \"\"\"Return the boxed value.\"\"\"\n        return self.value",
+    "end_line": 37,
+    "language": "python",
+    "metadata": {
+      "complexity_score": 1,
+      "decorators": [
+        "@dataclass"
+      ],
+      "docstring": "A decorated (dataclass) class with one method.",
+      "name": "Boxed",
+      "node_type": "decorated_definition"
+    },
+    "start_line": 29,
+    "type": "decorated_definition"
+  },
+  {
+    "content": "def unwrap(self) -> int:\n        \"\"\"Return the boxed value.\"\"\"\n        return self.value",
+    "end_line": 37,
+    "language": "python",
+    "metadata": {
+      "complexity_score": 1,
+      "docstring": "Return the boxed value.",
+      "name": "unwrap",
+      "node_type": "function_definition",
+      "param_count": 1,
+      "parent_name": "Boxed",
+      "parent_type": "class"
+    },
+    "start_line": 35,
+    "type": "function_definition"
   }
 ]

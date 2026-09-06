@@ -54,6 +54,22 @@ class PythonChunker(LanguageChunker):
             "match_statement",  # match/case (Python 3.10+)
         }
 
+    def _container_traversal_root(self, node: Any) -> Any | None:
+        """A decorated class is a container; a decorated function is not.
+
+        Returns the *inner* class node so `traverse` descends straight into
+        the class body: the `decorated_definition` wrapper is still chunked
+        (its chunk_id is load-bearing for golden references) and the inner
+        `class_definition` is skipped, which is what prevents the duplicate
+        self-parented chunk recorded in ADR-0038.
+        """
+        if node.type == "decorated_definition":
+            for child in node.children:
+                if child.type in self._CONTAINER_NODE_TYPES:
+                    return child
+            return None
+        return super()._container_traversal_root(node)
+
     def get_node_complexity(self, node: Any) -> int:
         """Get cyclomatic complexity for a Python function node.
 

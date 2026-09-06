@@ -110,6 +110,13 @@ the one-line spec change for either is mechanically identical to what `CppChunke
   (`evaluation/CANON_20260905_REBASELINE.md` is stale for this reason alone once it lands, on top
   of the `contains`-edge drift already recorded there).
 
+  **Resolved 2026-09-05 by [ADR-0063](0063-python-decorated-class-container-traversal.md).** The
+  seam predicted here shipped as `_container_traversal_root(node)` — a method that returns the
+  *node whose children are members* rather than a bool, so `PythonChunker` can return the inner
+  `class_definition` for a `decorated_definition` wrapper without re-chunking either node. Python's
+  decorated classes are no longer a Transparent-node example (see Glossary below); Rust's
+  `impl_item`/`mod_item` and C#'s `namespace_declaration` remain open per the Reopening condition.
+
 ## Reopening condition
 
 Reopen when either language has a real project driving the need — i.e. a project analogous to
@@ -129,10 +136,16 @@ Two terms introduced by this fix, also recorded in `CONTEXT.md`:
 - **Container node** — an AST node type that is both independently chunked *and* has its
   traversal continue into its children afterward, so nested chunkable nodes (methods, nested
   functions) surface as their own separate chunks. Declared per-language via the
-  `_CONTAINER_NODE_TYPES` class attribute (`chunking/languages/base.py:207`).
+  `_CONTAINER_NODE_TYPES` class attribute (`chunking/languages/base.py:207`), consulted through
+  the overridable `_container_traversal_root(node)` predicate (`:base.py`, added by
+  [ADR-0063](0063-python-decorated-class-container-traversal.md)) — which lets a leaf chunker
+  return a *different* node than the one that was chunked, for wrapper node types like Python's
+  `decorated_definition`.
 - **Transparent node** — an AST node type that is chunked as a single opaque unit, with traversal
   stopping at its boundary; anything nested inside it is absorbed into that one chunk rather than
   surfacing separately. This was the *only* behavior available before this fix, and remains the
   default for any splittable node type not listed in `_CONTAINER_NODE_TYPES` (e.g. Rust's
-  `impl_item`, C#'s `namespace_declaration`, Python's `decorated_definition` when it wraps a
-  class — see Consequences above).
+  `impl_item`, C#'s `namespace_declaration` — see Consequences above). Python's
+  `decorated_definition` was an example here until ADR-0063 made a decorated class a container
+  node; a decorated *function* stays Transparent (`_container_traversal_root` returns `None` for
+  it).

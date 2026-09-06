@@ -67,6 +67,8 @@ for avoiding re-litigating settled questions.
 | [0059](0059-execution-witnessed-callgraph-ground-truth.md) | Execution-witnessed call-graph ground truth for resolver-tier calibration | accepted | 2026-09-02 |
 | [0060](0060-c-family-call-edge-tier.md) | C/C++ call-edge tier: tree-sitter name matching, shipped | accepted | 2026-09-03 |
 | [0061](0061-fold-split-block-spans-in-line-map.md) | Fold split_block fragments into one line-map span keyed to the first fragment | accepted | 2026-09-03 |
+| [0062](0062-td-network-indexing.md) | Index `.tdgraph.json` TouchDesigner network snapshots (Part C) | accepted | 2026-09-03 |
+| [0063](0063-python-decorated-class-container-traversal.md) | Make Python decorated classes container nodes | accepted | 2026-09-05 |
 
 ## Adding a new ADR
 

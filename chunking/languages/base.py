@@ -199,7 +199,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
     #: the way every other chunked node does. Distinct from
     #: `_CLASS_LEVEL_NODE_TYPES` above — that seam is consumed by the
     #: adaptive-sizing profiler's function-vs-class split; this one gates the
-    #: traverse() early-return in `chunk_tree`. Default matches the
+    #: traverse() early-return in `chunk_parsed`. Default matches the
     #: pre-v0.24 hardcoded check byte-for-byte, so every existing language's
     #: parity snapshot is unaffected. Override in a leaf chunker (e.g.
     #: CppChunker, for `namespace_definition`/`struct_specifier`/
@@ -207,6 +207,19 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
     _CONTAINER_NODE_TYPES: frozenset[str] = frozenset(
         {"class_definition", "class_declaration"}
     )
+
+    def _container_traversal_root(self, node: Any) -> Any | None:
+        """Return the node whose children are container members, or None.
+
+        Default: a node is its own traversal root iff its type is in
+        `_CONTAINER_NODE_TYPES`. Overriding leaves can return a *different*
+        node -- see PythonChunker, which returns the inner class of a
+        decorated class so neither the wrapper nor the inner node is
+        re-chunked.
+        """
+        if node.type in self._CONTAINER_NODE_TYPES:
+            return node
+        return None
 
     @property
     def function_node_types(self) -> frozenset[str]:
@@ -931,6 +944,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                     and config.enable_large_node_splitting
                     and node_lines > config.max_chunk_lines
                     and node.type in ("function_definition", "decorated_definition")
+                    and self._container_traversal_root(node) is None
                 ):
                     # Determine effective split threshold:
                     # - "fixed" mode: use static max_split_chars from config
@@ -994,17 +1008,22 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                 # For containers (classes and, in overriding leaves,
                 # namespaces/structs/unions), continue traversing to find
                 # members. For other chunked nodes, stop traversal.
-                if node.type in self._CONTAINER_NODE_TYPES:
-                    # Pass container info to children
+                # `_container_traversal_root` may return a *different* node
+                # than `node` itself (e.g. PythonChunker returns the inner
+                # class of a decorated class) -- traverse that node's
+                # children, not `node`'s, so the wrapper is chunked once and
+                # its container body is not re-chunked as a duplicate.
+                container_root = self._container_traversal_root(node)
+                if container_root is not None:
                     class_info = {
                         "parent_name": metadata.get("name"),
                         "parent_type": (
                             "namespace"
-                            if node.type == "namespace_definition"
+                            if container_root.type == "namespace_definition"
                             else "class"
                         ),
                     }
-                    for child in node.children:
+                    for child in container_root.children:
                         traverse(child, depth + 1, class_info)
                 return
 

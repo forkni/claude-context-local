@@ -1940,6 +1940,8 @@ class TestClassContainsMethodEdge(TestCase):
     METH = "Scripts/Logger__td.py:23-31:method:Logger.log"
     FUNC = "Scripts/Logger__td.py:60-70:function:helper"
     DECO_METH = "Scripts/Logger__td.py:33-37:decorated_definition:Logger.cached_value"
+    DECO_CLS = "Scripts/Logger__td.py:80-95:decorated_definition:CachedLogger"
+    METH_OF_DECO_CLS = "Scripts/Logger__td.py:82-86:method:CachedLogger.flush"
 
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
@@ -1998,6 +2000,24 @@ class TestClassContainsMethodEdge(TestCase):
                 "decorated_definition",
                 parent_name="Logger",
                 parent_chunk_id=self.CLS,
+            ),
+        )
+
+    def _deco_cls(self):
+        return SimpleNamespace(
+            chunk_id=self.DECO_CLS,
+            metadata=self._meta(self.DECO_CLS, "CachedLogger", "decorated_definition"),
+        )
+
+    def _meth_of_deco_cls(self):
+        return SimpleNamespace(
+            chunk_id=self.METH_OF_DECO_CLS,
+            metadata=self._meta(
+                self.METH_OF_DECO_CLS,
+                "flush",
+                "method",
+                parent_name="CachedLogger",
+                parent_chunk_id=self.DECO_CLS,
             ),
         )
 
@@ -2067,6 +2087,32 @@ class TestClassContainsMethodEdge(TestCase):
         self.assertEqual(data["confidence"], 1.0)
         self.assertEqual(data["via"], "parent_chunk_id")
         self.assertEqual(data["resolver_source"], "chunker")
+
+    def test_decorated_class_parent_gets_containment_edge(self):
+        """ADR-0063: a decorated class (e.g. @dataclass) is now a container
+        node, so its own methods get parent_chunk_id pointing at the
+        decorated_definition chunk -- this must produce the same
+        class->method containment edge as a plain "class" parent.
+
+        test_decorated_definition_gets_containment_edge above covers the
+        mirror case (a decorated *method* under a plain class parent); this
+        covers a decorated_definition as the *parent*.
+        """
+        self.graph.add_chunk(self.DECO_CLS, self._deco_cls().metadata)
+        self.graph.add_chunk(self.METH_OF_DECO_CLS, self._meth_of_deco_cls().metadata)
+
+        edges = self._contains_edges()
+        self.assertEqual(
+            [(u, v) for u, v, _ in edges], [(self.DECO_CLS, self.METH_OF_DECO_CLS)]
+        )
+        (_, _, data) = edges[0]
+        self.assertEqual(data["confidence"], 1.0)
+        self.assertEqual(data["via"], "parent_chunk_id")
+        self.assertEqual(data["resolver_source"], "chunker")
+        self.assertFalse(is_phantom_node(self.storage.graph.nodes[self.DECO_CLS]))
+        self.assertFalse(
+            is_phantom_node(self.storage.graph.nodes[self.METH_OF_DECO_CLS])
+        )
 
     # -- batch _two_pass_build path -----------------------------------------
 

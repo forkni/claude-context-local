@@ -1,4 +1,6 @@
-"""Tiny Python fixture: function, class+method, decorated function."""
+"""Tiny Python fixture: function, class+method, decorated function/class."""
+
+from dataclasses import dataclass
 
 
 def add(x: int, y: int) -> int:
@@ -22,3 +24,14 @@ def _passthrough(f):
 def decorated_fn() -> None:
     """A decorated no-op function."""
     pass
+
+
+@dataclass
+class Boxed:
+    """A decorated (dataclass) class with one method."""
+
+    value: int = 0
+
+    def unwrap(self) -> int:
+        """Return the boxed value."""
+        return self.value

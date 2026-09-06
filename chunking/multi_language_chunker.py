@@ -902,7 +902,24 @@ class MultiLanguageChunker:
             # parity, which made `struct_specifier`/`union_specifier`
             # containers -- before that, struct/union members never chunked
             # separately, so this gap was unreachable.
-            if chunk_type in ("class", "struct", "union", "namespace") and name:
+            # "decorated_definition" was added for Python decorated classes
+            # (ADR-0063): a decorated class's chunk_type is the raw node type
+            # "decorated_definition" (fall-through in _map_node_type below --
+            # there is no NODE_TYPE_MAP entry for it), so without registering
+            # it here its members get parent_name from base.py's container
+            # traversal but parent_chunk_id stays None -- the same bug ADR-0038
+            # fixed for C++'s struct_specifier. Admitting decorated *methods*
+            # to this same map (they already reach this branch via `name`) is
+            # harmless: _resolve_parent_chunk_id below filters to enclosing
+            # spans, and a decorated method's span never encloses another
+            # chunk (nested functions are not chunked). This also *shrinks*
+            # that function's last-registered fallback reach, by stopping
+            # large decorated classes from splitting their span short.
+            if (
+                chunk_type
+                in ("class", "struct", "union", "namespace", "decorated_definition")
+                and name
+            ):
                 class_chunk_map.setdefault((relative_path, name), []).append(
                     (tchunk.start_line, tchunk.end_line, chunk_id)
                 )

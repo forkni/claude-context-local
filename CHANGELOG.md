@@ -93,6 +93,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Methods of a decorated class were never chunked at all** (ADR-0063). `decorated_definition`
+  was splittable but not a container (`chunking/languages/base.py`), so `@dataclass class Foo: def
+  bar(self): ...` chunked the whole decorated class as one opaque blob — `bar` never surfaced as
+  its own chunk, was not retrievable by `search_code`, and had nothing for the `parent_chunk_id`
+  fix above to attach to. New overridable `_container_traversal_root(node)` seam returns the node
+  whose children are container members (default: `node` itself, iff `_CONTAINER_NODE_TYPES`);
+  `PythonChunker` overrides it to return the **inner** `class_definition` for a
+  `decorated_definition` wrapping a class, so the wrapper is still chunked once (its `chunk_id`
+  stays load-bearing) while traversal descends straight into the class body instead of re-chunking
+  either node — the naive fix (widening `_CONTAINER_NODE_TYPES` directly) was verified in-memory
+  to produce a duplicate, self-parented class chunk. `multi_language_chunker.py`'s parent-
+  registration gate widened to also admit `chunk_type == "decorated_definition"`, mirroring
+  ADR-0038's `struct_specifier` fix. Measured on this repo: **34 decorated classes with ≥1 method,
+  72 methods** across **31 files** — no existing `chunk_id` moves, but those 31 files' synthetic
+  `module`-summary chunks change *content* (not id) because `file_summarizer.py` folds method
+  names into the summary text; zero golds in either golden dataset reference a `:module:` chunk,
+  so exposure is nil. Corrected golden-dataset `:decorated_definition:` counts while auditing this:
+  24 in `golden_dataset.json` (7 classes), 36 in `golden_dataset_expanded.json` (10 classes). No
+  reindex, benchmark run, or canon re-pin was performed for this change (scope decision) — the
+  2026-09-05 canon pin (`evaluation/CANON_20260905_REBASELINE.md`), already stale from the
+  `parent_chunk_id` fix below, is stale a second time; the eventual re-pin measures both changes
+  together. See `docs/adr/0063-python-decorated-class-container-traversal.md`.
 - **Decorated methods never got a `parent_chunk_id`.** The class→method `contains` edge (added
   above) is driven by `parent_chunk_id`, but `multi_language_chunker.py`'s assignment gate only
   admitted `chunk_type in ("method", "function")` — a decorated member (`@property`,
@@ -223,6 +245,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Migration
 
+- **Full reindex required, not just recommended, to see methods of decorated classes** (ADR-0063).
+  No `.py` file's content changed, only the chunker's traversal logic — `merkle/merkle_dag.py`
+  content-hashes file bytes, so `index_directory(..., incremental=True)` (the default) will see
+  every affected file's hash unchanged and silently skip re-chunking it, leaving the old coarse
+  `decorated_definition` blob in place with **no error or warning**. This is the third instance of
+  the "chunker changed, files didn't" gap ADR-0037 declined to solve with an automatic
+  `INDEX_VERSION`/`chunker_version` bump; `incremental=False` is mandatory here, not advisory.
 - **Reindex required to see `parent_chunk_id` on decorated methods.** File content is unchanged
   by this fix, so `index_directory(..., incremental=True)` (the default) will not re-chunk
   already-indexed Python files and previously-emitted decorated-method chunks will keep

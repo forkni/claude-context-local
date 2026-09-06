@@ -456,11 +456,13 @@ class Host:
         *plain* class still gets None, because chunk_type == "class" is not
         in the gate.
 
-        Asymmetry is deliberate and currently unpopulated (0 nested decorated
-        classes in this repo). Making decorated classes containers, and
-        widening the class-registration gate, are tracked separately (see
-        docs/adr/0038-cpp-only-container-traversal-seam.md). If that lands,
-        revisit this test rather than deleting it.
+        ADR-0063 made decorated classes container nodes: NestedDecorated's
+        own method now surfaces as a chunk and resolves to NestedDecorated,
+        confirming the "gains members" half of that change. The plain-class
+        asymmetry below remains -- chunk_type == "class" is still not in the
+        parent_chunk_id consumer tuple (multi_language_chunker.py:920-924).
+        See test_nested_plain_class_inside_decorated_class for the mirror
+        case with a decorated class as the *outer* container.
         """
         test_file = tmp_path / "deco_classes.py"
         test_file.write_text(
@@ -482,6 +484,13 @@ class Owner:
         """Decorated class nested in a plain class."""
         y: int = 0
 
+        def nested_deco_method(self):
+            """Substantial body to prevent merging."""
+            acc = 0
+            for i in range(10):
+                acc += i
+            return acc
+
     class NestedPlain:
         """Undecorated class nested in a plain class."""
         z: int = 0
@@ -493,6 +502,9 @@ class Owner:
         module_level = next(c for c in chunks if c.name == "ModuleLevel")
         nested_deco = next(c for c in chunks if c.name == "NestedDecorated")
         nested_plain = next(c for c in chunks if c.name == "NestedPlain")
+        nested_deco_method = next(
+            (c for c in chunks if c.name == "nested_deco_method"), None
+        )
 
         # A decorated class is emitted as "decorated_definition", not "class".
         assert module_level.chunk_type == "decorated_definition"
@@ -505,3 +517,277 @@ class Owner:
         # Nested: decorated gets an edge, plain does not (the known asymmetry).
         assert nested_deco.parent_chunk_id == owner.chunk_id
         assert nested_plain.parent_chunk_id is None
+
+        # NestedDecorated is now itself a container: its own method must
+        # surface as a chunk and resolve to it, not to Owner.
+        assert nested_deco_method is not None, (
+            "NestedDecorated's own method should surface as a chunk now "
+            "that decorated classes are container nodes"
+        )
+        assert nested_deco_method.parent_chunk_id == nested_deco.chunk_id
+        assert nested_deco_method.parent_name == "NestedDecorated"
+
+    def test_decorated_class_methods_surface_with_correct_parent(
+        self, chunker, tmp_path
+    ):
+        """ADR-0063: methods of a decorated class (e.g. @dataclass) must
+        surface as their own chunks with parent_chunk_id pointing at the
+        decorated_definition wrapper. Before this, traverse() stopped at the
+        wrapper (base.py's container gate did not recognize
+        decorated_definition), so the whole class body was one opaque blob
+        and these methods were never independently retrievable."""
+        test_file = tmp_path / "deco_class_methods.py"
+        test_file.write_text(
+            '''
+from dataclasses import dataclass
+
+
+@dataclass
+class Host:
+    """A decorated host class."""
+
+    value: int = 0
+
+    def get_value(self):
+        """First method with substantial code to prevent merging."""
+        result = []
+        for i in range(10):
+            result.append(i * 2)
+        return sum(result)
+
+    def set_value(self, value):
+        """Second method with substantial code to prevent merging."""
+        data = {"a": 1, "b": 2, "c": 3}
+        total = sum(data.values())
+        self.value = value + total
+'''
+        )
+        chunks = chunker.chunk_file(str(test_file))
+
+        host = next((c for c in chunks if c.name == "Host"), None)
+        assert host is not None, "Decorated class chunk should exist"
+
+        methods = [c for c in chunks if c.name in ("get_value", "set_value")]
+        assert len(methods) == 2, (
+            "Both methods should surface as separate chunks -- if this is "
+            "empty, traverse() is still stopping at the decorated_definition "
+            "wrapper instead of descending into the class body"
+        )
+        for method in methods:
+            assert method.chunk_type == "method", (
+                f"{method.name} should be promoted to chunk_type='method'"
+            )
+            assert method.parent_chunk_id == host.chunk_id, (
+                f"{method.name}.parent_chunk_id should point at the "
+                f"decorated class wrapper's chunk_id"
+            )
+            assert method.parent_name == "Host"
+
+    def test_decorated_class_no_duplicate_class_chunk(self, chunker, tmp_path):
+        """Guards the container-traversal seam itself: PythonChunker's
+        override must return the *inner* class node (so it is skipped) and
+        never fall back to re-chunking the class body under its own "class"
+        node type -- base.py has no dedup logic anywhere, so a naive fix
+        (e.g. adding "class_definition" transitively via the wrapper) would
+        emit both the decorated_definition wrapper and a duplicate
+        self-parented "class" chunk for Host.
+
+        Highest-value guard in this suite: without it,
+        test_decorated_class_methods_surface_with_correct_parent above would
+        still pass even with the naive, duplicate-emitting fix.
+        """
+        test_file = tmp_path / "deco_class_no_dup.py"
+        test_file.write_text(
+            '''
+from dataclasses import dataclass
+
+
+@dataclass
+class Host:
+    """A decorated host class."""
+
+    def method_one(self):
+        """Substantial body to prevent merging."""
+        result = []
+        for i in range(10):
+            result.append(i * 2)
+        return sum(result)
+'''
+        )
+        chunks = chunker.chunk_file(str(test_file))
+
+        host_chunks = [c for c in chunks if c.name == "Host"]
+        assert len(host_chunks) == 1, (
+            f"Expected exactly one chunk named Host, got {len(host_chunks)} "
+            f"-- container traversal is re-chunking the inner class_definition "
+            f"node in addition to the decorated_definition wrapper"
+        )
+        assert host_chunks[0].chunk_type == "decorated_definition", (
+            "Host's chunk_type must stay 'decorated_definition' -- if it is "
+            "'class' instead, the override returned the wrapper node rather "
+            "than descending past it"
+        )
+
+    def test_decorated_class_wrapper_span_unchanged(self, chunker, tmp_path):
+        """The decorated_definition wrapper's own chunk must still span the
+        decorator line through the class's last line, unchanged from
+        pre-ADR-0063 behavior. Golden-dataset references key on
+        line-range-stripped ids, but the span still drives chunk content and
+        embedding text, so a shrunk span here would silently degrade
+        retrieval without moving any golden id."""
+        test_file = tmp_path / "deco_class_span.py"
+        test_file.write_text(
+            '''
+from dataclasses import dataclass
+
+
+@dataclass
+class Host:
+    """A decorated host class."""
+
+    def method_one(self):
+        """Substantial body to prevent merging."""
+        result = []
+        for i in range(10):
+            result.append(i * 2)
+        return sum(result)
+'''
+        )
+        chunks = chunker.chunk_file(str(test_file))
+        host = next((c for c in chunks if c.name == "Host"), None)
+        assert host is not None
+
+        assert host.content.strip().startswith("@dataclass"), (
+            "wrapper span should still start at the decorator line"
+        )
+        assert "def method_one" in host.content, (
+            "wrapper span should still cover the method's def line -- the "
+            "new split-gate conjunct must not shrink the container's own span"
+        )
+
+    def test_decorated_method_inside_decorated_class(self, chunker, tmp_path):
+        """A decorated method inside a decorated class must resolve to the
+        decorated class as its parent -- exercises the pre-existing
+        "decorated_definition" consumer arm (721ccde) together with the new
+        container-registration gate (multi_language_chunker.py:905) on the
+        same traversal."""
+        test_file = tmp_path / "deco_in_deco.py"
+        test_file.write_text(
+            '''
+from dataclasses import dataclass
+
+
+@dataclass
+class Host:
+    """A decorated host class."""
+
+    @property
+    def value(self):
+        """Decorated method with a substantial body."""
+        acc = 0
+        for i in range(10):
+            acc += i
+        return acc
+'''
+        )
+        chunks = chunker.chunk_file(str(test_file))
+
+        host = next((c for c in chunks if c.name == "Host"), None)
+        value = next((c for c in chunks if c.name == "value"), None)
+
+        assert host is not None, "Decorated class chunk should exist"
+        assert value is not None, "Decorated method chunk should exist"
+        assert value.chunk_type == "decorated_definition", (
+            "kind segment must stay 'decorated_definition'"
+        )
+        assert value.parent_chunk_id == host.chunk_id, (
+            "decorated method inside a decorated class should resolve to "
+            "the decorated class's chunk_id"
+        )
+        assert value.parent_name == "Host"
+
+    def test_decorated_function_still_not_a_container(self, chunker, tmp_path):
+        """A decorated *function* (not a class) must still yield exactly one
+        chunk and never be treated as a container -- pins the `return None`
+        arm of PythonChunker._container_traversal_root for a
+        decorated_definition that does not wrap a class_definition."""
+        test_file = tmp_path / "deco_func_not_container.py"
+        test_file.write_text(
+            '''
+import functools
+
+
+@functools.cache
+def cached_helper(value):
+    """Module-level decorated function with a substantial body."""
+    result = []
+    for i in range(10):
+        result.append(i * value)
+    return sum(result)
+'''
+        )
+        chunks = chunker.chunk_file(str(test_file))
+
+        matches = [c for c in chunks if c.name == "cached_helper"]
+        assert len(matches) == 1, (
+            f"Expected exactly one chunk for a decorated function, got "
+            f"{len(matches)} -- _container_traversal_root must return None "
+            f"for a decorated_definition wrapping a function, not a class"
+        )
+        assert matches[0].parent_chunk_id is None
+
+    def test_nested_plain_class_inside_decorated_class(self, chunker, tmp_path):
+        """A nested *plain* class inside a decorated class gets parent_name
+        but not parent_chunk_id -- chunk_type == "class" is not in the
+        parent_chunk_id consumer tuple (multi_language_chunker.py:920-924),
+        the same documented asymmetry as
+        test_decorated_class_parenting_is_container_scoped, but with the
+        decorated class as the *outer* container this time. The nested
+        class's *own* method still resolves correctly to the nested class,
+        exercising _resolve_parent_chunk_id's innermost-span selection on
+        the new container-traversal path."""
+        test_file = tmp_path / "nested_plain_in_deco.py"
+        test_file.write_text(
+            '''
+from dataclasses import dataclass
+
+
+@dataclass
+class Outer:
+    """Decorated outer class."""
+
+    class Inner:
+        """Plain class nested inside a decorated class."""
+
+        def inner_method(self):
+            """Substantial body to prevent merging."""
+            acc = 0
+            for i in range(10):
+                acc += i
+            return acc
+'''
+        )
+        chunks = chunker.chunk_file(str(test_file))
+
+        inner = next(
+            (c for c in chunks if c.chunk_type == "class" and c.name == "Inner"), None
+        )
+        inner_method = next((c for c in chunks if c.name == "inner_method"), None)
+
+        assert inner is not None, "Nested plain class chunk should exist"
+        assert inner.parent_name == "Outer", (
+            "nested plain class should still get parent_name from the "
+            "decorated container"
+        )
+        assert inner.parent_chunk_id is None, (
+            "chunk_type=='class' is not in the parent_chunk_id consumer "
+            "tuple -- this asymmetry is deliberate, matching "
+            "test_decorated_class_parenting_is_container_scoped"
+        )
+
+        assert inner_method is not None, "Inner class's own method should exist"
+        assert inner_method.parent_chunk_id == inner.chunk_id, (
+            "the nested class's own method must resolve to the nested class "
+            "itself, not to Outer -- exercises innermost-span selection"
+        )
+        assert inner_method.parent_name == "Inner"
