@@ -1,0 +1,22 @@
+{
+  "_extract_result_info": {
+    "chunk_id": "cid",
+    "file": null,
+    "kind": "unknown",
+    "lines": "1-2"
+  },
+  "_extract_symbol_info": {
+    "chunk_id": "pkg/mod.py:x",
+    "file": null,
+    "kind": "unknown",
+    "lines": "1-2",
+    "name": "x"
+  },
+  "_result_to_dict": {
+    "chunk_id": "cid",
+    "file": "",
+    "kind": "unknown",
+    "lines": "1-2",
+    "score": 0.0
+  }
+}

@@ -1141,3 +1141,276 @@ class TestAnalyzeImpactCallsOnly(TestCase):
         self.assertEqual(by_id[self.TAGGED]["confidence"], "ambiguous")
         self.assertEqual(report.direct_callers_exact, 1)
         self.assertEqual(report.direct_callers_ambiguous, 1)
+
+
+# ---------------------------------------------------------------------------
+# Gate 0 (C2 architecture review): characterization tests for the three
+# result -> display dict adapters, pinning their divergent behaviour BEFORE
+# any unification. These call the real methods on a real RelationshipAnalyzer
+# instance -- unlike _make_analyzer's _result_to_dict stub above (which pins
+# nothing, as it returns a different key set entirely: chunk_id/file/name/
+# content instead of chunk_id/file/lines/kind/score).
+#
+# The cross-adapter snapshot centerpiece (proving the normalize_path
+# divergence byte-for-byte) lives separately in
+# tests/unit/search/test_result_projection_snapshot.py as a plain pytest
+# module, NOT here -- pytest fixtures like `snapshot` are not injected into
+# unittest.TestCase methods (confirmed against this repo's own
+# test_search_results_snapshot.py idiom, which is plain pytest, not
+# TestCase). Putting a `snapshot` parameter on a TestCase method here would
+# silently fail to receive the fixture.
+# ---------------------------------------------------------------------------
+
+
+def _bare_analyzer():
+    """A RelationshipAnalyzer with no wired collaborators -- these three
+    adapters are pure functions of (result, chunk_id) and touch nothing else.
+    """
+    from search.relationship_analyzer import RelationshipAnalyzer
+
+    return RelationshipAnalyzer.__new__(RelationshipAnalyzer)
+
+
+@dataclass
+class _MetadataResult:
+    """Object-with-metadata branch: hasattr(result, "metadata") is True."""
+
+    metadata: dict[str, Any]
+    score: float = 0.0
+
+
+@dataclass
+class _FallbackResult:
+    """Object-without-metadata branch: no `metadata` attribute at all, so
+    hasattr(result, "metadata") is False and the getattr-fallback path runs.
+    """
+
+    file_path: str = ""
+    relative_path: str = ""
+    start_line: int = 0
+    end_line: int = 0
+    chunk_type: str = "unknown"
+    similarity_score: float = 0.0
+
+
+class TestResultProjectionCharacterization(TestCase):
+    """Pins each adapter's exact output for every branch, before unification."""
+
+    def test_result_to_dict_dict_passthrough_normalizes_and_mutates_in_place(self):
+        analyzer = _bare_analyzer()
+        payload = {"file": "search\\module.py", "kind": "function"}
+        out = analyzer._result_to_dict(payload, "search/module.py:1-2:function:f")
+        self.assertIs(out, payload)  # mutates and returns the same object
+        self.assertEqual(out["file"], "search/module.py")
+        self.assertEqual(out["chunk_id"], "search/module.py:1-2:function:f")
+        self.assertEqual(out["kind"], "function")
+
+    def test_result_to_dict_metadata_branch_normalizes_path_and_uses_score(self):
+        analyzer = _bare_analyzer()
+        result = _MetadataResult(
+            metadata={
+                "file": "search\\relationship_analyzer.py",
+                "start_line": 10,
+                "end_line": 20,
+                "chunk_type": "method",
+            },
+            score=0.875,
+        )
+        out = analyzer._result_to_dict(result, "cid")
+        self.assertEqual(
+            out,
+            {
+                "chunk_id": "cid",
+                "file": "search/relationship_analyzer.py",
+                "lines": "10-20",
+                "kind": "method",
+                "score": 0.875,
+            },
+        )
+
+    def test_result_to_dict_metadata_branch_missing_file_defaults_empty(self):
+        analyzer = _bare_analyzer()
+        result = _MetadataResult(metadata={"start_line": 1, "end_line": 2})
+        out = analyzer._result_to_dict(result, "cid")
+        self.assertEqual(out["file"], "")
+        self.assertEqual(out["kind"], "unknown")
+
+    def test_result_to_dict_fallback_branch_normalizes_path_and_uses_similarity_score(
+        self,
+    ):
+        analyzer = _bare_analyzer()
+        result = _FallbackResult(
+            file_path="chunking\\tree_sitter.py",
+            start_line=5,
+            end_line=15,
+            chunk_type="class",
+            similarity_score=0.42,
+        )
+        out = analyzer._result_to_dict(result, "cid")
+        self.assertEqual(
+            out,
+            {
+                "chunk_id": "cid",
+                "file": "chunking/tree_sitter.py",
+                "lines": "5-15",
+                "kind": "class",
+                "score": 0.42,
+            },
+        )
+
+    def test_result_to_dict_fallback_branch_falsy_file_path_defaults_empty(self):
+        analyzer = _bare_analyzer()
+        result = _FallbackResult(file_path="", relative_path="")
+        out = analyzer._result_to_dict(result, "cid")
+        self.assertEqual(out["file"], "")
+
+    def test_extract_result_info_metadata_branch_does_not_normalize_or_score(self):
+        analyzer = _bare_analyzer()
+        result = _MetadataResult(
+            metadata={
+                "file": "search\\relationship_analyzer.py",
+                "start_line": 10,
+                "end_line": 20,
+                "chunk_type": "method",
+            }
+        )
+        out = analyzer._extract_result_info(result, "cid")
+        self.assertEqual(
+            out,
+            {
+                "chunk_id": "cid",
+                "file": "search\\relationship_analyzer.py",  # NOT normalized
+                "lines": "10-20",
+                "kind": "method",
+            },
+        )
+        self.assertNotIn("score", out)
+
+    def test_extract_result_info_fallback_branch_does_not_normalize_or_score(self):
+        analyzer = _bare_analyzer()
+        result = _FallbackResult(
+            file_path="chunking\\tree_sitter.py",
+            start_line=5,
+            end_line=15,
+            chunk_type="class",
+            similarity_score=0.99,
+        )
+        out = analyzer._extract_result_info(result, "cid")
+        self.assertEqual(out["file"], "chunking\\tree_sitter.py")  # NOT normalized
+        self.assertNotIn("score", out)
+
+    def test_extract_symbol_info_metadata_branch_adds_name_no_normalize_no_score(self):
+        analyzer = _bare_analyzer()
+        result = _MetadataResult(
+            metadata={
+                "file": "search\\relationship_analyzer.py",
+                "start_line": 10,
+                "end_line": 20,
+                "chunk_type": "method",
+            }
+        )
+        out = analyzer._extract_symbol_info(result, "pkg/mod.py:method:Foo.bar", "bar")
+        self.assertEqual(
+            out,
+            {
+                "chunk_id": "pkg/mod.py:method:Foo.bar",
+                "file": "search\\relationship_analyzer.py",  # NOT normalized
+                "lines": "10-20",
+                "kind": "method",
+                "name": "bar",
+            },
+        )
+
+    def test_extract_symbol_info_falls_back_to_target_id_suffix_when_name_none(self):
+        analyzer = _bare_analyzer()
+        result = _FallbackResult(file_path="a.py", chunk_type="function")
+        out = analyzer._extract_symbol_info(result, "pkg/mod.py:function:baz", None)
+        self.assertEqual(out["name"], "baz")
+
+    def test_all_three_disagree_on_the_same_metadata_input(self):
+        """The centerpiece characterization: one input, three different shapes.
+
+        Same backslash-bearing metadata fed to all three adapters produces
+        three different `file` strings (normalized vs. not) and two different
+        key sets (score present/absent, name present/absent). What this
+        pins is what a future unification step must NOT change without a
+        deliberate, separately-gated commit (see plan Commit 2). The
+        cross-adapter *snapshot* form of this same input lives in
+        tests/unit/search/test_result_projection_snapshot.py.
+        """
+        analyzer = _bare_analyzer()
+        result = _MetadataResult(
+            metadata={
+                "file": "search\\relationship_analyzer.py",
+                "start_line": 100,
+                "end_line": 200,
+                "chunk_type": "method",
+            },
+            score=0.6,
+        )
+        self.assertEqual(
+            analyzer._result_to_dict(result, "cid"),
+            {
+                "chunk_id": "cid",
+                "file": "search/relationship_analyzer.py",  # normalized
+                "lines": "100-200",
+                "kind": "method",
+                "score": 0.6,
+            },
+        )
+        self.assertEqual(
+            analyzer._extract_result_info(result, "cid"),
+            {
+                "chunk_id": "cid",
+                "file": "search\\relationship_analyzer.py",  # NOT normalized
+                "lines": "100-200",
+                "kind": "method",
+            },
+        )
+        self.assertEqual(
+            analyzer._extract_symbol_info(result, "pkg/mod.py:method:Foo.bar", "bar"),
+            {
+                "chunk_id": "pkg/mod.py:method:Foo.bar",
+                "file": "search\\relationship_analyzer.py",  # NOT normalized
+                "lines": "100-200",
+                "kind": "method",
+                "name": "bar",
+            },
+        )
+
+    def test_result_to_dict_dict_branch_none_file_raises_attributeerror(self):
+        """Latent-bug pin (not a fix): unlike the two object branches, the
+        dict passthrough has no falsy guard before normalize_path -- a dict
+        with `file=None` crashes here today. Gate 0 pins this AS-IS; the
+        object branches' `if file_path else ""` guard is what Commit 2's
+        normalize-path uniformity fix would need to backport, not remove.
+        """
+        analyzer = _bare_analyzer()
+        payload = {"file": None}
+        with self.assertRaises(AttributeError):
+            analyzer._result_to_dict(payload, "cid")
+
+    def test_result_to_dict_metadata_branch_none_file_yields_empty_string(self):
+        """Falsy-coercion axis: the metadata branch coerces a None file value
+        to "" via `if file_path else ""` -- distinct from the dict branch's
+        crash above, and distinct from the two non-normalizing siblings
+        below, which would pass a bare None through untouched.
+        """
+        analyzer = _bare_analyzer()
+        result = _MetadataResult(
+            metadata={"file": None, "start_line": 1, "end_line": 2}
+        )
+        out = analyzer._result_to_dict(result, "cid")
+        self.assertEqual(out["file"], "")
+
+    def test_extract_result_info_metadata_branch_none_file_passes_through_raw(self):
+        """The two non-normalizing siblings apply no falsy guard at all --
+        a None file value passes straight through, unlike _result_to_dict's
+        metadata branch (coerces to "") or its dict branch (raises).
+        """
+        analyzer = _bare_analyzer()
+        result = _MetadataResult(
+            metadata={"file": None, "start_line": 1, "end_line": 2}
+        )
+        out = analyzer._extract_result_info(result, "cid")
+        self.assertIsNone(out["file"])
