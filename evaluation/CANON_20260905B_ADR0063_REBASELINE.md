@@ -123,6 +123,11 @@ crossing.
 
 ## Follow-up recorded, not executed
 
+> **Executed 2026-09-06** — `CONTAINS_CENTRALITY_ISOLATION_20260906.md`: query-time `contains`
+> exclusion from centrality on the identical index moved MRR by −0.0004 on both sets; the channel
+> is inert and the 09-05→09-05b delta is pool composition. Superseded as canon by
+> `CANON_20260906_REBASELINE.md`.
+
 The isolation design recorded in the 09-05 pin (`:105-115` — a relation-type filter in
 `_simple_digraph_view` / `compute_centrality`, `graph/graph_queries.py:549-564`) remains
 unexecuted here for the same reason: this canon re-pins the whole substrate change, it does not

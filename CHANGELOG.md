@@ -52,12 +52,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (all four methods, via the new read-only `GraphQueryEngine._scoring_graph_view`), so
   PageRank scores the call/type/import topology alone. Built to isolate the `contains`
   centrality channel from the +74-chunk pool-composition channel the 2026-09-05b re-pin left
-  entangled: `contains` never reaches ego/multi-hop traversal, so the BM25-adaptive
-  centrality boost is its only ranking path. Offline probe
-  (`scripts/benchmark/probe_contains_centrality.py`, 2026-09-06): 7 of 2,651 real chunks change
-  boost, 6 golden-relevant, all by ≤ 0.0032 `blended_score`. Cache key gains a `:no_contains`
-  suffix alongside `:no_phantoms`; traversal (`find_connections`/`find_path`) is untouched.
-  Paired A/B disposition: `evaluation/CONTAINS_CENTRALITY_ISOLATION_20260906.md`.
+  entangled: `contains` never reaches ego/multi-hop traversal, but PageRank reaches ranking
+  through two channels — the BM25-adaptive centrality boost and the ego-graph neighbour ordering
+  (`EgoGraphRetriever.set_centrality_scores`), the second one previously undocumented. Offline
+  probe (`scripts/benchmark/probe_contains_centrality.py`, 2026-09-06): 7 of 2,651 real chunks
+  change boost, 6 golden-relevant, all by ≤ 0.0032 `blended_score`. Cache key gains a
+  `:no_contains` suffix alongside `:no_phantoms`; traversal (`find_connections`/`find_path`) is
+  untouched. **Paired A/B on the identical index (2026-09-06,
+  `evaluation/CONTAINS_CENTRALITY_ISOLATION_20260906.md`): MRR −0.0004 on both 63q and 133q,
+  63q recall@10/@20 +0.0019/+0.0032, 133q recall@10/@20 −0.0048/+0.0015, no paired CI excludes
+  0 — the `contains` centrality channel is measurably inert; REJECTED for default-on**, so the
+  whole 09-05→09-05b canon delta is attributed to pool composition (+74 new chunks). Key locked
+  in `FORBIDDEN_AUTO_TUNE_KEYS`.
 - **`CodeGraphStorage.get_nodes_by_name(name, exclude_languages=None)`** and
   **`get_node_language(chunk_id)`** — language-aware name lookup used by the resolver fence
   below; default behaviour unchanged.
@@ -235,7 +241,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real corpus, and the first to attribute the `contains`-edge delta correctly between the two
   commits (+51 from the 23 newly-chunked decorated classes, +150 from `721ccde` retroactively
   parenting decorated methods in already-chunked classes) rather than leaving it as an unquantified
-  IOU. See `docs/BENCHMARKS.md` for the full table.
+  IOU. Superseded by the 2026-09-06 re-pin below.
+- **Retrieval canon re-pinned 2026-09-06** (`evaluation/CANON_20260906_REBASELINE.md`, base arms of
+  `evaluation/CONTAINS_CENTRALITY_ISOLATION_20260906.md`) after `8e3522d` (opt-in
+  `centrality_exclude_containment` knob touches indexed `graph/`/`search/` files): full force
+  reindex (235 files / 2,956 chunks; 30,449 edges incl. 1,095 `contains`), every leg with
+  `CLAUDE_AUTO_REINDEX=0`, 63q determinism reconfirmed bit-identical twice. 63q MRR **0.8151**,
+  133q **0.6324**, F-via-similar **0.8657** — deltas vs the 2026-09-05b pin
+  (−0.0013/+0.0038/−0.0014) inside the ±0.02 drift band on both MRR and recall@20; gate PASSED.
+  This pin also settles what the two 09-05 pins left entangled: the paired A/B on the identical
+  index shows the `contains` PageRank channel moves MRR by −0.0004 on both sets, so the
+  09-05→09-05b movement is pool composition (+74 chunks), not graph topology. See
+  `docs/BENCHMARKS.md` for the full table.
 - **Ranking policy keys TD chunks explicitly** (ADR-0062 Part D2) — `search/ranking_policy.py`
   boosts the `operator` kind like `function` (1.2 / 1.15 / 1.2) and remaps the TD chunker's
   per-op-type `class` chunks to `td_class`, which carries the `module` (summary) multiplier
