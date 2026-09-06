@@ -576,6 +576,40 @@ class TestCodeGraphStorage:
         # Caller node still present
         assert "src/main.py:1-5:function:main" in graph_storage
 
+    def test_add_relationship_edge_creates_placeholder_for_absent_source(
+        self, graph_storage
+    ):
+        """A class -> method ``contains`` edge may land before the class chunk;
+        the source must be a recognisable phantom, not an attribute-less node,
+        and ``add_node`` must promote it once the class arrives."""
+        from chunking.relationships.relationship_types import (
+            RelationshipEdge,
+            RelationshipType,
+        )
+        from graph.schema import is_phantom_node
+
+        cls = "a.py:1-20:class:A"
+        meth = "a.py:3-8:method:A.m"
+        graph_storage.add_node(meth, "m", "method", "a.py")
+
+        graph_storage.add_relationship_edge(
+            RelationshipEdge(
+                source_id=cls,
+                target_name=meth,
+                relationship_type=RelationshipType.CONTAINS,
+                line_number=3,
+            )
+        )
+
+        assert is_phantom_node(graph_storage.graph.nodes[cls])
+        assert graph_storage.graph.has_edge(cls, meth, "contains")
+
+        graph_storage.add_node(cls, "A", "class", "a.py")
+
+        assert not is_phantom_node(graph_storage.graph.nodes[cls])
+        assert graph_storage.graph.nodes[cls]["name"] == "A"
+        assert graph_storage.graph.has_edge(cls, meth, "contains")
+
     # -- remove_edge ----------------------------------------------------------
 
     def test_remove_edge_removes_and_bumps_version(self, graph_storage):

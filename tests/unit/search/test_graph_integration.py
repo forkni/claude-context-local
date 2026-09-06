@@ -1922,3 +1922,195 @@ class TestPseudoLanguageHelpers(TestCase):
         from search.graph_integration import is_pseudo_language_node
 
         self.assertFalse(is_pseudo_language_node(object(), "anything"))
+
+
+class TestClassContainsMethodEdge(TestCase):
+    """A method chunk's ``parent_chunk_id`` becomes a ``contains`` edge from
+    the class chunk to the method chunk, on both graph-write paths.
+
+    Before this, the Python graph had no class->method containment edge at
+    all: ``find_path`` from a class chunk to one of its own methods reported
+    no path, and an operator -> (scripted_by) -> class join could only reach
+    the class's methods by detouring through ``shares_tag``/``calls`` edges.
+    Runs against a real ``CodeGraphStorage`` so phantom promotion (method
+    arriving before its class) is exercised for real.
+    """
+
+    CLS = "Scripts/Logger__td.py:17-57:class:Logger"
+    METH = "Scripts/Logger__td.py:23-31:method:Logger.log"
+    FUNC = "Scripts/Logger__td.py:60-70:function:helper"
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.storage = CodeGraphStorage(
+            project_id="contains", storage_dir=Path(self.temp_dir)
+        )
+        self.graph = GraphIntegration.from_storage(self.storage)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    # -- helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _meta(chunk_id, name, chunk_type, *, parent_name=None, parent_chunk_id=None):
+        """Metadata dict shaped like ``Embedder._build_chunk_metadata``."""
+        return {
+            "chunk_type": chunk_type,
+            "name": name,
+            "file_path": chunk_id.split(":")[0],
+            "language": "python",
+            "parent_name": parent_name,
+            "parent_chunk_id": parent_chunk_id,
+            "calls": [],
+            "relationships": [],
+        }
+
+    def _cls(self):
+        return SimpleNamespace(
+            chunk_id=self.CLS, metadata=self._meta(self.CLS, "Logger", "class")
+        )
+
+    def _meth(self):
+        return SimpleNamespace(
+            chunk_id=self.METH,
+            metadata=self._meta(
+                self.METH,
+                "log",
+                "method",
+                parent_name="Logger",
+                parent_chunk_id=self.CLS,
+            ),
+        )
+
+    def _func(self):
+        return SimpleNamespace(
+            chunk_id=self.FUNC, metadata=self._meta(self.FUNC, "helper", "function")
+        )
+
+    def _contains_edges(self):
+        return [
+            (u, v, d)
+            for u, v, d in self.storage.graph.edges(data=True)
+            if d.get("type") == "contains"
+        ]
+
+    def _assert_class_contains_method(self):
+        edges = self._contains_edges()
+        self.assertEqual([(u, v) for u, v, _ in edges], [(self.CLS, self.METH)])
+        (_, _, data) = edges[0]
+        self.assertEqual(data["confidence"], 1.0)
+        self.assertEqual(data["via"], "parent_chunk_id")
+        self.assertEqual(data["resolver_source"], "chunker")
+        self.assertFalse(is_phantom_node(self.storage.graph.nodes[self.CLS]))
+        self.assertFalse(is_phantom_node(self.storage.graph.nodes[self.METH]))
+        # The reason this exists: a class->method path now resolves.
+        import networkx as nx
+
+        self.assertEqual(
+            nx.shortest_path(self.storage.graph, self.CLS, self.METH),
+            [self.CLS, self.METH],
+        )
+
+    # -- per-chunk add_chunk path (CodeIndexManager.add_embeddings) ---------
+
+    def test_add_chunk_class_first(self):
+        self.graph.add_chunk(self.CLS, self._cls().metadata)
+        self.graph.add_chunk(self.METH, self._meth().metadata)
+
+        self._assert_class_contains_method()
+
+    def test_add_chunk_method_first_promotes_class_phantom(self):
+        self.graph.add_chunk(self.METH, self._meth().metadata)
+        self.assertTrue(is_phantom_node(self.storage.graph.nodes[self.CLS]))
+
+        self.graph.add_chunk(self.CLS, self._cls().metadata)
+
+        self._assert_class_contains_method()
+
+    def test_add_chunk_without_parent_chunk_id_adds_no_edge(self):
+        self.graph.add_chunk(self.CLS, self._cls().metadata)
+        self.graph.add_chunk(self.FUNC, self._func().metadata)
+
+        self.assertEqual(self._contains_edges(), [])
+
+    def test_add_chunk_counts_containment_edges(self):
+        self.graph.add_chunk(self.CLS, self._cls().metadata)
+        self.graph.add_chunk(self.METH, self._meth().metadata)
+        self.graph.add_chunk(self.FUNC, self._func().metadata)
+
+        self.assertEqual(self.graph._chunk_stats["containment_edges"], 1)
+
+    # -- batch _two_pass_build path -----------------------------------------
+
+    def test_populate_from_embeddings(self):
+        self.graph.populate_from_embeddings([self._meth(), self._cls(), self._func()])
+
+        self._assert_class_contains_method()
+
+    def test_two_pass_build_reports_containment_edges(self):
+        specs = [
+            s
+            for s in (
+                self.graph._make_spec_from_embedding(r)
+                for r in (self._cls(), self._meth(), self._func())
+            )
+            if s is not None
+        ]
+
+        stats = self.graph._two_pass_build(specs, clear=False)
+
+        self.assertEqual(stats["containment_edges"], 1)
+        self._assert_class_contains_method()
+
+    def test_build_graph_from_chunks_uses_code_chunk_parent_chunk_id(self):
+        """``CodeChunk`` objects (build_graph_from_chunks) carry the same field."""
+
+        def chunk(chunk_id, name, chunk_type, parent_name=None, parent_chunk_id=None):
+            return SimpleNamespace(
+                chunk_id=chunk_id,
+                name=name,
+                chunk_type=chunk_type,
+                file_path=chunk_id.split(":")[0],
+                language="python",
+                parent_name=parent_name,
+                parent_chunk_id=parent_chunk_id,
+                start_line=int(chunk_id.split(":")[1].split("-")[0]),
+                calls=[],
+                relationships=[],
+            )
+
+        self.graph.build_graph_from_chunks(
+            [
+                chunk(self.CLS, "Logger", "class"),
+                chunk(self.METH, "log", "method", "Logger", self.CLS),
+                chunk(self.FUNC, "helper", "function"),
+            ]
+        )
+
+        self._assert_class_contains_method()
+
+    def test_chunk_object_without_parent_chunk_id_attribute(self):
+        """Older/foreign chunk objects lacking the attribute are tolerated."""
+        chunk = SimpleNamespace(
+            chunk_id=self.FUNC,
+            name="helper",
+            chunk_type="function",
+            file_path="Scripts/Logger__td.py",
+            language="python",
+            parent_name=None,
+            start_line=60,
+            calls=[],
+            relationships=[],
+        )
+
+        self.graph.build_graph_from_chunks([chunk])
+
+        self.assertEqual(self._contains_edges(), [])
+
+    def test_self_parent_is_ignored(self):
+        meta = self._meta(self.CLS, "Logger", "class", parent_chunk_id=self.CLS)
+
+        self.graph.add_chunk(self.CLS, meta)
+
+        self.assertEqual(self._contains_edges(), [])

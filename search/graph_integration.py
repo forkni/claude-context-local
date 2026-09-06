@@ -289,6 +289,31 @@ class _BuildSpec(NamedTuple):
         list  # list[dict]: callee_name, line_number, is_method_call, callee_qualified
     )
     relationships: list  # list[RelationshipEdge] — already constructed
+    parent_chunk_id: str | None = None  # enclosing class chunk id (methods only)
+
+
+def _containment_edge(parent_chunk_id: str, chunk_id: str) -> RelationshipEdge:
+    """``contains`` edge from an enclosing class chunk to its member chunk.
+
+    Derived from the chunker's ``parent_chunk_id`` (set on ``method``/
+    ``function`` chunks nested in a class -- see
+    ``MultiLanguageChunker._resolve_parent_chunk_id``), which reaches the
+    graph layer in every chunk's metadata but was consumed only by
+    ``include_parent`` retrieval. Without it the graph had no class->method
+    path at all, so ``find_path`` could not walk class -> method (nor
+    operator -> scripted_by -> class -> method for TD-synced scripts).
+    ``add_relationship_edge`` takes the target verbatim, so the edge lands on
+    the real class node, or on a phantom that ``add_node`` promotes when the
+    class chunk arrives later in the batch.
+    """
+    return RelationshipEdge(
+        source_id=parent_chunk_id,
+        target_name=chunk_id,
+        relationship_type=RelationshipType.CONTAINS,
+        line_number=_chunk_start_line(chunk_id),
+        confidence=1.0,
+        metadata={"via": "parent_chunk_id", "resolver_source": "chunker"},
+    )
 
 
 class GraphIntegration:
@@ -355,6 +380,7 @@ class GraphIntegration:
             "skipped_non_semantic": 0,
             "non_semantic_with_relationships": 0,
             "relationship_edges": 0,
+            "containment_edges": 0,
             "storage_none": 0,
             "errors": 0,
         }
@@ -595,6 +621,7 @@ class GraphIntegration:
             parent_name=meta.get("parent_name"),
             calls=calls,
             relationships=relationships,
+            parent_chunk_id=meta.get("parent_chunk_id") or None,
         )
 
     def _make_spec_from_chunk(self, chunk: Any) -> "_BuildSpec | None":
@@ -677,6 +704,7 @@ class GraphIntegration:
             parent_name=chunk.parent_name,
             calls=calls,
             relationships=relationships,
+            parent_chunk_id=getattr(chunk, "parent_chunk_id", None) or None,
         )
 
     def _two_pass_build(
@@ -806,6 +834,7 @@ class GraphIntegration:
         ambiguous_edges = 0
         phantom_edges = 0
         rel_edges = 0
+        containment_edges = 0
         file_scripted_by_edges = 0
 
         for spec in specs:
@@ -893,6 +922,13 @@ class GraphIntegration:
                     self.storage.add_relationship_edge(rel)
                     rel_edges += 1
 
+                # class -> method containment (see _containment_edge)
+                if spec.parent_chunk_id and spec.parent_chunk_id != spec.chunk_id:
+                    self.storage.add_relationship_edge(
+                        _containment_edge(spec.parent_chunk_id, spec.chunk_id)
+                    )
+                    containment_edges += 1
+
             except Exception as e:  # noqa: BLE001 - resilience: per-spec edge failure, continue with remaining specs
                 self._logger.warning(f"Failed to add edges for {spec.chunk_id}: {e}")
 
@@ -909,6 +945,7 @@ class GraphIntegration:
             "ambiguous_edges": ambiguous_edges,
             "phantom_edges": phantom_edges,
             "rel_edges": rel_edges,
+            "containment_edges": containment_edges,
             "scripted_by_retargeted": scripted_by_retargeted,
         }
 
@@ -1073,6 +1110,14 @@ class GraphIntegration:
                             f"Failed to add relationship edge from {chunk_id}: {e}"
                         )
 
+            # class -> method containment (see _containment_edge)
+            parent_chunk_id = metadata.get("parent_chunk_id")
+            if parent_chunk_id and parent_chunk_id != chunk_id:
+                self.storage.add_relationship_edge(
+                    _containment_edge(parent_chunk_id, chunk_id)
+                )
+                self._chunk_stats["containment_edges"] += 1
+
         except (KeyError, TypeError) as e:
             self._chunk_stats["errors"] += 1
             self._logger.warning(f"Failed to add {chunk_id} to graph: {e}")
@@ -1100,11 +1145,12 @@ class GraphIntegration:
         self._logger.debug(
             "[GRAPH_ADD_CHUNK] added=%d skipped_non_semantic=%d "
             "non_semantic_with_relationships=%d relationship_edges=%d "
-            "storage_none=%d errors=%d",
+            "containment_edges=%d storage_none=%d errors=%d",
             self._chunk_stats["added"],
             self._chunk_stats["skipped_non_semantic"],
             self._chunk_stats["non_semantic_with_relationships"],
             self._chunk_stats["relationship_edges"],
+            self._chunk_stats["containment_edges"],
             self._chunk_stats["storage_none"],
             self._chunk_stats["errors"],
         )

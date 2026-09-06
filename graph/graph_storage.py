@@ -472,17 +472,25 @@ class CodeGraphStorage:
         #
         # Solution: Create lightweight "symbol_name" nodes that serve as query endpoints.
         # These nodes have minimal metadata and are flagged with is_target_name=True.
-        if edge.target_name not in self.graph:
-            self.graph.add_node(
-                edge.target_name,
-                **{
-                    NODE_ATTR_NAME: edge.target_name,
-                    NODE_ATTR_TYPE: NODE_TYPE_SYMBOL_NAME,  # Distinguish from full chunk nodes
-                    NODE_ATTR_IS_TARGET_NAME: True,  # Flag for query filtering if needed
-                    NODE_ATTR_FILE: "",  # Unknown file (symbol might be external or not yet indexed)
-                    NODE_ATTR_LANGUAGE: "",  # Unknown language
-                },
-            )
+        # The same placeholder is used for an absent *source*: a class ->
+        # method ``contains`` edge is emitted from the method chunk's
+        # ``parent_chunk_id`` and may arrive before the class chunk itself.
+        # Without this, MultiDiGraph.add_edge would create an attribute-less
+        # source node that is_phantom_node() cannot recognise, so it would
+        # leak into PageRank/degree centrality if the class never arrived;
+        # add_node() promotes the placeholder when the real chunk lands.
+        for node_id in (edge.target_name, normalized_source):
+            if node_id not in self.graph:
+                self.graph.add_node(
+                    node_id,
+                    **{
+                        NODE_ATTR_NAME: node_id,
+                        NODE_ATTR_TYPE: NODE_TYPE_SYMBOL_NAME,  # Distinguish from full chunk nodes
+                        NODE_ATTR_IS_TARGET_NAME: True,  # Flag for query filtering if needed
+                        NODE_ATTR_FILE: "",  # Unknown file (symbol might be external or not yet indexed)
+                        NODE_ATTR_LANGUAGE: "",  # Unknown language
+                    },
+                )
 
         # Add edge to graph with all attributes.
         # key=relationship_type: dedups within-type, preserves parallel edges across types.

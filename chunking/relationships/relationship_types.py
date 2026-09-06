@@ -98,7 +98,9 @@ class RelationshipType(Enum):
     # Priority 6: TouchDesigner Network Relationships (ADR-0062, Part C)
     WIRES_TO = "wires_to"  # Operator output -> operator input
     DOCKED_TO = "docked_to"  # Operator docked to another operator
-    CONTAINS = "contains"  # Network/COMP contains an operator
+    CONTAINS = (
+        "contains"  # Container -> member: network/COMP -> operator; class -> method
+    )
     REFERENCES_OP = "references_op"  # par_ref/script_ref/shortcut_ref
     BINDS_TO = "binds_to"  # Parameter bind expression
     EXPORTS_TO = "exports_to"  # Parameter export

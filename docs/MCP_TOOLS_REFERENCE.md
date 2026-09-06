@@ -148,7 +148,12 @@ find_connections(
 )
 ```
 
-**Valid relationship types**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
+**Valid relationship types**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`, `contains`
+
+`contains` is a containment edge from a class chunk to each method/function chunk nested in
+it (derived from the chunker's `parent_chunk_id`, confidence 1.0, `via: parent_chunk_id`), so
+`find_path` can walk class → method; it is also one of the TouchDesigner network types below
+(network/COMP → operator).
 
 **TouchDesigner network types** (only when `enable_td_network_indexing` is on and the index
 holds `.tdgraph.json` files, ADR-0062): `wires_to`, `contains`, `docked_to`, `scripted_by`,

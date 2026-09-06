@@ -26,6 +26,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CodeGraphStorage.remove_edge(source, target, key)` added; `remove_file_nodes` parks a
   retargeted in-edge back on its module phantom so an incremental re-index of the script
   keeps the join.
+- **Class → method `contains` edges** — every `method`/`function` chunk nested in a class
+  already carried the enclosing class's `parent_chunk_id` (chunker → embedding metadata), but
+  the graph never consumed it, so the Python graph had no class→member containment edge:
+  `find_path` from a class chunk to one of its own methods reported no path, and an
+  operator → `scripted_by` → class join could only reach the script's methods by detouring
+  through `shares_tag`/`calls`. `GraphIntegration` now emits one `contains` edge
+  (confidence 1.0, `via: parent_chunk_id`, `resolver_source: chunker`) from the class chunk
+  to each such member on both write paths (`add_chunk` and `_two_pass_build`; new
+  `containment_edges` counter in the `[GRAPH_ADD_CHUNK]` summary and build stats).
+  `CodeGraphStorage.add_relationship_edge` now creates the same `symbol_name` placeholder for
+  an absent *source* node as it already did for targets, so a method landing before its
+  class yields a recognisable phantom that `add_node` promotes rather than an attribute-less
+  node. `contains` is therefore no longer a TD-only relationship type (`DEFAULT_EDGE_WEIGHTS`
+  0.9 unchanged); the extra edges enter ego-graph expansion, so the retrieval canons should
+  be re-run on the next full reindex. Requires a reindex to populate on an existing index.
 - **`CodeGraphStorage.get_nodes_by_name(name, exclude_languages=None)`** and
   **`get_node_language(chunk_id)`** — language-aware name lookup used by the resolver fence
   below; default behaviour unchanged.
