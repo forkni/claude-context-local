@@ -39,8 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an absent *source* node as it already did for targets, so a method landing before its
   class yields a recognisable phantom that `add_node` promotes rather than an attribute-less
   node. `contains` is therefore no longer a TD-only relationship type (`DEFAULT_EDGE_WEIGHTS`
-  0.9 unchanged); the extra edges enter ego-graph expansion, so the retrieval canons should
-  be re-run on the next full reindex. Requires a reindex to populate on an existing index.
+  0.9 unchanged). The new edges do **not** reach ego-graph or multi-hop expansion
+  (`DEFAULT_RELATION_TYPES=("calls","called_by")` is an allow-list neither traversal overrides),
+  but they do enter unfiltered graph reads — `find_path`, `find_connections`, the SSCG subgraph,
+  and PageRank centrality (`_simple_digraph_view` applies no relation-type filter) — so the
+  retrieval canons were re-run on the next full reindex regardless; see the 2026-09-05 re-pin
+  below. Requires a reindex to populate on an existing index.
 - **`CodeGraphStorage.get_nodes_by_name(name, exclude_languages=None)`** and
   **`get_node_language(chunk_id)`** — language-aware name lookup used by the resolver fence
   below; default behaviour unchanged.
@@ -154,6 +158,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Retrieval canon re-pinned 2026-09-05** (`evaluation/CANON_20260905_REBASELINE.md`) after the
+  16-commit `contains`-edge search-path burst (`5d50708`…`abeef6f`): full force reindex (234
+  files / 2,871 chunks, 29,664 edges incl. 894 new `contains`), 63q determinism reconfirmed
+  bit-identical. 63q MRR **0.8234**, 133q **0.6223**, F-via-similar **0.8697** — deltas vs the
+  2026-09-03 pin (−0.0195/−0.0109/−0.0159) inside the pre-registered ±0.02 drift band on both
+  MRR and recall@20; gate PASSED, read as substrate drift across the whole burst, not an
+  isolated `contains` effect (traversal never reaches `contains`; the one live path is PageRank
+  centrality feeding the BM25 adaptive boost — see the canon doc's Scope note). Supersedes an
+  undocumented 2026-09-03 re-pin (`evaluation/CANON_20260903_REBASELINE.md`: 63q 0.8429, 133q
+  0.6332, F-via-similar 0.8856) that was never picked up in `docs/BENCHMARKS.md`/`CLAUDE.md`
+  until now. See `docs/BENCHMARKS.md` for the full table.
 - **Ranking policy keys TD chunks explicitly** (ADR-0062 Part D2) — `search/ranking_policy.py`
   boosts the `operator` kind like `function` (1.2 / 1.15 / 1.2) and remaps the TD chunker's
   per-op-type `class` chunks to `td_class`, which carries the `module` (summary) multiplier
