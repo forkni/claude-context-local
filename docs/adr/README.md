@@ -70,6 +70,7 @@ for avoiding re-litigating settled questions.
 | [0062](0062-td-network-indexing.md) | Index `.tdgraph.json` TouchDesigner network snapshots (Part C) | accepted | 2026-09-03 |
 | [0063](0063-python-decorated-class-container-traversal.md) | Make Python decorated classes container nodes | accepted | 2026-09-05 |
 | [0064](0064-index-write-target-protocol-seam.md) | Name the `IndexWriteStage` write-target seam with an `IndexWriteTarget` protocol (closes ADR-0030's deferred C1) | accepted | 2026-09-06 |
+| [0065](0065-relationship-analyzer-result-projection-unification.md) | Unify RelationshipAnalyzer's three result-row projections (a different C2 from ADR-0030's) | accepted | 2026-09-06 |
 
 ## Adding a new ADR
 

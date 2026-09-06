@@ -135,5 +135,5 @@ log_prefix)` static helper.
   in** — all named as documented drift in the originating architecture review, all genuine
   behaviour changes, none touched here. Candidates for future ADRs, each needing its own gate.
 - **`C2`'s result-row projection unification** (`mcp_server/tools/result_view.py`,
-  `search/relationship_analyzer.py`) — the architecture review's natural follow-on candidate, not
-  started.
+  `search/relationship_analyzer.py`) — the architecture review's natural follow-on candidate;
+  landed as [ADR-0065](0065-relationship-analyzer-result-projection-unification.md).
