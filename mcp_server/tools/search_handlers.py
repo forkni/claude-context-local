@@ -26,6 +26,7 @@ from mcp_server.tools.search_orchestrator import SearchOrchestrator
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import get_search_config
 from search.exceptions import DimensionMismatchError
+from search.graph_integration import prefer_real_language_nodes
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
 from search.metadata import MetadataStore
@@ -250,6 +251,9 @@ async def _resolve_symbol_to_chunk_id(
                 if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
             ]
         if matches:
+            # User-facing lookup: keep pseudo-language (TD operator) nodes
+            # reachable, but prefer real code when both share the name.
+            matches = prefer_real_language_nodes(gs, matches)
             return matches[0], {
                 "resolved_from": symbol_name,
                 "chunk_id": matches[0],

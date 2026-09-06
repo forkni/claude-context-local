@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cross-file `SCRIPTED_BY` join for synced TouchDesigner DATs** (ADR-0062 C6) —
+  `TDNetworkChunker` now reads the exporter's `script.file` / `script.synced` fields and emits
+  a `scripted_by` edge (`via: file`, confidence 0.98, `resolver_source: td_live`) from each
+  scripted DAT operator chunk to the synced `.py`/`.glsl` file's module id. Paths are
+  normalised, re-rooted against the snapshot's grandparent when that file exists, and rejected
+  (DEBUG log) when absolute or escaping the index root. `GraphIntegration._two_pass_build`
+  retargets the edge onto the file's lowest-start-line real chunk when the file is in the
+  batch (`retargeted: true`, `original_target`; new `scripted_by_retargeted` build stat), so
+  `find_connections` on a `*__td.py` function lists the operator and `find_path` can walk
+  operator → function.
+- **`CodeGraphStorage.get_nodes_by_name(name, exclude_languages=None)`** and
+  **`get_node_language(chunk_id)`** — language-aware name lookup used by the resolver fence
+  below; default behaviour unchanged.
 - **TD network retrieval benchmark** (ADR-0062 Part D2) — `evaluation/td_golden.json` (19
   retrieval queries, categories `TA`/`TB`/`TC`/`TD`) and `evaluation/td_caller_golden.json` (8
   typed edge-recall targets covering every directed TD relationship type) over the committed
@@ -56,6 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Pseudo-language operator names no longer resolve Python call targets** (ADR-0062
+  "name-resolution fence"). PASS 1 of the two-pass graph build indexed every chunk's name, so a
+  Python call to `view` could bind to a TD operator named `view` (17 spurious
+  python→td_network `calls` edges on a real project). Chunks in `PSEUDO_LANGUAGES` are still
+  graph nodes but never call-target candidates; the strict symbol resolver in
+  `RelationshipAnalyzer` excludes them, and the lenient `find_path`/`find_connections` symbol
+  lookup keeps them reachable but orders real-language matches first.
 - **`find_connections`: `direct_callers`/`indirect_callers` are now `calls`-edge lists only.**
   `RelationshipAnalyzer.analyze_impact` fed every inbound edge type into the caller lists (and
   into `caller_confidence`/`total_impacted`), so on a TouchDesigner operator chunk its `contains`/

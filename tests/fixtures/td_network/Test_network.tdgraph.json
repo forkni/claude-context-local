@@ -111,6 +111,12 @@
       "parent": "/project1/Test_network",
       "tags": [],
       "params": {},
+      "script": {
+        "language": "glsl",
+        "bytes": 120,
+        "file": "Scripts/Test_network__Text__glslpixel1__td.glsl",
+        "synced": false
+      },
       "layout": {"x": 200.0, "y": -100.0, "w": 160.0, "h": 20.0}
     },
     {
@@ -125,7 +131,12 @@
       "rel": {"docked_to": "/project1/Test_network/glsl1"},
       "tags": ["comp"],
       "params": {},
-      "script": {"language": "python", "bytes": 256},
+      "script": {
+        "language": "python",
+        "bytes": 256,
+        "file": "Scripts/Test_network__Text__info1__td.py",
+        "synced": true
+      },
       "layout": {"x": 400.0, "y": 0.0, "w": 160.0, "h": 20.0}
     },
     {

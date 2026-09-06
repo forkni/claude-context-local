@@ -488,5 +488,130 @@ class TestConfigGate:
         assert {c.language for c in chunks} == {"td_network"}
 
 
+class TestScriptFileJoin:
+    """ADR-0062 C6: a DAT carrying ``script.file`` gets a ``SCRIPTED_BY`` edge
+    (``via: file``) from its operator chunk to the synced file's module id."""
+
+    INFO1_TARGET = (
+        "Scripts/Test_network__Text__info1__td.py:0-0:module:"
+        "Test_network__Text__info1__td"
+    )
+
+    @staticmethod
+    def _file_edges(chunk: CodeChunk):
+        return [
+            r
+            for r in chunk.relationships or []
+            if r.relationship_type == RelationshipType.SCRIPTED_BY
+            and r.metadata.get("via") == "file"
+        ]
+
+    def test_synced_dat_links_to_module_chunk_id(self):
+        chunks = _chunk_fixture()
+        info1 = _by_name(chunks, "info1")
+        edges = self._file_edges(info1)
+        assert len(edges) == 1
+        edge = edges[0]
+        assert edge.source_id == info1.chunk_id
+        assert edge.target_name == self.INFO1_TARGET
+        assert edge.line_number == 0
+        assert edge.confidence == 0.98
+        assert edge.metadata == {
+            "td_edge_type": "scripted_by",
+            "via": "file",
+            "file": "Scripts/Test_network__Text__info1__td.py",
+            "synced": True,
+            "resolver_source": "td_live",
+        }
+
+    def test_unsynced_dat_reports_synced_false(self):
+        chunks = _chunk_fixture()
+        edge = self._file_edges(_by_name(chunks, "glslpixel1"))[0]
+        assert edge.metadata["synced"] is False
+        assert edge.target_name == (
+            "Scripts/Test_network__Text__glslpixel1__td.glsl:0-0:module:"
+            "Test_network__Text__glslpixel1__td"
+        )
+
+    def test_only_nodes_with_script_file_emit(self):
+        chunks = _chunk_fixture()
+        sources = {
+            c.name for c in chunks if c.chunk_type == "operator" and self._file_edges(c)
+        }
+        assert sources == {"info1", "glslpixel1"}
+        # The exporter-native host->DAT scripted_by edge is untouched.
+        comp1 = _by_name(chunks, "comp1")
+        assert _rel(comp1, RelationshipType.SCRIPTED_BY, ":operator:info1") is not None
+
+    # -- path handling -------------------------------------------------------
+
+    @staticmethod
+    def _chunk_variant(tmp_path: Path, script_file, rel_dir: str = "Graph"):
+        """Re-chunk the fixture with info1's ``script.file`` replaced."""
+        import json
+
+        graph = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+        info1 = next(n for n in graph["nodes"] if n["name"] == "info1")
+        info1["script"]["file"] = script_file
+        rel = (
+            f"{rel_dir}/Test_network.tdgraph.json"
+            if rel_dir
+            else "Test_network.tdgraph.json"
+        )
+        out = tmp_path / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(graph, indent=2), encoding="utf-8")
+        chunker = TDNetworkChunker(root_path=str(tmp_path))
+        chunks = chunker.chunk_file(str(out), rel)
+        return _by_name(chunks, "info1")
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "../outside.py",
+            "Scripts/../../x.py",
+            "/abs/x.py",
+            "C:/abs/x.py",
+            "C:\\abs\\x.py",
+        ],
+    )
+    def test_escaping_or_absolute_paths_emit_nothing(self, tmp_path, bad, caplog):
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="chunking.td_network_chunker"):
+            info1 = self._chunk_variant(tmp_path, bad)
+        assert self._file_edges(info1) == []
+        assert "ignoring script.file" in caplog.text
+
+    def test_backslashes_and_dot_prefix_normalize(self, tmp_path):
+        info1 = self._chunk_variant(tmp_path, ".\\Scripts\\X__td.py")
+        edge = self._file_edges(info1)[0]
+        assert edge.metadata["file"] == "Scripts/X__td.py"
+        assert edge.target_name == "Scripts/X__td.py:0-0:module:X__td"
+
+    def test_rerooted_next_to_snapshot_parent_when_file_exists(self, tmp_path):
+        """``sub/Graph/net.tdgraph.json`` + ``sub/Scripts/X.py`` on disk -> the
+        edge names ``sub/Scripts/X.py`` (project-relative path re-rooted under
+        the snapshot's grandparent), not the bare ``Scripts/X.py``."""
+        (tmp_path / "sub" / "Scripts").mkdir(parents=True)
+        (tmp_path / "sub" / "Scripts" / "X__td.py").write_text("x = 1\n")
+        info1 = self._chunk_variant(tmp_path, "Scripts/X__td.py", rel_dir="sub/Graph")
+        edge = self._file_edges(info1)[0]
+        assert edge.metadata["file"] == "sub/Scripts/X__td.py"
+        assert edge.target_name == "sub/Scripts/X__td.py:0-0:module:X__td"
+
+    def test_as_written_when_root_relative_file_exists(self, tmp_path):
+        (tmp_path / "Scripts").mkdir()
+        (tmp_path / "Scripts" / "X__td.py").write_text("x = 1\n")
+        info1 = self._chunk_variant(tmp_path, "Scripts/X__td.py", rel_dir="deep/Graph")
+        assert self._file_edges(info1)[0].metadata["file"] == "Scripts/X__td.py"
+
+    def test_missing_file_still_emits_as_written(self, tmp_path):
+        info1 = self._chunk_variant(
+            tmp_path, "Scripts/nowhere__td.py", rel_dir="sub/Graph"
+        )
+        assert self._file_edges(info1)[0].metadata["file"] == "Scripts/nowhere__td.py"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

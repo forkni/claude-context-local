@@ -122,7 +122,8 @@ plan doc above):
      `_drop_nameless` guard logs and discards any chunk whose id fails `ChunkId.parse` or has an empty
      name, so a nameless id can never reach the index again. The fixture now carries a root node plus
      `dock`/`shared_tag` edges hosted by it, mirroring the real export.
-6. **C6 — cross-file `SCRIPTED_BY` — researched, not buildable, deferred.** The plan's spec
+6. **C6 — cross-file `SCRIPTED_BY` — implemented 2026-09-05** (see the second update below;
+   the original research note is kept for the record). The plan's spec
    (`SCRIPTED_BY` from a DAT operator chunk to `f"{normalize_path(rel)}:0-0:module:{stem}"`, plus a
    "GLSL path via the `pixeldat` par_ref") assumes the exporter records an external companion source
    file for a scripted operator. It does not. Read directly against the real Part B serializer
@@ -154,13 +155,42 @@ plan doc above):
    it, so every one was skipped as "Unrecognized edge type". It is now mapped to
    `RelationshipType.SCRIPTED_BY` in exporter-native direction (host op → DAT chunk) with `par`/`via`
    metadata; `find_connections` on the host shows `scripted_by`, on the DAT `scripts`.
+
+   **Update 2026-09-05 — cross-file `SCRIPTED_BY` is live.** The reopening condition was met:
+   TD_Glossary_tox's exporter (`_node_script_info`, Part B5) now writes `script.file` (the DAT's
+   `file` par, a project-relative forward-slash path such as `Scripts/X__td.py` set by the
+   DAT-sync extension) and `script.synced` (its `syncfile` toggle). `TDNetworkChunker` emits one
+   `SCRIPTED_BY` edge per node carrying `script.file`, from the DAT operator chunk to the file's
+   module-summary id `<rel>:0-0:module:<stem>`, with metadata
+   `{td_edge_type: scripted_by, via: file, file, synced, resolver_source: td_live}` and
+   confidence 0.98. Paths are normalised to `/`; absolute paths and any `..` segment are
+   rejected with a DEBUG log. The path is resolved against the index root twice — re-rooted
+   under the snapshot's grandparent (`Graph/x.tdgraph.json` next to `Scripts/`) first, then
+   as written — the first existing candidate wins, else the path is used as written so the
+   edge still exists for an unindexed file. Because module-summary chunks never become graph
+   nodes, `GraphIntegration._two_pass_build` retargets every such edge onto the file's
+   lowest-start-line real chunk whenever the file has chunks in the batch, stamping
+   `retargeted: true` / `original_target`; the count surfaces as the
+   `scripted_by_retargeted` build stat. On an incremental build the `.py` may be absent from
+   the batch, in which case the edge lands on a phantom module node until the next full
+   reindex.
+
+   **Name-resolution fence (same change).** PASS 1 of the two-pass build indexed every spec's
+   `name` for call-target resolution, so a Python call to `view` could bind to a TD operator
+   named `view` (17 python→td_network `calls` edges on SDTD_040). Specs whose language is in
+   `PSEUDO_LANGUAGES` are now graph nodes but never call-target candidates. Query-time,
+   `CodeGraphStorage.get_nodes_by_name(name, exclude_languages=...)` and
+   `get_node_language(chunk_id)` back the same rule: the strict resolver path in
+   `RelationshipAnalyzer._resolve_by_symbol` (call-edge recovery) excludes pseudo-language
+   nodes outright, while the lenient user-facing paths (`find_path` / `find_connections`
+   symbol lookup) keep them reachable but order real-language matches first.
 7. **C7 — MCP schema + docs** updated for the two new chunk types.
 
 Not built: `docs/CALL_GRAPH_TUNING.md` changes (it holds only a resolver table — nothing there
 describes chunk types or relationship types), any `document_composer.compose` branch (it switches on
-policy flags, never `chunk_type`; a JSON file already composes to `""` harmlessly), and C6's
-*cross-file* `SCRIPTED_BY` edge emission (see above — no data source in the real exporter; the
-in-network `scripted_by` edge is mapped since 2026-09-04).
+policy flags, never `chunk_type`; a JSON file already composes to `""` harmlessly). C6's
+*cross-file* `SCRIPTED_BY` edge emission, originally deferred for lack of a data source, landed
+2026-09-05 once the exporter started writing `script.file` (see the C6 update above).
 
 ## Consequences
 
@@ -290,7 +320,12 @@ project's storage dir (the repo's own `search_config.json` stays off; see `docs/
   and `DEFAULT_EDGE_WEIGHTS` entries for all 8 TD types (`wires_to`/`contains` 0.9,
   `docked_to`/`scripted_by` 0.8, `references_op`/`binds_to`/`exports_to` 0.7, `shares_tag` 0.3),
   guarded by `test_schema.py::test_every_relationship_type_has_an_edge_weight`.
-- **Cross-file `SCRIPTED_BY` (C6) follow-up.** TD_Glossary_tox's exporter now writes
+- **Cross-file `SCRIPTED_BY` (C6) — shipped 2026-09-05.** TD_Glossary_tox's exporter writes
   `script.file` (the DAT's `file` par) and `script.synced` (its `syncfile` toggle) into every
-  scripted node (Part B5). The chunker does not consume them yet; when it does, a DAT node can
-  emit `SCRIPTED_BY` to the synced `.py` module chunk instead of stopping at the DAT.
+  scripted node (Part B5); the chunker now consumes them and emits `SCRIPTED_BY` (`via: file`)
+  from the DAT operator chunk to the synced file, retargeted at graph-build time onto the
+  file's first real chunk (`retargeted: true`). The same change fences pseudo-language names
+  out of Python call-target resolution. Acceptance on a real export (one `via == "file"` edge
+  per scripted node, 0 python→td_network `calls` edges, `find_path` operator → function) is
+  pending a fresh `Synctextdats` → `Exportgraph` run on the TD side; the committed fixture
+  covers both paths in unit tests.

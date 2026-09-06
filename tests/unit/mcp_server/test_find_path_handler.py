@@ -370,3 +370,31 @@ async def test_resolve_not_found_returns_none_none():
 
     assert chunk_id is None
     assert info is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_tier1_prefers_real_language_over_td_operator():
+    """ADR-0062 fence: a TD operator sharing the name stays reachable but a
+    Python definition wins when both exist."""
+    from unittest.mock import MagicMock
+
+    from mcp_server.tools.search_handlers import _resolve_symbol_to_chunk_id
+
+    td = "Graph/net.tdgraph.json:10-20:operator:view"
+    py = "views.py:1-5:function:view"
+    langs = {td: "td_network", py: "python"}
+
+    mock_gs = MagicMock()
+    mock_gs.get_nodes_by_name.return_value = [td, py]
+    mock_gs.get_node_language.side_effect = lambda cid: langs.get(cid, "")
+
+    mock_searcher = Mock()
+    mock_searcher.graph_storage = mock_gs
+
+    chunk_id, info = await _resolve_symbol_to_chunk_id("view", mock_searcher)
+    assert chunk_id == py
+    assert info["resolution_method"] == "graph_lookup"
+
+    mock_gs.get_nodes_by_name.return_value = [td]
+    chunk_id, _ = await _resolve_symbol_to_chunk_id("view", mock_searcher)
+    assert chunk_id == td

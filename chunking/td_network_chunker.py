@@ -63,6 +63,7 @@ from chunking.python_ast_chunker import CodeChunk
 from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 from search.chunk_id import ChunkId
 from search.chunk_id import build as build_chunk_id
+from utils.path_utils import normalize_path
 
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,60 @@ _SIMPLE_EDGE_MAP: dict[str, tuple[RelationshipType, tuple[str, ...]]] = {
     # host op -> the DAT that scripts it (par="callbacks"|"op"|..., via="callbacks"|"execute")
     "scripted_by": (RelationshipType.SCRIPTED_BY, ("par", "via")),
 }
+
+
+def _resolve_script_file(
+    script_file: str, file_path: str, relative_path: str
+) -> str | None:
+    """Map a node's ``script.file`` to a root-relative ``.py`` path, or None.
+
+    The exporter copies TD's ``par.file`` verbatim, which the sync tool
+    (``dat_DatSyncExt._convert_to_relative_path``) writes as a *project*-relative
+    forward-slash path such as ``Scripts/X__td.py``. The snapshot itself usually
+    sits one level down (``Graph/X.tdgraph.json``), so two candidates are tried
+    against the index root (``file_path`` minus ``relative_path``): the path
+    re-rooted next to the snapshot's parent folder, then the path as written.
+    The first that exists on disk wins; when neither does the as-written form
+    is returned anyway so the edge still lands on a (phantom) module node.
+
+    Anything that escapes the root -- an absolute path, a drive prefix, or a
+    ``..`` segment -- is rejected with a DEBUG log and no edge is emitted.
+    """
+    cleaned = normalize_path(str(script_file)).strip()
+    while cleaned.startswith("./"):
+        cleaned = cleaned[2:]
+    if not cleaned:
+        return None
+    parts = cleaned.split("/")
+    if (
+        Path(cleaned).is_absolute()
+        or cleaned.startswith("/")
+        or (len(parts[0]) == 2 and parts[0][1] == ":")
+        or ".." in parts
+    ):
+        logger.debug(
+            "td_network: ignoring script.file %r (absolute or escapes the "
+            "index root) in %s",
+            script_file,
+            relative_path,
+        )
+        return None
+
+    rel_norm = normalize_path(relative_path)
+    file_norm = normalize_path(str(file_path))
+    if file_norm.endswith(rel_norm):
+        root = Path(file_norm[: len(file_norm) - len(rel_norm)] or ".")
+    else:
+        root = Path(file_norm).parent
+
+    rerooted = Path(rel_norm).parent.parent / cleaned
+    candidates = [normalize_path(str(rerooted)), cleaned]
+    for cand in candidates:
+        while cand.startswith("./"):
+            cand = cand[2:]
+        if (root / cand).exists():
+            return cand
+    return cleaned
 
 
 class TDNetworkChunker:
@@ -265,6 +320,9 @@ class TDNetworkChunker:
                 target,
             )
         )
+        self._add_script_file_edges(
+            real_nodes, op_chunk_id, file_path, relative_path, relationships_by_source
+        )
 
         # ---- Pass 3: build CodeChunks --------------------------------------
         folder_structure = list(Path(relative_path).parent.parts)
@@ -357,6 +415,58 @@ class TDNetworkChunker:
     # ------------------------------------------------------------------
     # Relationship-edge construction
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _add_script_file_edges(
+        real_nodes: list[dict[str, Any]],
+        op_chunk_id: dict[str, str],
+        file_path: str,
+        relative_path: str,
+        by_source: dict[str, list[RelationshipEdge]],
+    ) -> int:
+        """Join each scripted DAT to its synced ``.py`` (ADR-0062 C6).
+
+        For every real node carrying ``script.file`` emit a ``SCRIPTED_BY`` edge
+        from the *operator chunk* to the module-summary chunk id of that file
+        (``<rel>.py:0-0:module:<stem>``, the id ``file_summarizer`` builds).
+        Module chunks never become graph nodes, so ``GraphIntegration``
+        retargets the edge to the file's first indexed chunk at build time
+        (``metadata["retargeted"]``); when the file is not in the batch the id
+        stays a phantom node, exactly like any other unindexed target.
+
+        The DAT is the source because it is the node that owns the ``file``
+        parameter -- the ``.py`` on disk knows nothing about which DAT loads it.
+        Returns the number of edges emitted.
+        """
+        emitted = 0
+        for n in real_nodes:
+            script = n.get("script") or {}
+            script_file = script.get("file")
+            if not script_file:
+                continue
+            rel_py = _resolve_script_file(script_file, file_path, relative_path)
+            if rel_py is None:
+                continue
+            source_id = op_chunk_id[n["id"]]
+            target_id = build_chunk_id(rel_py, 0, 0, "module", Path(rel_py).stem)
+            by_source[source_id].append(
+                RelationshipEdge(
+                    source_id=source_id,
+                    target_name=target_id,
+                    relationship_type=RelationshipType.SCRIPTED_BY,
+                    line_number=0,
+                    confidence=_RESOLVED_CONFIDENCE,
+                    metadata={
+                        "td_edge_type": "scripted_by",
+                        "via": "file",
+                        "file": rel_py,
+                        "synced": bool(script.get("synced")),
+                        "resolver_source": _RESOLVER_SOURCE,
+                    },
+                )
+            )
+            emitted += 1
+        return emitted
 
     def _build_relationship_edges(
         self,

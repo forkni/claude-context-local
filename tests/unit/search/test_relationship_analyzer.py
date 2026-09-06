@@ -81,7 +81,7 @@ def _make_analyzer(
 
     if graph_nodes_map is not None:
         storage = MagicMock()
-        storage.get_nodes_by_name.side_effect = lambda name: graph_nodes_map.get(
+        storage.get_nodes_by_name.side_effect = lambda name, **kw: graph_nodes_map.get(
             name, []
         )
         storage.graph.nodes.return_value = []
@@ -214,6 +214,76 @@ class TestResolveBySymbol(TestCase):
         self.assertIsNotNone(resolved)
         _, resolved_cid = resolved
         self.assertEqual(resolved_cid, cid)
+
+
+# ---------------------------------------------------------------------------
+# Tests: name-resolution fence (ADR-0062) in _resolve_by_symbol
+# ---------------------------------------------------------------------------
+
+
+def _make_fenced_analyzer(
+    languages: dict[str, str], name_map: dict[str, list[str]], search_side_effect=None
+):
+    """Analyzer whose graph storage honours ``exclude_languages`` and exposes
+    ``get_node_language``, so the fence can be exercised end to end."""
+    analyzer, mock_searcher = _make_analyzer(
+        get_by_chunk_id_side_effect=lambda cid, **kw: _FakeResult(chunk_id=cid),
+        search_side_effect=search_side_effect,
+    )
+    storage = MagicMock()
+
+    def _by_name(name, exclude_languages=None):
+        ids = name_map.get(name, [])
+        if exclude_languages:
+            ids = [c for c in ids if languages.get(c, "") not in exclude_languages]
+        return ids
+
+    storage.get_nodes_by_name.side_effect = _by_name
+    storage.get_node_language.side_effect = lambda cid: languages.get(cid, "")
+    storage.graph.nodes.return_value = list(languages)
+    graph_engine = MagicMock()
+    graph_engine.storage = storage
+    analyzer.graph_engine = graph_engine
+    return analyzer, mock_searcher
+
+
+class TestResolveBySymbolPseudoLanguageFence(TestCase):
+    PY = "views.py:1-5:function:view"
+    TD = "Graph/net.tdgraph.json:10-20:operator:view"
+    LANGS = {PY: "python", TD: "td_network"}
+
+    def test_strict_never_returns_td_network_node(self):
+        analyzer, _ = _make_fenced_analyzer(
+            {self.TD: "td_network"}, {"view": [self.TD]}
+        )
+        self.assertIsNone(
+            analyzer._resolve_by_symbol("view", None, strict_name_match=True)
+        )
+
+    def test_strict_suffix_scan_is_fenced_too(self):
+        # Name index empty -> suffix scan over graph.nodes() would find the TD id.
+        analyzer, _ = _make_fenced_analyzer({self.TD: "td_network"}, {})
+        self.assertIsNone(
+            analyzer._resolve_by_symbol("view", None, strict_name_match=True)
+        )
+        analyzer, _ = _make_fenced_analyzer({self.TD: "td_network"}, {})
+        _, cid = analyzer._resolve_by_symbol("view", None)
+        self.assertEqual(cid, self.TD)
+
+    def test_strict_resolves_python_when_both_exist(self):
+        analyzer, _ = _make_fenced_analyzer(self.LANGS, {"view": [self.TD, self.PY]})
+        resolved = analyzer._resolve_by_symbol("view", None, strict_name_match=True)
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved[1], self.PY)
+
+    def test_lenient_prefers_python_but_keeps_td_reachable(self):
+        analyzer, _ = _make_fenced_analyzer(self.LANGS, {"view": [self.TD, self.PY]})
+        _, cid = analyzer._resolve_by_symbol("view", None)
+        self.assertEqual(cid, self.PY)
+
+        analyzer, _ = _make_fenced_analyzer(self.LANGS, {"view": [self.TD]})
+        _, cid = analyzer._resolve_by_symbol("view", None)
+        self.assertEqual(cid, self.TD)
 
 
 # ---------------------------------------------------------------------------

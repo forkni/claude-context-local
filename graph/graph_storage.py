@@ -10,7 +10,7 @@ import itertools
 import json
 import logging
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -905,18 +905,41 @@ class CodeGraphStorage:
 
         return dict(self.graph.nodes[normalized_chunk_id])
 
-    def get_nodes_by_name(self, name: str) -> list[str]:
+    def get_nodes_by_name(
+        self, name: str, exclude_languages: Collection[str] | None = None
+    ) -> list[str]:
         """Get chunk_ids whose ``name`` attribute equals *name* (O(1) lookup).
 
         Uses the secondary ``_name_index`` maintained by :meth:`add_node`.
 
         Args:
             name: Symbol name to look up (e.g. ``"my_function"``).
+            exclude_languages: Optional set of node ``language`` values to drop
+                from the result (e.g. ``PSEUDO_LANGUAGES`` so a strict call-edge
+                recovery never binds a Python symbol to a TD operator of the
+                same name). ``None`` (default) returns every match.
 
         Returns:
             List of matching chunk_ids (empty list if none found).
         """
-        return list(self._name_index.get(name, []))
+        matches = list(self._name_index.get(name, []))
+        if not exclude_languages or not matches:
+            return matches
+        return [
+            cid
+            for cid in matches
+            if self.get_node_language(cid) not in exclude_languages
+        ]
+
+    def get_node_language(self, chunk_id: str) -> str:
+        """Return the ``language`` attribute of *chunk_id*, or ``""`` if unknown.
+
+        Phantom (symbol-name) nodes and ids not in the graph both yield ``""``.
+        """
+        attrs = self.graph.nodes.get(normalize_path(chunk_id))
+        if not attrs:
+            return ""
+        return str(attrs.get("language") or "")
 
     def get_edge_data(
         self,

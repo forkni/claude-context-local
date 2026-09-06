@@ -16,10 +16,49 @@ except ImportError:
     GRAPH_STORAGE_AVAILABLE = False
     CodeGraphStorage = None
 
+from chunking.language_registry import PSEUDO_LANGUAGES
 from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 from search.chunk_id import is_chunk_id as _is_chunk_id
 from search.config import get_search_config
 from utils.path_utils import normalize_path
+
+
+def _chunk_start_line(chunk_id: str) -> int:
+    """Start line parsed from a chunk id's ``"start-end"`` segment.
+
+    Returns a large sentinel when the id has no parseable span so such ids
+    sort last (used to pick a file's entry chunk / a split function's first
+    block).
+    """
+    parts = chunk_id.split(":")
+    if len(parts) >= 2:
+        try:
+            return int(parts[1].split("-")[0])
+        except (ValueError, IndexError):
+            pass
+    return 2**31
+
+
+def is_pseudo_language_node(storage: Any, chunk_id: str) -> bool:
+    """True when *chunk_id* is a graph node in a pseudo-language (``td_network``).
+
+    Goes through ``storage.get_node_language`` so any storage-like object
+    (including test doubles without a real NetworkX graph) can be queried;
+    unknown nodes and storages without the accessor are treated as real code.
+    """
+    getter = getattr(storage, "get_node_language", None)
+    if getter is None:
+        return False
+    return getter(chunk_id) in PSEUDO_LANGUAGES
+
+
+def prefer_real_language_nodes(storage: Any, chunk_ids: list[str]) -> list[str]:
+    """Stable-sort *chunk_ids* so pseudo-language nodes come last.
+
+    Used by the lenient (user-facing) symbol resolvers: a TD operator named
+    ``view`` stays reachable, but a Python ``view`` wins when both exist.
+    """
+    return sorted(chunk_ids, key=lambda cid: is_pseudo_language_node(storage, cid))
 
 
 def is_chunk_id(node_id: str) -> bool:
@@ -635,6 +674,21 @@ class GraphIntegration:
         Pass 1 adds all nodes and builds the symbol-resolution map.
         Pass 2 resets per-build caches and adds call + relationship edges.
 
+        Pseudo-language specs (``chunking.language_registry.PSEUDO_LANGUAGES``,
+        e.g. TouchDesigner ``td_network`` operator chunks) are added as nodes
+        but never enter the symbol-resolution map: a Python call to ``view``
+        must not bind to a TD operator that happens to be named ``view``
+        (ADR-0062 "name-resolution fence").
+
+        TD ``scripted_by`` edges with ``via == "file"`` target a module-summary
+        id (``<file>.py:0-0:module:<stem>``) that never becomes a graph node.
+        When the referenced file has chunks in this batch the edge is
+        retargeted to the file's lowest-start-line chunk and stamped
+        ``metadata["retargeted"] = True`` (``original_target`` keeps the module
+        id). On an incremental build (``clear=False``) the ``.py`` may be absent
+        from the batch, in which case the edge lands on a phantom module node
+        until the next full reindex.
+
         Args:
             specs: Pre-normalised _BuildSpec items (None already filtered out).
             clear: When True, clears the graph before Pass 1 (used by
@@ -644,7 +698,8 @@ class GraphIntegration:
         Returns:
             Stats dict with keys: ``nodes_added``, ``call_edges``,
             ``resolved_edges``, ``ambiguous_edges``, ``phantom_edges``,
-            ``rel_edges``. ``ambiguous_edges`` counts calls resolved to
+            ``rel_edges``, ``scripted_by_retargeted``. ``ambiguous_edges``
+            counts calls resolved to
             multiple candidate *real* chunk nodes (no phantom created);
             ``phantom_edges`` counts calls that created a new bare-symbol
             phantom node because no candidate chunk could be found at all.
@@ -660,6 +715,8 @@ class GraphIntegration:
 
         # === PASS 1: add nodes + build symbol-resolution map ===
         name_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
+        # file -> chunk ids of real (non-pseudo) chunks, for scripted_by retargeting
+        file_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
         nodes_added = 0
 
         for spec in specs:
@@ -672,6 +729,13 @@ class GraphIntegration:
                     language=spec.language,
                 )
                 nodes_added += 1
+
+                # Name-resolution fence: pseudo-language chunks are nodes but
+                # never call targets (see method docstring / ADR-0062).
+                if spec.language in PSEUDO_LANGUAGES:
+                    continue
+
+                file_to_chunk_ids[spec.chunk_id.split(":", 1)[0]].append(spec.chunk_id)
 
                 # Index names for call-target resolution (skip "unknown" placeholder)
                 if spec.name and spec.name != "unknown":
@@ -730,6 +794,7 @@ class GraphIntegration:
         ambiguous_edges = 0
         phantom_edges = 0
         rel_edges = 0
+        scripted_by_retargeted = 0
 
         for spec in specs:
             try:
@@ -811,6 +876,10 @@ class GraphIntegration:
                             phantom_edges += 1
 
                 for rel in spec.relationships:
+                    retargeted = self._retarget_scripted_by(rel, file_to_chunk_ids)
+                    if retargeted is not None:
+                        rel = retargeted
+                        scripted_by_retargeted += 1
                     self.storage.add_relationship_edge(rel)
                     rel_edges += 1
 
@@ -824,7 +893,38 @@ class GraphIntegration:
             "ambiguous_edges": ambiguous_edges,
             "phantom_edges": phantom_edges,
             "rel_edges": rel_edges,
+            "scripted_by_retargeted": scripted_by_retargeted,
         }
+
+    def _retarget_scripted_by(
+        self, rel: RelationshipEdge, file_to_chunk_ids: dict[str, list[str]]
+    ) -> RelationshipEdge | None:
+        """Retarget a TD ``scripted_by``/``via=file`` edge onto a real chunk.
+
+        Returns a new edge aimed at the lowest-start-line chunk of the file
+        named in ``rel.metadata["file"]`` when that file has chunks in the
+        current batch and the original module-summary target is not already a
+        graph node; otherwise ``None`` (caller adds ``rel`` unchanged).
+        """
+        meta = rel.metadata or {}
+        if meta.get("td_edge_type") != "scripted_by" or meta.get("via") != "file":
+            return None
+        candidates = file_to_chunk_ids.get(meta.get("file", ""))
+        if not candidates or rel.target_name in self.storage:
+            return None
+        new_target = min(candidates, key=_chunk_start_line)
+        return RelationshipEdge(
+            source_id=rel.source_id,
+            target_name=new_target,
+            relationship_type=rel.relationship_type,
+            line_number=rel.line_number,
+            confidence=rel.confidence,
+            metadata={
+                **meta,
+                "retargeted": True,
+                "original_target": rel.target_name,
+            },
+        )
 
     def add_chunk(self, chunk_id: str, metadata: dict[str, Any]) -> None:
         """Add chunk to call graph storage.
@@ -1112,17 +1212,7 @@ class GraphIntegration:
                 split_blocks = [c for c in candidates if ":split_block:" in c]
                 if len(split_blocks) == len(candidates):
                     # All candidates are split_blocks - pick the entry block
-                    def _start_line(chunk_id: str) -> int:
-                        parts = chunk_id.split(":")
-                        if len(parts) >= 2:
-                            line_range = parts[1]  # e.g., "793-860"
-                            try:
-                                return int(line_range.split("-")[0])
-                            except (ValueError, IndexError):
-                                pass
-                        return 2**31  # Sentinel for sort ordering
-
-                    split_blocks.sort(key=_start_line)
+                    split_blocks.sort(key=_chunk_start_line)
                     return split_blocks[0]
 
         # No match or still ambiguous — caller should check _get_ambiguous_candidates

@@ -14,6 +14,7 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any
 
+from chunking.language_registry import PSEUDO_LANGUAGES
 from graph.graph_queries import GraphQueryEngine, RelationshipEntry
 from search.exceptions import SearchError
 from search.filters import (
@@ -22,7 +23,11 @@ from search.filters import (
     normalize_path_lower,
     unescape_mcp_path,
 )
-from search.graph_integration import _COMMON_METHODS
+from search.graph_integration import (
+    _COMMON_METHODS,
+    is_pseudo_language_node,
+    prefer_real_language_nodes,
+)
 from search.types import BUILTIN_TYPES, ImpactReport
 
 
@@ -685,7 +690,17 @@ class RelationshipAnalyzer:
             graph_storage = getattr(self.searcher.dense_index, "graph_storage", None)
 
         if graph_storage is not None and hasattr(graph_storage, "get_nodes_by_name"):
-            matches = graph_storage.get_nodes_by_name(symbol_name)
+            # Name-resolution fence (ADR-0062): the strict path recovers
+            # call-graph edges, so a TD operator named like a Python symbol
+            # must never be a candidate. The lenient path (user symbol
+            # queries) keeps pseudo-language nodes reachable but orders them
+            # after real code.
+            if strict_name_match:
+                matches = graph_storage.get_nodes_by_name(
+                    symbol_name, exclude_languages=PSEUDO_LANGUAGES
+                )
+            else:
+                matches = graph_storage.get_nodes_by_name(symbol_name)
             if not matches:
                 # Suffix scan: ":<name>" (bare) or ".<name>" (class-qualified)
                 matches = [
@@ -693,6 +708,14 @@ class RelationshipAnalyzer:
                     for n in graph_storage.graph.nodes()
                     if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
                 ]
+                if strict_name_match:
+                    matches = [
+                        n
+                        for n in matches
+                        if not is_pseudo_language_node(graph_storage, n)
+                    ]
+            if not strict_name_match:
+                matches = prefer_real_language_nodes(graph_storage, matches)
             for cid in matches:
                 result = self.searcher.get_by_chunk_id(cid)
                 if result:

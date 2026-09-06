@@ -1209,3 +1209,56 @@ class TestCodeGraphStorage:
             "pagerank", graph_storage.version, {"a": 1.0}
         )
         assert graph_storage.get_cached_centrality("betweenness") is None
+
+
+class TestPseudoLanguageLookup:
+    """``get_nodes_by_name(exclude_languages=...)`` and ``get_node_language``."""
+
+    PY = "views.py:1-5:function:view"
+    TD = "Graph/net.tdgraph.json:10-20:operator:view"
+
+    @pytest.fixture
+    def storage(self, tmp_path):
+        gs = CodeGraphStorage(project_id="p", storage_dir=tmp_path)
+        gs.add_node(self.PY, "view", "function", "views.py", language="python")
+        gs.add_node(
+            self.TD, "view", "operator", "Graph/net.tdgraph.json", language="td_network"
+        )
+        return gs
+
+    def test_default_returns_every_language(self, storage):
+        assert set(storage.get_nodes_by_name("view")) == {self.PY, self.TD}
+
+    def test_exclude_languages_drops_matching_nodes(self, storage):
+        assert storage.get_nodes_by_name("view", exclude_languages={"td_network"}) == [
+            self.PY
+        ]
+        assert (
+            storage.get_nodes_by_name(
+                "view", exclude_languages={"td_network", "python"}
+            )
+            == []
+        )
+
+    def test_empty_exclusion_is_a_no_op(self, storage):
+        assert set(storage.get_nodes_by_name("view", exclude_languages=set())) == {
+            self.PY,
+            self.TD,
+        }
+        assert storage.get_nodes_by_name("nope", exclude_languages={"td_network"}) == []
+
+    def test_get_node_language(self, storage):
+        assert storage.get_node_language(self.PY) == "python"
+        assert storage.get_node_language(self.TD) == "td_network"
+        assert storage.get_node_language("missing.py:1-2:function:x") == ""
+        # Phantom symbol nodes carry no language.
+        storage.add_call_edge(self.PY, "phantom_symbol", 3, False, is_resolved=False)
+        assert storage.get_node_language("phantom_symbol") == ""
+
+    def test_exclusion_survives_save_load(self, storage):
+        storage.save()
+        reloaded = CodeGraphStorage(project_id="p", storage_dir=storage.storage_dir)
+        reloaded.load()
+        assert reloaded.get_nodes_by_name("view", exclude_languages={"td_network"}) == [
+            self.PY
+        ]

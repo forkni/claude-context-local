@@ -150,6 +150,17 @@ find_connections(
 
 **Valid relationship types**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
 
+**TouchDesigner network types** (only when `enable_td_network_indexing` is on and the index
+holds `.tdgraph.json` files, ADR-0062): `wires_to`, `contains`, `docked_to`, `scripted_by`,
+`references_op`, `binds_to`, `exports_to`, `shares_tag`. `scripted_by` edges carry a `via`
+metadata value of `callbacks` / `execute` (host operator → its callbacks/execute DAT, in-network)
+or `file` (DAT operator → the external script it is synced to via the DAT's `file` par). `via:
+file` edges also carry `file` (project-relative path), `synced` (the DAT's `syncfile` toggle)
+and, once the graph is built with that file indexed, `retargeted: true` plus `original_target`
+(the edge is moved from the never-materialised module id onto the file's first real chunk).
+TD operator names never resolve Python call targets: a Python `view()` call does not bind to a
+TD operator named `view`, and symbol lookups prefer real-language chunks when both share a name.
+
 **Note**: `uses_global` and `asserts_type` require entity tracking
 (`enable_entity_tracking`, default `True`) and populate only after the index is (re)built
 with it enabled — a stale index built before these extractors existed returns no data for

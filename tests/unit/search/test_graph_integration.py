@@ -1528,3 +1528,268 @@ class TestWall2CFamilyResolution(TestCase):
             if c.kwargs.get("confidence") == "ambiguous"
         ]
         self.assertEqual(len(ambiguous_calls), 2)
+
+
+# ---------------------------------------------------------------------------
+# ADR-0062 C6 / name-resolution fence
+# ---------------------------------------------------------------------------
+
+
+def _spec(
+    chunk_id,
+    name,
+    *,
+    language="python",
+    chunk_type="function",
+    calls=None,
+    relationships=None,
+):
+    from search.graph_integration import _BuildSpec
+
+    return _BuildSpec(
+        chunk_id=chunk_id,
+        name=name,
+        chunk_type=chunk_type,
+        file_path=chunk_id.split(":")[0],
+        language=language,
+        parent_name=None,
+        calls=calls or [],
+        relationships=relationships or [],
+    )
+
+
+def _file_edge(source_id, file="Scripts/X__td.py", synced=True):
+    stem = file.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    return RelationshipEdge(
+        source_id=source_id,
+        target_name=f"{file}:0-0:module:{stem}",
+        relationship_type=RelationshipType.SCRIPTED_BY,
+        line_number=0,
+        confidence=0.98,
+        metadata={
+            "td_edge_type": "scripted_by",
+            "via": "file",
+            "file": file,
+            "synced": synced,
+            "resolver_source": "td_live",
+        },
+    )
+
+
+class TestScriptedByRetarget(TestCase):
+    """``scripted_by``/``via=file`` edges are retargeted from the (never
+    materialised) module-summary id onto the file's first real chunk."""
+
+    OP = "Graph/net.tdgraph.json:10-20:operator:info1"
+
+    def _make_graph(self, *, contains=False):
+        storage = Mock()
+        storage.__len__ = Mock(return_value=0)
+        storage.__contains__ = Mock(return_value=contains)
+        return GraphIntegration.from_storage(storage), storage
+
+    def test_retargets_to_lowest_start_line_chunk(self):
+        graph, storage = self._make_graph()
+        edge = _file_edge(self.OP)
+        specs = [
+            _spec("Scripts/X__td.py:30-40:function:onStart", "onStart"),
+            _spec("Scripts/X__td.py:5-12:function:setup", "setup"),
+            _spec(
+                self.OP,
+                "info1",
+                language="td_network",
+                chunk_type="operator",
+                relationships=[edge],
+            ),
+        ]
+        stats = graph._two_pass_build(specs, clear=False)
+
+        self.assertEqual(stats["scripted_by_retargeted"], 1)
+        self.assertEqual(stats["rel_edges"], 1)
+        added = storage.add_relationship_edge.call_args.args[0]
+        self.assertEqual(added.source_id, self.OP)
+        self.assertEqual(added.target_name, "Scripts/X__td.py:5-12:function:setup")
+        self.assertEqual(added.relationship_type, RelationshipType.SCRIPTED_BY)
+        self.assertIs(added.metadata["retargeted"], True)
+        self.assertEqual(added.metadata["original_target"], edge.target_name)
+        self.assertEqual(added.metadata["file"], "Scripts/X__td.py")
+        self.assertIs(added.metadata["synced"], True)
+        # Original edge object is left untouched.
+        self.assertNotIn("retargeted", edge.metadata)
+
+    def test_no_chunks_for_file_keeps_phantom_target(self):
+        graph, storage = self._make_graph()
+        edge = _file_edge(self.OP)
+        specs = [
+            _spec("Scripts/Other.py:1-3:function:f", "f"),
+            _spec(
+                self.OP,
+                "info1",
+                language="td_network",
+                chunk_type="operator",
+                relationships=[edge],
+            ),
+        ]
+        stats = graph._two_pass_build(specs, clear=False)
+
+        self.assertEqual(stats["scripted_by_retargeted"], 0)
+        added = storage.add_relationship_edge.call_args.args[0]
+        self.assertIs(added, edge)
+        self.assertEqual(added.target_name, "Scripts/X__td.py:0-0:module:X__td")
+
+    def test_existing_module_node_is_not_retargeted(self):
+        graph, storage = self._make_graph(contains=True)
+        edge = _file_edge(self.OP)
+        specs = [
+            _spec("Scripts/X__td.py:5-12:function:setup", "setup"),
+            _spec(
+                self.OP,
+                "info1",
+                language="td_network",
+                chunk_type="operator",
+                relationships=[edge],
+            ),
+        ]
+        stats = graph._two_pass_build(specs, clear=False)
+        self.assertEqual(stats["scripted_by_retargeted"], 0)
+        self.assertIs(storage.add_relationship_edge.call_args.args[0], edge)
+
+    def test_pseudo_language_chunks_never_serve_as_retarget_candidates(self):
+        """A td_network chunk that happens to share the .py path key must not
+        be picked as the file's entry chunk."""
+        graph, storage = self._make_graph()
+        edge = _file_edge(self.OP)
+        specs = [
+            _spec(
+                "Scripts/X__td.py:1-2:operator:weird",
+                "weird",
+                language="td_network",
+                chunk_type="operator",
+            ),
+            _spec(
+                self.OP,
+                "info1",
+                language="td_network",
+                chunk_type="operator",
+                relationships=[edge],
+            ),
+        ]
+        stats = graph._two_pass_build(specs, clear=False)
+        self.assertEqual(stats["scripted_by_retargeted"], 0)
+
+    def test_other_scripted_by_edges_pass_through(self):
+        graph, storage = self._make_graph()
+        host = "Graph/net.tdgraph.json:1-5:operator:comp1"
+        edge = RelationshipEdge(
+            source_id=host,
+            target_name=self.OP,
+            relationship_type=RelationshipType.SCRIPTED_BY,
+            line_number=0,
+            confidence=0.98,
+            metadata={
+                "td_edge_type": "scripted_by",
+                "par": "callbacks",
+                "via": "callbacks",
+            },
+        )
+        specs = [
+            _spec(
+                host,
+                "comp1",
+                language="td_network",
+                chunk_type="operator",
+                relationships=[edge],
+            ),
+            _spec(self.OP, "info1", language="td_network", chunk_type="operator"),
+        ]
+        stats = graph._two_pass_build(specs, clear=False)
+        self.assertEqual(stats["scripted_by_retargeted"], 0)
+        self.assertIs(storage.add_relationship_edge.call_args.args[0], edge)
+
+
+class TestNameResolutionFence(TestCase):
+    """Pseudo-language specs are graph nodes but never call-target candidates."""
+
+    def _make_graph(self):
+        storage = Mock()
+        storage.__len__ = Mock(return_value=0)
+        return GraphIntegration.from_storage(storage), storage
+
+    def test_python_call_does_not_bind_to_td_operator(self):
+        graph, storage = self._make_graph()
+        specs = [
+            _spec(
+                "Graph/net.tdgraph.json:10-20:operator:view",
+                "view",
+                language="td_network",
+                chunk_type="operator",
+            ),
+            _spec(
+                "app.py:1-5:function:main",
+                "main",
+                calls=[
+                    {"callee_name": "view", "line_number": 3, "is_method_call": False}
+                ],
+            ),
+        ]
+        stats = graph._two_pass_build(specs, clear=False)
+
+        self.assertEqual(stats["nodes_added"], 2)
+        self.assertEqual(stats["phantom_edges"], 1)
+        self.assertEqual(stats["resolved_edges"], 0)
+        self.assertEqual(stats["ambiguous_edges"], 0)
+        kwargs = storage.add_call_edge.call_args.kwargs
+        self.assertEqual(kwargs["callee_name"], "view")
+        self.assertFalse(kwargs["is_resolved"])
+
+    def test_python_definition_still_wins(self):
+        graph, storage = self._make_graph()
+        specs = [
+            _spec(
+                "Graph/net.tdgraph.json:10-20:operator:view",
+                "view",
+                language="td_network",
+                chunk_type="operator",
+            ),
+            _spec("views.py:1-5:function:view", "view"),
+            _spec(
+                "app.py:1-5:function:main",
+                "main",
+                calls=[
+                    {"callee_name": "view", "line_number": 3, "is_method_call": False}
+                ],
+            ),
+        ]
+        stats = graph._two_pass_build(specs, clear=False)
+
+        self.assertEqual(stats["resolved_edges"], 1)
+        self.assertEqual(stats["phantom_edges"], 0)
+        self.assertEqual(stats["ambiguous_edges"], 0)
+        kwargs = storage.add_call_edge.call_args.kwargs
+        self.assertEqual(kwargs["callee_name"], "views.py:1-5:function:view")
+
+
+class TestPseudoLanguageHelpers(TestCase):
+    def test_is_pseudo_language_node_and_ordering(self):
+        from search.graph_integration import (
+            is_pseudo_language_node,
+            prefer_real_language_nodes,
+        )
+
+        langs = {"td": "td_network", "py": "python", "ghost": ""}
+        storage = Mock()
+        storage.get_node_language.side_effect = lambda cid: langs.get(cid, "")
+
+        self.assertTrue(is_pseudo_language_node(storage, "td"))
+        self.assertFalse(is_pseudo_language_node(storage, "py"))
+        self.assertFalse(is_pseudo_language_node(storage, "ghost"))
+        self.assertFalse(is_pseudo_language_node(storage, "missing"))
+        self.assertEqual(
+            prefer_real_language_nodes(storage, ["td", "py", "ghost"]),
+            ["py", "ghost", "td"],
+        )
+
+    def test_storage_without_accessor_is_treated_as_real_code(self):
+        from search.graph_integration import is_pseudo_language_node
+
+        self.assertFalse(is_pseudo_language_node(object(), "anything"))
