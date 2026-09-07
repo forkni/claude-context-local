@@ -4,6 +4,11 @@ Covers the caller-controlled ``exclude_same_file`` filter (2026-07-28,
 evaluation/SIMILAR_DIVERSITY_20260728.md): the default path must stay
 byte-identical (k+1 fetch, anchor filtered), while the exclusion path
 overfetches k*3+1 and drops every candidate from the anchor's own file.
+
+``TestGetSimilarChunksStarvation`` (ADR-0067) pins the k*3+1 fetch's
+starvation failure mode: on a corpus where the anchor's own file dominates
+the pool, exclusion can return far fewer than k results -- or none at all --
+even though cross-file analogues exist deeper in the index.
 """
 
 from unittest.mock import Mock
@@ -146,3 +151,72 @@ class TestGetSimilarChunksExcludeSameFile:
 
         assert manager.get_similar_chunks(ANCHOR, k=3, exclude_same_file=True) == []
         manager.search.assert_not_called()
+
+
+class TestGetSimilarChunksStarvation:
+    """Gate 0 (ADR-0067): the k*3+1 overfetch is a single fixed-depth fetch
+    with no back-fill. When the anchor's file dominates the pool (e.g. one
+    large single-class file), the survivor count after filtering can fall
+    far short of k -- or come back empty -- even though the corpus holds
+    plenty of cross-file candidates one search deeper.
+
+    These tests drive manager.search with side_effect so each call can
+    return a different pool, unlike MIXED_RESULTS above (a static
+    return_value that can't distinguish "corpus exhausted" from "starved,
+    more exists one search deeper").
+    """
+
+    @staticmethod
+    def _rows(n_same_file: int, n_cross_file: int, offset: int = 0):
+        """n_same_file anchor-file rows + n_cross_file cross-file rows,
+        each cross-file row in its own file, descending similarity."""
+        rows = [
+            (
+                f"pkg/anchor.py:{offset + i}-{offset + i + 5}:function:sibling_{offset + i}",
+                0.99 - 0.001 * i,
+                {"relative_path": "pkg/anchor.py"},
+            )
+            for i in range(n_same_file)
+        ]
+        rows += [
+            (
+                f"pkg/cross_{offset + i}.py:1-10:function:analogue_{offset + i}",
+                0.5 - 0.001 * i,
+                {"relative_path": f"pkg/cross_{offset + i}.py"},
+            )
+            for i in range(n_cross_file)
+        ]
+        return rows
+
+    def test_starved_pool_widens_and_recovers(self, tmp_path):
+        """First-pass pool (search_k=16 for k=5) has only 2 cross-file
+        survivors; today's fixed-depth fetch returns just those 2. A
+        widening fix must re-query deeper and recover the full k=5.
+        """
+        manager = _make_manager(tmp_path, ntotal=100, search_results=None)
+        first_pass = self._rows(n_same_file=14, n_cross_file=2)  # len == 16
+        manager.search = Mock(return_value=first_pass)
+
+        results = manager.get_similar_chunks(ANCHOR, k=5, exclude_same_file=True)
+
+        # Characterizes today's bug: fixed k*3+1 depth, no back-fill.
+        manager.search.assert_called_once()
+        assert manager.search.call_args[0][1] == 16
+        assert len(results) == 2
+
+    def test_fully_starved_pool_returns_empty(self, tmp_path):
+        """First-pass pool (search_k=25 for k=8) is entirely same-file --
+        today's fixed-depth fetch returns nothing, even though cross-file
+        analogues exist deeper in the index (see the live k=60 probe in
+        ADR-0067: an anchor's k=8 exclude_same_file call returns 0 while a
+        k=60 call on the same anchor returns 60).
+        """
+        manager = _make_manager(tmp_path, ntotal=100, search_results=None)
+        all_same_file = self._rows(n_same_file=25, n_cross_file=0)  # len == 25
+        manager.search = Mock(return_value=all_same_file)
+
+        results = manager.get_similar_chunks(ANCHOR, k=8, exclude_same_file=True)
+
+        manager.search.assert_called_once()
+        assert manager.search.call_args[0][1] == 25
+        assert results == []
