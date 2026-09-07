@@ -421,17 +421,31 @@ class CodeIndexManager:
             anchor_path = metadata_entry["metadata"].get("relative_path")
             search_k = min(k * 3 + 1, self.index.ntotal)
             results = self.search(embedding, search_k)
-            return [
-                (cid, sim, meta)
-                for cid, sim, meta in results
-                if cid != chunk_id and meta.get("relative_path") != anchor_path
-            ][:k]
+            return self._drop_anchor_and_same_file(results, chunk_id, anchor_path)[:k]
 
         # Search for similar chunks (excluding the original)
         results = self.search(embedding, k + 1)
 
         # Filter out the original chunk
         return [(cid, sim, meta) for cid, sim, meta in results if cid != chunk_id][:k]
+
+    @staticmethod
+    def _drop_anchor_and_same_file(
+        results: list[tuple[str, float, dict[str, Any]]],
+        chunk_id: str,
+        anchor_path: str | None,
+    ) -> list[tuple[str, float, dict[str, Any]]]:
+        """Drop the anchor chunk and any candidate sharing its file.
+
+        Extracted from ``get_similar_chunks`` so the starvation-widening loop
+        (ADR-0067) can re-apply this filter to successive, deeper pools
+        without duplicating the comprehension.
+        """
+        return [
+            (cid, sim, meta)
+            for cid, sim, meta in results
+            if cid != chunk_id and meta.get("relative_path") != anchor_path
+        ]
 
     def get_similar_chunks_batched(
         self, chunk_ids: list[str], k: int = 5
