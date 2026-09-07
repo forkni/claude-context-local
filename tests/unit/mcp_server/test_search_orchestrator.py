@@ -560,7 +560,6 @@ def _make_outcome(results=None, effective_config=None):
     return ExecutionOutcome(
         results=results if results is not None else [],
         searcher=Mock(),
-        index_manager=None,
         effective_config=sc,
     )
 

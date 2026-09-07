@@ -9,6 +9,12 @@ De-mocked in Phase 4.2 Tier-3 (2026-06-30):
     without patching; no disk I/O because _session_oom_detected is checked first)
   - test_should_enable_neural_reranking_insufficient_vram fixed to configure
     mem_get_info (the actual API path) instead of the unused get_device_properties
+ADR-0068 (2026-09-07): RerankingEngine.__init__'s embedder/metadata_store
+params were verified-dead (write-only, zero reads) and deleted. The
+Q1 regression tests that used to prove rerank_by_query never touches them
+now prove that trivially by construction (the fields no longer exist);
+their sort-order assertions are kept, the metadata_store/embedder call
+assertions are dropped as moot.
 """
 
 from unittest.mock import MagicMock, patch
@@ -18,34 +24,12 @@ from search.reranker import SearchResult
 from search.reranking_engine import RerankingEngine
 
 
-class FakeMetadataStore:
-    """In-memory metadata store for testing (replaces MagicMock).
-
-    Implements the single method called by RerankingEngine: .get(chunk_id).
-    `get_call_count` lets Q1's regression test prove rerank_by_query never
-    calls it (the embedding-based re-score path that used to call this was
-    removed as verified-dead code — see reranking_engine.py:rerank_by_query).
-    """
-
-    def __init__(self, data: dict | None = None) -> None:
-        self._data: dict = data or {}
-        self.get_call_count = 0
-
-    def get(self, chunk_id: str) -> dict | None:
-        self.get_call_count += 1
-        return self._data.get(chunk_id)
-
-
 class TestRerankingEngine:
     """Test reranking engine functionality."""
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.mock_embedder = MagicMock()  # true boundary: wraps neural model
-        self.fake_metadata_store = FakeMetadataStore()
-        self.engine = RerankingEngine(
-            embedder=self.mock_embedder, metadata_store=self.fake_metadata_store
-        )
+        self.engine = RerankingEngine()
 
     @patch("search.reranking_engine.torch")
     def test_should_enable_neural_reranking_no_gpu(self, mock_torch):
@@ -117,23 +101,17 @@ class TestRerankingEngine:
         Direct proof for the removed embedding-based re-score block: it was
         verified dead code because MetadataStore.get() never returns a
         top-level "embedding" key (embeddings are stripped to FAISS on write;
-        see search/metadata.py:set / embedder.py:_build_chunk_metadata). Even
-        with such data present here, metadata_store.get must never be called,
-        and ordering must follow the original scores, descending, unchanged.
+        see search/metadata.py:set / embedder.py:_build_chunk_metadata).
+        Post-ADR-0068, RerankingEngine holds no metadata_store/embedder
+        reference at all, so this now pins only the surviving half of the
+        original claim: ordering follows the original scores, descending,
+        unchanged, when the neural path is bypassed.
         """
         results = [
             SearchResult(chunk_id="chunk1", score=0.5, metadata={}),
             SearchResult(chunk_id="chunk2", score=0.7, metadata={}),
             SearchResult(chunk_id="chunk3", score=0.6, metadata={}),
         ]
-
-        # Stale "embedding" data shaped like the removed dead branch expected,
-        # to prove it's ignored outright rather than merely absent.
-        self.fake_metadata_store._data = {
-            "chunk1": {"embedding": [0.8, 0.6, 0.0]},
-            "chunk2": {"embedding": [0.0, 1.0, 0.0]},
-            "chunk3": {"embedding": [1.0, 0.0, 0.0]},
-        }
 
         # Bypass neural path to isolate the pure sort behaviour.
         self.engine._session_oom_detected = True
@@ -142,29 +120,7 @@ class TestRerankingEngine:
             "test query", results, k=3, config=SearchConfig()
         )
 
-        assert self.fake_metadata_store.get_call_count == 0
-        self.mock_embedder.embed_query.assert_not_called()
         assert [r.chunk_id for r in reranked] == ["chunk2", "chunk3", "chunk1"]
-
-    def test_rerank_by_query_no_embedder(self):
-        """Test reranking without embedder (keeps original scores)."""
-        engine = RerankingEngine(embedder=None, metadata_store=FakeMetadataStore())
-
-        results = [
-            SearchResult(chunk_id="chunk1", score=0.5, metadata={}),
-            SearchResult(chunk_id="chunk2", score=0.7, metadata={}),
-        ]
-
-        # No embedder → embedding path skipped; neural path bypassed via OOM flag.
-        engine._session_oom_detected = True
-        reranked = engine.rerank_by_query(
-            "test query", results, k=2, config=SearchConfig()
-        )
-
-        # Should keep original ordering (sorted by score)
-        assert len(reranked) == 2
-        assert reranked[0].chunk_id == "chunk2"  # higher original score
-        assert reranked[1].chunk_id == "chunk1"
 
     # ------------------------------------------------------------------
     # Kill-tests: mutation-targeted (Phase 4.2 Tier-3 hardening)
@@ -210,14 +166,17 @@ class TestRerankingEngine:
 
         assert result is True
 
-    def test_rerank_bm25_mode_still_skips_embedder(self):
-        """bm25 mode must NOT invoke embedder (no mode ever does, post-Q1)."""
+    def test_rerank_bm25_mode_still_skips_neural_path(self):
+        """bm25 mode must not touch the neural reranker (no mode ever does, post-Q1)."""
         results = [SearchResult(chunk_id="c1", score=0.5, metadata={})]
         self.engine._session_oom_detected = True
 
-        self.engine.rerank_by_query("query", results, k=1, config=SearchConfig())
+        reranked = self.engine.rerank_by_query(
+            "query", results, k=1, config=SearchConfig()
+        )
 
-        self.mock_embedder.embed_query.assert_not_called()
+        assert self.engine.neural_reranker is None
+        assert [r.chunk_id for r in reranked] == ["c1"]
 
     @patch("search.neural_reranker.NeuralReranker")
     def test_shutdown_cleans_up_neural_reranker(self, mock_neural_reranker_class):

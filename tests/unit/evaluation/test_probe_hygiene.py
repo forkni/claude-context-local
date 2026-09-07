@@ -13,9 +13,9 @@ time this test was written:
   ``evaluation.probe_harness.load_golden_queries``.
 
 Both baselines only ever move down, one probe at a time, as Step 5 migrates
-each of the four beachhead probes (``probe_tm2c2_fusion.py``,
-``probe_final_pool_reserve.py``, ``probe_leg_depth_fusion.py``,
-``probe_stable_misses.py``) onto the harness -- see MIGRATED_PROBES below,
+each beachhead probe (``probe_tm2c2_fusion.py``, ``probe_final_pool_reserve.py``,
+``probe_leg_depth_fusion.py``, ``probe_stable_misses.py``,
+``probe_context_cost.py``) onto the harness -- see MIGRATED_PROBES below,
 populated as each migration lands. ``probe_duplicate_crowding.py`` is
 explicitly excluded from migration (untracked, actively-changing WIP; "two
 hats" -- see the plan) and must never appear in MIGRATED_PROBES.

@@ -38,7 +38,6 @@ from search.intent_classifier import IntentClassifier, IntentDecision, QueryInte
 
 if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder
-    from search.indexer import CodeIndexManager
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +282,6 @@ class ExecutionOutcome:
 
     results: list
     searcher: Any
-    index_manager: CodeIndexManager | None
     effective_config: SearchConfig
     reindexed: bool = False
 
@@ -440,11 +438,9 @@ class SearchOrchestrator:
             context_depth=context_depth,
         )
 
-        index_manager = SearcherView(searcher).index_manager
         return ExecutionOutcome(
             results=results,
             searcher=searcher,
-            index_manager=index_manager,
             effective_config=effective_config,
             reindexed=reindexed,
         )

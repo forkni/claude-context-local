@@ -1250,15 +1250,15 @@
       "category": "E",
       "split": "train",
       "expected": [
-        "mcp_server/tools/search_handlers.py:function:_get_index_manager_from_searcher",
+        "mcp_server/tools/searcher_view.py:decorated_definition:SearcherView.index_manager",
         "mcp_server/tools/search_orchestrator.py:class:SearchOrchestrator",
         "search/indexer.py:class:CodeIndexManager"
       ],
       "expected_primary": [
-        "mcp_server/tools/search_handlers.py:function:_get_index_manager_from_searcher"
+        "mcp_server/tools/searcher_view.py:decorated_definition:SearcherView.index_manager"
       ],
       "relevance_grades": {
-        "mcp_server/tools/search_handlers.py:function:_get_index_manager_from_searcher": 3,
+        "mcp_server/tools/searcher_view.py:decorated_definition:SearcherView.index_manager": 3,
         "mcp_server/tools/search_orchestrator.py:class:SearchOrchestrator": 2,
         "search/indexer.py:class:CodeIndexManager": 2,
         "search/indexer.py:method:CodeIndexManager.__init__": 1

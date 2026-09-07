@@ -11,7 +11,7 @@ Two callers exist today:
   - search/subgraph_extractor.py  (node lookup, edge traversal, SCC topology)
   - search/ego_graph_retriever.py (_expand_via_ppr — Personalized PageRank)
 
-See ADR-0001/0005/0006 for constraints on the graph/ ↔ search/ layering.
+See ADR-0051 for constraints on the graph/ ↔ search/ layering.
 """
 
 import logging

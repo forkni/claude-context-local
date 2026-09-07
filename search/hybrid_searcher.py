@@ -240,10 +240,8 @@ class HybridSearcher(BaseSearcher):
         self.reranker = RRFReranker(k=self.config.search_mode.rrf_k_parameter)
         self.gpu_monitor = GPUMemoryMonitor()
 
-        # Reranking engine (coordinates embedding-based and neural reranking)
-        self.reranking_engine = RerankingEngine(
-            embedder=embedder, metadata_store=self.dense_index.metadata_store
-        )
+        # Reranking engine (coordinates score-based sorting and neural reranking)
+        self.reranking_engine = RerankingEngine()
 
         # Index synchronizer (manages index persistence and synchronization)
         self.index_sync = IndexSynchronizer(
@@ -262,7 +260,6 @@ class HybridSearcher(BaseSearcher):
             embedder=embedder,
             reranker=self.reranker,
             reranking_engine=self.reranking_engine,
-            gpu_monitor=self.gpu_monitor,
             max_workers=max_workers,
             logger=self._logger,
         )

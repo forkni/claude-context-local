@@ -28,7 +28,6 @@ from search.config import get_search_config
 from search.exceptions import DimensionMismatchError
 from search.graph_integration import prefer_real_language_nodes
 from search.incremental_indexer import IncrementalIndexer
-from search.indexer import CodeIndexManager
 from search.metadata import MetadataStore
 from search.relationship_analyzer import RelationshipAnalyzer, filter_ambiguous_edges
 
@@ -200,23 +199,6 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
         get_state().searcher = indexer
 
     return reindexed, None
-
-
-def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:
-    """Extract index_manager from searcher (handles different searcher types).
-
-    Delegates to :class:`~mcp_server.tools.searcher_view.SearcherView`, which
-    owns the HybridSearcher/IntelligentSearcher attribute-extraction seam.
-
-    Args:
-        searcher: HybridSearcher or IntelligentSearcher instance
-
-    Returns:
-        CodeIndexManager or None
-    """
-    from mcp_server.tools.searcher_view import SearcherView
-
-    return SearcherView(searcher).index_manager
 
 
 async def _resolve_symbol_to_chunk_id(

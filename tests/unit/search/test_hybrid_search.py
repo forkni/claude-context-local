@@ -573,24 +573,27 @@ class TestHybridSearcher:
     def test_clear_index_preserves_collaborator_identity(self):
         """ADR-0025 invariant: every collaborator that cached bm25_index/
         dense_index at construction time still resolves to the *same*
-        objects after clear_index() -- search_executor, multi_hop_searcher
-        and reranking_engine included. This is the regression commit
-        db4c181 shipped without coverage: search_executor.bm25_index in
-        particular used to go stale after a resync because nothing repaired
-        it; under the stable-identity invariant there is nothing to repair.
+        objects after clear_index() -- search_executor and multi_hop_searcher
+        included. This is the regression commit db4c181 shipped without
+        coverage: search_executor.bm25_index in particular used to go stale
+        after a resync because nothing repaired it; under the
+        stable-identity invariant there is nothing to repair.
+
+        reranking_engine dropped out of this invariant's scope under
+        ADR-0068: its metadata_store reference was verified-dead (write-only,
+        zero reads) and deleted, so it no longer caches any collaborator
+        whose identity this test could check.
         """
         searcher = HybridSearcher(self.temp_dir)
 
         original_bm25 = searcher.bm25_index
         original_dense = searcher.dense_index
-        original_metadata_store = searcher.reranking_engine.metadata_store
 
         searcher.clear_index()
 
         assert searcher.search_executor.bm25_index is original_bm25
         assert searcher.search_executor.dense_index is original_dense
         assert searcher.multi_hop_searcher.dense_index is original_dense
-        assert searcher.reranking_engine.metadata_store is original_metadata_store
 
     def teardown_method(self):
         """Clean up test fixtures."""

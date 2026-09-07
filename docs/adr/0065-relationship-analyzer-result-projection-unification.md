@@ -104,5 +104,7 @@ keeps the change scoped to path-separator normalization alone, per the plan's ow
   fixed here. The object branches' existing `if file_path else ""` guard was not backported to it.
 - `mcp_server/tools/result_view.py`'s `_format_search_results` — already pinned by its own snapshot
   suite, already internally consistent, untouched.
-- `_NEVER_DROP_FILTERED_KEYS`'s three-layer duplication (`search/types.py`,
-  `relationship_analyzer.py`, `mcp_server/output_formatter.py`) — not folded in.
+- `_NEVER_DROP_FILTERED_KEYS` (`relationship_analyzer.py:1031`, 2 keys) and the differently-named
+  `NEVER_DROP_EMPTY_KEYS` (`mcp_server/output_formatter.py:31-32`, 4 keys) are two divergent
+  constants, not one triplicated definition; `search/types.py:338` carries only a prose comment,
+  no constant — not folded in.

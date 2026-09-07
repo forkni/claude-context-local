@@ -70,7 +70,6 @@ class SearchExecutor:
         embedder,  # CodeEmbedder
         reranker,  # RRFReranker
         reranking_engine,  # RerankingEngine
-        gpu_monitor,  # GPUMemoryMonitor
         max_workers: int = 2,
         logger: logging.Logger | None = None,
     ):
@@ -83,7 +82,6 @@ class SearchExecutor:
             embedder: CodeEmbedder for query embedding generation
             reranker: RRFReranker for result fusion
             reranking_engine: RerankingEngine for neural reranking
-            gpu_monitor: GPUMemoryMonitor for VRAM tracking
             max_workers: Maximum thread pool workers
             logger: Optional logger instance
         """
@@ -92,7 +90,6 @@ class SearchExecutor:
         self.embedder = embedder
         self.reranker = reranker
         self.reranking_engine = reranking_engine
-        self.gpu_monitor = gpu_monitor
 
         self.max_workers = max_workers
 

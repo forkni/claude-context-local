@@ -66,7 +66,6 @@ def executor():
         embedder=embedder,
         reranker=reranker,
         reranking_engine=reranking_engine,
-        gpu_monitor=Mock(),
         logger=logging.getLogger("test"),
     )
 

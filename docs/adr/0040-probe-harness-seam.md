@@ -96,7 +96,7 @@ determinism guard.
   `probe_leg_depth_fusion.py`'s `fidelity_check` depends on its own, richer `Instrumentation` API that
   `ProbeSession.instrument()` does not (yet) replicate.
 
-The remaining 19 `scripts/benchmark/*.py` files (of 27 total) still hand-roll their own bootstrap —
+The remaining 19 `scripts/benchmark/*.py` files (of 36 total) still hand-roll their own bootstrap —
 that is the current `BASELINE_SYS_PATH_BOOTSTRAP_COUNT`. Migrating them is future work, one probe at a
 time, gated by the same ratchet.
 
@@ -182,7 +182,7 @@ trip the ratchet.
 - The ratchet (`test_probe_hygiene.py`) prevents any *new* script from reintroducing a bootstrap or
   local loader without failing CI, and prevents `MIGRATED_PROBES` from silently including
   `probe_duplicate_crowding.py` or `probe_rerank_window.py`.
-- 19 of 27 `scripts/benchmark/*.py` files remain unmigrated; each future migration is expected to
+- 19 of 36 `scripts/benchmark/*.py` files remain unmigrated; each future migration is expected to
   follow the same pattern (route hop-1 arithmetic through `leg_search_depth`/`fused_pool_cut`, loader
   through `load_golden_queries`, parser through `probe_parser`, keep any multi-depth or
   richer-instrumentation logic the harness doesn't support local, verify via before/after capture

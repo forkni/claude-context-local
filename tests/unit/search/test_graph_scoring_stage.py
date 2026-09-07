@@ -186,7 +186,7 @@ class TestApplyCentrality:
         IntelligentSearcher, or a bare Mock() with the attribute unset) must
         not have set_centrality_scores called on it.
 
-        ADR-0004: this guard used to also check ``SearcherView(searcher).is_hybrid``
+        ADR-0051: this guard used to also check ``SearcherView(searcher).is_hybrid``
         before the ``hasattr``/``is not None`` pair below — that first clause was
         redundant (only HybridSearcher ever sets ego_graph_retriever) and its
         removal deleted graph_scoring_stage.py's only upward mcp_server import.

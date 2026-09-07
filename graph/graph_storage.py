@@ -1390,12 +1390,3 @@ class CodeGraphStorage:
         """Check if chunk_id is in graph."""
         # Normalize for cross-platform path consistency (#47).
         return normalize_path(chunk_id) in self.graph
-
-    # pyrefly: ignore [missing-attribute]
-    def get_graph(self) -> "nx.MultiDiGraph":
-        """Expose raw NetworkX MultiDiGraph for external algorithms (e.g., PPR).
-
-        Returns:
-            The underlying NetworkX multi-directed graph.
-        """
-        return self.graph

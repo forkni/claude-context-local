@@ -49,15 +49,8 @@ _CHANNEL_TIER = {ResultSource.MULTI_HOP: 1, ResultSource.GRAPH_HOP: 2}
 class RerankingEngine:
     """Coordinates score-based sorting and neural reranking for search results."""
 
-    def __init__(self, embedder, metadata_store) -> None:
-        """Initialize the reranking engine.
-
-        Args:
-            embedder: CodeEmbedder instance for query embeddings
-            metadata_store: MetadataStore for chunk metadata retrieval
-        """
-        self.embedder = embedder
-        self.metadata_store = metadata_store
+    def __init__(self) -> None:
+        """Initialize the reranking engine."""
         # Type annotation only; | union operators have no runtime effect.
         self.neural_reranker: (
             NeuralReranker
