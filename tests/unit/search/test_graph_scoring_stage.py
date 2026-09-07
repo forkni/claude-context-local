@@ -284,13 +284,13 @@ class TestReorderSyntheticGraphGuardGate0:
             suggested_params={},
         )
 
-    def test_empty_real_graph_storage_skips_synthetic_reorder_today(self, tmp_path):
-        """THE PIN THAT MATTERS: an empty (0-node) real ``CodeGraphStorage``
-        is falsy (no ``__bool__``, ``__len__() == 0``), so Block F's guard
-        skips entirely today — module chunks are NOT demoted even though a
-        non-GLOBAL intent says they should be. This passes today (pinning
-        the bug) and must flip to "demoted" once Commit 2 moves the reorder
-        call out of the guard.
+    def test_empty_real_graph_storage_still_demotes_synthetic(self, tmp_path):
+        """THE FIX PIN: an empty (0-node) real ``CodeGraphStorage`` is falsy
+        (no ``__bool__``, ``__len__() == 0``), so Block F's guard still skips
+        entirely — but ``_reorder_synthetic`` no longer lives inside that
+        guard (Commit 2, C3, docs/adr/0066-*), so module chunks ARE demoted
+        regardless. Before Commit 2 this test asserted the opposite (module
+        chunk NOT demoted) — that was the bug being pinned.
         """
         stage = GraphScoringStage()
         im = Mock()
@@ -304,10 +304,10 @@ class TestReorderSyntheticGraphGuardGate0:
             "q", self._non_global_intent(), 4, [mod, fn], im, None, graph_config
         )
 
-        # Bug pinned: module chunk is NOT demoted, because the falsy empty
-        # storage skipped Block F (and thus _reorder_synthetic) entirely.
-        assert out_results[0]["kind"] == "module"
-        assert out_results[1]["kind"] == "function"
+        # Fixed: module chunk IS demoted even though the empty storage
+        # skipped Block F — the reorder no longer depends on that guard.
+        assert out_results[0]["kind"] == "function"
+        assert out_results[1]["kind"] == "module"
 
     def test_populated_real_graph_storage_demotes_synthetic_today(self, tmp_path):
         """THE INERTNESS PIN: a non-empty real ``CodeGraphStorage`` is
@@ -332,11 +332,13 @@ class TestReorderSyntheticGraphGuardGate0:
         assert out_results[0]["kind"] == "function"
         assert out_results[1]["kind"] == "module"
 
-    def test_centrality_annotation_off_skips_synthetic_reorder_today(self, tmp_path):
-        """``centrality_annotation=False`` independently skips Block F (and
-        thus ``_reorder_synthetic``) even with a populated, truthy graph
-        storage. Pins the same "not demoted" outcome as the empty-storage
-        pin above, but via the other guard conjunct.
+    def test_centrality_annotation_off_still_demotes_synthetic(self, tmp_path):
+        """``centrality_annotation=False`` independently skips Block F even
+        with a populated, truthy graph storage — but (Commit 2, C3)
+        ``_reorder_synthetic`` no longer lives inside Block F's guard, so
+        module chunks ARE demoted regardless. Before Commit 2 this test
+        asserted the opposite (module chunk NOT demoted), via the other
+        guard conjunct from the empty-storage pin above.
         """
         stage = GraphScoringStage()
         im = Mock()
@@ -350,8 +352,8 @@ class TestReorderSyntheticGraphGuardGate0:
             "q", self._non_global_intent(), 4, [mod, fn], im, None, graph_config
         )
 
-        assert out_results[0]["kind"] == "module"
-        assert out_results[1]["kind"] == "function"
+        assert out_results[0]["kind"] == "function"
+        assert out_results[1]["kind"] == "module"
 
 
 # ---------------------------------------------------------------------------

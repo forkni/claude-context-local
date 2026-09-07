@@ -35,6 +35,11 @@ class GraphScoringStage:
       not truthiness).
     - **Block G** (subgraph) fires whenever ``index_manager.graph_storage`` exists
       AND ``include_subgraph`` is ``True``, regardless of whether Block F ran.
+
+    Intent-aware synthetic-chunk ordering has no graph dependency of its own
+    (it only reads ``results`` and ``intent_decision``) and is applied by
+    ``run()`` unconditionally, between Block F and the result cap — it does
+    not share Block F's guard (C3, docs/adr/0066-*).
     """
 
     def run(
@@ -62,7 +67,8 @@ class GraphScoringStage:
             searcher: Active ``HybridSearcher`` (or ``None``); used for ego-graph
                 centrality-score injection before subgraph extraction.
             graph_config: ``GraphEnhancedConfig`` controlling centrality behaviour;
-                ``None`` → Block F skips.
+                ``None`` → Block F skips (synthetic-chunk ordering is unaffected —
+                it runs unconditionally based on ``intent_decision`` alone).
             include_subgraph: Whether the caller will actually use Block G's
                 output. Defaults to ``True`` (unconditional extraction, the
                 historical behaviour) so existing callers are unaffected;
@@ -77,8 +83,9 @@ class GraphScoringStage:
             ``False``.
         """
         results, centrality_scores = self._apply_centrality(
-            query, intent_decision, results, index_manager, searcher, graph_config
+            query, results, index_manager, searcher, graph_config
         )
+        results = self._reorder_synthetic(results, intent_decision)
         results = self._cap_results(results, k, graph_config)
         subgraph_data = (
             self._extract_subgraph(results, k, index_manager, centrality_scores)
@@ -94,20 +101,25 @@ class GraphScoringStage:
     def _apply_centrality(
         self,
         query: str,
-        intent_decision: IntentDecision | None,
         results: list[dict],
         index_manager: CodeIndexManager | None,
         searcher: Any,
         graph_config: GraphEnhancedConfig | None,
     ) -> tuple[list[dict], dict[str, float] | None]:
-        """Apply centrality annotation/reranking and intent-aware synthetic ordering.
+        """Apply centrality annotation/reranking.
 
         Returns ``(results, centrality_scores)`` where ``centrality_scores`` is
         ``None`` when the guard conditions are not met or an error occurs.
+
+        Intent-aware synthetic-chunk ordering (``_reorder_synthetic``) used to
+        run inside this method's guarded ``try``, but it has no graph
+        dependency at all — it was only ever gated by Block F's guard as an
+        accident of placement. ``run()`` now calls it unconditionally, after
+        this method and before ``_cap_results`` (C3, docs/adr/0066-*).
         """
         centrality_scores: dict[str, float] | None = None
 
-        # ===== Block F: centrality annotation/reranking + intent-aware synthetic ordering =====
+        # ===== Block F: centrality annotation/reranking =====
         if (
             graph_config
             and graph_config.centrality_annotation
@@ -137,8 +149,6 @@ class GraphScoringStage:
                 else:
                     results = ranker.annotate(results)
                     logger.debug(f"Annotated {len(results)} results with centrality")
-
-                results = self._reorder_synthetic(results, intent_decision)
 
             except (ImportError, ValueError, KeyError, RuntimeError, TypeError) as e:
                 logger.debug(f"Centrality ranking failed: {e}")
