@@ -171,7 +171,7 @@ $env:HF_TOKEN = "hf_your_token_here"
 
 ```powershell
 # Check HuggingFace authentication status
-verify-hf-auth.bat
+verify-hf-auth.cmd
 
 # Or run the Python script directly
 .venv\Scripts\python.exe scripts\verify_hf_auth.py
