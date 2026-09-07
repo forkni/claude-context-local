@@ -178,7 +178,7 @@ class TestFindSimilarToChunk(unittest.TestCase):
         # again per result to build its own "similar_chunks" context.
         self.assertEqual(
             self.mock_index_manager.get_similar_chunks.call_args_list[0],
-            unittest.mock.call("a.py:1-5:function:foo", 2),
+            unittest.mock.call("a.py:1-5:function:foo", 2, exclude_same_file=False),
         )
 
     def test_empty_result_when_no_similar_chunks(self):
@@ -187,6 +187,23 @@ class TestFindSimilarToChunk(unittest.TestCase):
         results = self.searcher.find_similar_to_chunk("a.py:1-5:function:foo")
 
         self.assertEqual(results, [])
+
+    def test_forwards_exclude_same_file_true(self):
+        """ADR-0067: exclude_same_file must reach get_similar_chunks --
+        previously this searcher had no such parameter at all, so the MCP
+        handler's always-passed kwarg raised TypeError whenever
+        enable_hybrid=False routed here instead of to HybridSearcher.
+        """
+        self.mock_index_manager.get_similar_chunks.return_value = []
+
+        self.searcher.find_similar_to_chunk(
+            "a.py:1-5:function:foo", k=3, exclude_same_file=True
+        )
+
+        self.assertEqual(
+            self.mock_index_manager.get_similar_chunks.call_args_list[0],
+            unittest.mock.call("a.py:1-5:function:foo", 3, exclude_same_file=True),
+        )
 
 
 class TestGetSearchSuggestions(unittest.TestCase):

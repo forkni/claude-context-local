@@ -190,33 +190,57 @@ class TestGetSimilarChunksStarvation:
 
     def test_starved_pool_widens_and_recovers(self, tmp_path):
         """First-pass pool (search_k=16 for k=5) has only 2 cross-file
-        survivors; today's fixed-depth fetch returns just those 2. A
-        widening fix must re-query deeper and recover the full k=5.
+        survivors. The widening loop (ADR-0067) doubles search_k to 32,
+        where a deeper pool holds enough cross-file candidates, and
+        recovers the full k=5.
         """
         manager = _make_manager(tmp_path, ntotal=100, search_results=None)
         first_pass = self._rows(n_same_file=14, n_cross_file=2)  # len == 16
-        manager.search = Mock(return_value=first_pass)
+        second_pass = self._rows(n_same_file=26, n_cross_file=6)  # len == 32
+        manager.search = Mock(side_effect=[first_pass, second_pass])
 
         results = manager.get_similar_chunks(ANCHOR, k=5, exclude_same_file=True)
 
-        # Characterizes today's bug: fixed k*3+1 depth, no back-fill.
-        manager.search.assert_called_once()
-        assert manager.search.call_args[0][1] == 16
-        assert len(results) == 2
+        assert manager.search.call_count == 2
+        assert manager.search.call_args_list[0][0][1] == 16
+        assert manager.search.call_args_list[1][0][1] == 32
+        assert len(results) == 5
+        assert all(meta["relative_path"] != "pkg/anchor.py" for _, _, meta in results)
 
-    def test_fully_starved_pool_returns_empty(self, tmp_path):
-        """First-pass pool (search_k=25 for k=8) is entirely same-file --
-        today's fixed-depth fetch returns nothing, even though cross-file
-        analogues exist deeper in the index (see the live k=60 probe in
-        ADR-0067: an anchor's k=8 exclude_same_file call returns 0 while a
-        k=60 call on the same anchor returns 60).
+    def test_widening_stops_at_genuine_exhaustion(self, tmp_path):
+        """First-pass pool (search_k=31 for k=10) is starved and widens to
+        search_k=40, which hits ntotal. If the corpus still can't supply k
+        cross-file candidates even there, the loop must stop and return
+        whatever exists -- not spin forever.
+        """
+        manager = _make_manager(tmp_path, ntotal=40, search_results=None)
+        first_pass = self._rows(n_same_file=29, n_cross_file=2)  # len == 31
+        second_pass = self._rows(n_same_file=37, n_cross_file=3)  # len == 40
+        manager.search = Mock(side_effect=[first_pass, second_pass])
+
+        results = manager.get_similar_chunks(ANCHOR, k=10, exclude_same_file=True)
+
+        assert manager.search.call_count == 2
+        assert manager.search.call_args_list[0][0][1] == 31
+        assert manager.search.call_args_list[1][0][1] == 40  # capped at ntotal
+        assert len(results) == 3
+
+    def test_fully_starved_first_pool_now_recovers(self, tmp_path):
+        """First-pass pool (search_k=25 for k=8) is entirely same-file, so
+        the fixed-depth fetch alone would return nothing -- but the
+        widening loop keeps going and recovers cross-file candidates one
+        search deeper (see the live k=60 probe in ADR-0067: an anchor's
+        k=8 exclude_same_file call returned 0 while a k=60 call on the same
+        anchor returned 60).
         """
         manager = _make_manager(tmp_path, ntotal=100, search_results=None)
-        all_same_file = self._rows(n_same_file=25, n_cross_file=0)  # len == 25
-        manager.search = Mock(return_value=all_same_file)
+        first_pass = self._rows(n_same_file=25, n_cross_file=0)  # len == 25
+        second_pass = self._rows(n_same_file=42, n_cross_file=8)  # len == 50
+        manager.search = Mock(side_effect=[first_pass, second_pass])
 
         results = manager.get_similar_chunks(ANCHOR, k=8, exclude_same_file=True)
 
-        manager.search.assert_called_once()
-        assert manager.search.call_args[0][1] == 25
-        assert results == []
+        assert manager.search.call_count == 2
+        assert manager.search.call_args_list[0][0][1] == 25
+        assert manager.search.call_args_list[1][0][1] == 50
+        assert len(results) == 8

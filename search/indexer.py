@@ -416,12 +416,24 @@ class CodeIndexManager:
 
         if exclude_same_file:
             # Same-file neighbors can dominate the top ranks (5-8 of top-10 for
-            # most anchors), so a k+1 fetch would under-return. Overfetch 3x
-            # (the depth the diversity probe validated), then filter.
+            # most anchors), so a k+1 fetch would under-return. Start at 3x
+            # overfetch (the depth the diversity probe validated) -- but on a
+            # file that dominates the pool even harder (e.g. one large
+            # single-class file), that fixed depth can starve entirely
+            # (ADR-0067). Widen only when starved: the unstarved case below
+            # returns on the first pass, so this loop is a no-op cost-wise for
+            # every anchor that doesn't need it.
             anchor_path = metadata_entry["metadata"].get("relative_path")
-            search_k = min(k * 3 + 1, self.index.ntotal)
-            results = self.search(embedding, search_k)
-            return self._drop_anchor_and_same_file(results, chunk_id, anchor_path)[:k]
+            ntotal = self.index.ntotal
+            search_k = min(k * 3 + 1, ntotal)
+            while True:
+                results = self.search(embedding, search_k)
+                survivors = self._drop_anchor_and_same_file(
+                    results, chunk_id, anchor_path
+                )
+                if len(survivors) >= k or search_k >= ntotal or len(results) < search_k:
+                    return survivors[:k]
+                search_k = min(search_k * 2, ntotal)
 
         # Search for similar chunks (excluding the original)
         results = self.search(embedding, k + 1)

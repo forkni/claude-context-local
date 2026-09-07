@@ -357,13 +357,28 @@ class FakeDenseIndex:
         anchor_embedding = self._vectors[index_id]
 
         if exclude_same_file:
+            # Mirrors search.indexer.CodeIndexManager.get_similar_chunks'
+            # starvation-widening loop (ADR-0067): the initial k*3+1 overfetch
+            # can starve when the anchor's file dominates the pool, so widen
+            # until enough survivors exist, the pool is exhausted, or the
+            # whole index has been searched.
             anchor_path = entry["metadata"].get("relative_path")
-            candidates = self.search(anchor_embedding, k * 3 + 1)
-            filtered = [
-                (cid, score, meta)
-                for cid, score, meta in candidates
-                if cid != chunk_id and meta.get("relative_path") != anchor_path
-            ]
+            ntotal = len(self.chunk_ids)
+            search_k = min(k * 3 + 1, ntotal)
+            while True:
+                candidates = self.search(anchor_embedding, search_k)
+                filtered = [
+                    (cid, score, meta)
+                    for cid, score, meta in candidates
+                    if cid != chunk_id and meta.get("relative_path") != anchor_path
+                ]
+                if (
+                    len(filtered) >= k
+                    or search_k >= ntotal
+                    or len(candidates) < search_k
+                ):
+                    break
+                search_k = min(search_k * 2, ntotal)
         else:
             candidates = self.search(anchor_embedding, k + 1)
             filtered = [

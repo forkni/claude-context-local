@@ -219,18 +219,29 @@ class IntelligentSearcher(BaseSearcher):
         filters = {"chunk_type": chunk_type}
         return self.search(query, k=k, filters=filters)
 
-    def find_similar_to_chunk(self, chunk_id: str, k: int = 4) -> list[SearchResult]:
+    def find_similar_to_chunk(
+        self, chunk_id: str, k: int = 4, exclude_same_file: bool = False
+    ) -> list[SearchResult]:
         """Find chunks functionally similar to a given chunk.
 
         Args:
             chunk_id: Chunk ID in the form ``"file.py:start-end:type:name"``.
             k: Number of similar chunks to return (default: 4).
+            exclude_same_file: Drop candidates from the anchor's own file.
+                Forwarded to ``get_similar_chunks`` -- see its docstring for
+                why this is caller-supplied intent, not automatic. Added so
+                this searcher matches ``HybridSearcher.find_similar_to_chunk``:
+                ``mcp_server/tools/search_handlers.py`` always passes this
+                kwarg regardless of which searcher ``get_searcher`` returns
+                (ADR-0067; previously a ``TypeError`` on ``enable_hybrid=False``).
 
         Returns:
             Ranked list of ``SearchResult`` ordered by similarity (descending).
             Each result is enriched with ``context_depth=1`` neighbor context.
         """
-        similar_chunks = self.index_manager.get_similar_chunks(chunk_id, k)
+        similar_chunks = self.index_manager.get_similar_chunks(
+            chunk_id, k, exclude_same_file=exclude_same_file
+        )
 
         results = []
         for chunk_id, similarity, metadata in similar_chunks:
