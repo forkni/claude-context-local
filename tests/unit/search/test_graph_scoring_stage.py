@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from search.config import SearchConfig
 from search.graph_scoring_stage import GraphScoringStage
@@ -33,6 +33,16 @@ def _graph_config_off():
     sc = SearchConfig()
     sc.graph_enhanced.centrality_annotation = False
     return sc.graph_enhanced
+
+
+def _truthy_graph_storage():
+    """A mock ``graph_storage`` that is non-empty under both the guard's old
+    truthiness check and its ``len(...) > 0`` replacement (Commit 1). Plain
+    ``Mock()`` has no ``__len__`` at all — ``len(Mock())`` raises
+    ``TypeError`` — so a ``MagicMock`` with ``__len__`` configured is
+    required wherever Block F's guard is meant to pass.
+    """
+    return MagicMock(**{"__len__.return_value": 1})
 
 
 def _mock_subgraph_extractor(nodes=None, subgraph_dict=None):
@@ -66,7 +76,7 @@ class TestApplyCentrality:
         stage = GraphScoringStage()
         graph_config = _graph_config_on(reranking=True)
         im = Mock()
-        im.graph_storage = Mock()
+        im.graph_storage = _truthy_graph_storage()
 
         fake_scores = {"a.py:1-5:function:foo": 0.9}
         mock_ranker = Mock()
@@ -92,7 +102,7 @@ class TestApplyCentrality:
         stage = GraphScoringStage()
         graph_config = _graph_config_on(reranking=False)
         im = Mock()
-        im.graph_storage = Mock()
+        im.graph_storage = _truthy_graph_storage()
 
         mock_ranker = Mock()
         mock_ranker.get_centrality_scores.return_value = {}
@@ -125,7 +135,7 @@ class TestApplyCentrality:
         )
         graph_config = _graph_config_on(reranking=False)
         im = Mock()
-        im.graph_storage = Mock()
+        im.graph_storage = _truthy_graph_storage()
 
         real_result = {"chunk_id": "a.py:1-5:function:foo", "kind": "function"}
         synth_result = {"chunk_id": "a.py:0-0:module:a", "kind": "module"}
@@ -154,7 +164,7 @@ class TestApplyCentrality:
         stage = GraphScoringStage()
         graph_config = _graph_config_on(reranking=False)
         im = Mock()
-        im.graph_storage = Mock()
+        im.graph_storage = _truthy_graph_storage()
 
         results = [_make_formatted()]
         with (
@@ -205,7 +215,7 @@ class TestApplyCentrality:
         stage = GraphScoringStage()
         graph_config = _graph_config_on(reranking=False)
         im = Mock()
-        im.graph_storage = Mock()
+        im.graph_storage = _truthy_graph_storage()
 
         fake_scores = {"a.py:1-5:function:foo": 0.7}
         mock_ranker = Mock()

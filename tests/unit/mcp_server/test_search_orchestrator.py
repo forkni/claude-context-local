@@ -407,6 +407,14 @@ class TestExecuteConcurrencyIntegration:
         state = ApplicationState()
         state.current_project = "/test-project"
         searcher = _make_ready_searcher()
+        # This test is about the read/write lock timing, not graph scoring.
+        # dense_index.graph_storage otherwise auto-vivifies as a bare Mock
+        # (no __len__), which used to slip past Block F's old truthiness
+        # guard and get silently swallowed by _apply_centrality's broad
+        # except; the guard's len(...) > 0 check (C3) runs before that
+        # try/except, so an un-lengthed Mock now raises TypeError instead.
+        # Setting graph_storage to None makes Block F's skip explicit.
+        searcher.dense_index.graph_storage = None
 
         probe_lock = threading.Lock()
         writer_active = 0

@@ -28,7 +28,11 @@ class GraphScoringStage:
     The two guards are independent:
 
     - **Block F** (centrality) fires only when
-      ``graph_config.centrality_annotation`` is ``True``.
+      ``graph_config.centrality_annotation`` is ``True`` AND
+      ``index_manager.graph_storage`` is a non-empty graph (``is not None`` and
+      ``len(...) > 0`` — ``CodeGraphStorage`` defines ``__len__`` but no
+      ``__bool__``, so an empty-but-valid storage must be checked by length,
+      not truthiness).
     - **Block G** (subgraph) fires whenever ``index_manager.graph_storage`` exists
       AND ``include_subgraph`` is ``True``, regardless of whether Block F ran.
     """
@@ -108,7 +112,8 @@ class GraphScoringStage:
             graph_config
             and graph_config.centrality_annotation
             and index_manager
-            and index_manager.graph_storage
+            and index_manager.graph_storage is not None
+            and len(index_manager.graph_storage) > 0
         ):
             try:
                 from graph.graph_queries import GraphQueryEngine
