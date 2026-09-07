@@ -228,6 +228,122 @@ class TestApplyCentrality:
         assert kwargs.get("centrality_scores") == fake_scores
 
 
+class TestReorderSyntheticGraphGuardGate0:
+    """Gate 0 characterization tests for the C3 plan (docs/adr/0066-*).
+
+    ``_reorder_synthetic`` (:167-218) has zero graph dependency (verified via
+    MCP ``find_connections`` — its only callee is its own ``@staticmethod``
+    ``_result_score``), yet is called at :136 inside Block F's guarded
+    ``try``. ``CodeGraphStorage`` defines ``__len__`` but no ``__bool__``
+    (``graph/graph_storage.py:1378``), so a valid, empty (0-node) storage is
+    falsy — Block F's guard is a node-count test in disguise, and the
+    synthetic-chunk reorder silently skips along with it.
+
+    Item 1 of the plan's Gate 0 list ("``_reorder_synthetic`` demotes module
+    chunks for a non-GLOBAL intent — direct call, no graph") is already
+    covered by ``TestPrivateHelpers.test_reorder_synthetic_moves_synthetic_to_tail``
+    above; not duplicated here.
+
+    These tests pin *today's* (pre-fix) behaviour against unmodified
+    production code, using a real ``CodeGraphStorage`` rather than
+    ``Mock(**{"__len__.return_value": 0})`` so they bind to the actual
+    ``__len__``/``__bool__`` semantics, not an assumption about them.
+    """
+
+    @staticmethod
+    def _empty_real_graph_storage(tmp_path):
+        from graph.graph_storage import CodeGraphStorage
+
+        return CodeGraphStorage(project_id="gate0-empty", storage_dir=tmp_path)
+
+    @staticmethod
+    def _populated_real_graph_storage(tmp_path):
+        from graph.graph_storage import CodeGraphStorage
+
+        storage = CodeGraphStorage(project_id="gate0-populated", storage_dir=tmp_path)
+        storage.add_node("a.py:1-10:function:foo", "foo", "function", "a.py")
+        return storage
+
+    @staticmethod
+    def _non_global_intent():
+        return IntentDecision(
+            intent=QueryIntent.LOCAL,
+            confidence=0.9,
+            reason="test LOCAL intent",
+            scores={},
+            suggested_params={},
+        )
+
+    def test_empty_real_graph_storage_skips_synthetic_reorder_today(self, tmp_path):
+        """THE PIN THAT MATTERS: an empty (0-node) real ``CodeGraphStorage``
+        is falsy (no ``__bool__``, ``__len__() == 0``), so Block F's guard
+        skips entirely today — module chunks are NOT demoted even though a
+        non-GLOBAL intent says they should be. This passes today (pinning
+        the bug) and must flip to "demoted" once Commit 2 moves the reorder
+        call out of the guard.
+        """
+        stage = GraphScoringStage()
+        im = Mock()
+        im.graph_storage = self._empty_real_graph_storage(tmp_path)
+        graph_config = _graph_config_on(reranking=False)
+
+        mod = {"chunk_id": "a.py:0-0:module:a", "kind": "module", "score": 0.3}
+        fn = {"chunk_id": "b.py:1-5:function:foo", "kind": "function", "score": 0.9}
+
+        out_results, _ = stage.run(
+            "q", self._non_global_intent(), 4, [mod, fn], im, None, graph_config
+        )
+
+        # Bug pinned: module chunk is NOT demoted, because the falsy empty
+        # storage skipped Block F (and thus _reorder_synthetic) entirely.
+        assert out_results[0]["kind"] == "module"
+        assert out_results[1]["kind"] == "function"
+
+    def test_populated_real_graph_storage_demotes_synthetic_today(self, tmp_path):
+        """THE INERTNESS PIN: a non-empty real ``CodeGraphStorage`` is
+        truthy, so Block F's guard passes and ``_reorder_synthetic`` runs as
+        today's production code intends — module chunks ARE demoted. Must
+        stay green through both Commit 1 (guard rewrite) and Commit 2
+        (reorder hoisted out of the guard) — this is what proves the fix is
+        inert on a populated substrate.
+        """
+        stage = GraphScoringStage()
+        im = Mock()
+        im.graph_storage = self._populated_real_graph_storage(tmp_path)
+        graph_config = _graph_config_on(reranking=False)
+
+        mod = {"chunk_id": "a.py:0-0:module:a", "kind": "module", "score": 0.3}
+        fn = {"chunk_id": "b.py:1-5:function:foo", "kind": "function", "score": 0.9}
+
+        out_results, _ = stage.run(
+            "q", self._non_global_intent(), 4, [mod, fn], im, None, graph_config
+        )
+
+        assert out_results[0]["kind"] == "function"
+        assert out_results[1]["kind"] == "module"
+
+    def test_centrality_annotation_off_skips_synthetic_reorder_today(self, tmp_path):
+        """``centrality_annotation=False`` independently skips Block F (and
+        thus ``_reorder_synthetic``) even with a populated, truthy graph
+        storage. Pins the same "not demoted" outcome as the empty-storage
+        pin above, but via the other guard conjunct.
+        """
+        stage = GraphScoringStage()
+        im = Mock()
+        im.graph_storage = self._populated_real_graph_storage(tmp_path)
+        graph_config = _graph_config_off()
+
+        mod = {"chunk_id": "a.py:0-0:module:a", "kind": "module", "score": 0.3}
+        fn = {"chunk_id": "b.py:1-5:function:foo", "kind": "function", "score": 0.9}
+
+        out_results, _ = stage.run(
+            "q", self._non_global_intent(), 4, [mod, fn], im, None, graph_config
+        )
+
+        assert out_results[0]["kind"] == "module"
+        assert out_results[1]["kind"] == "function"
+
+
 # ---------------------------------------------------------------------------
 # Block G — SSCG subgraph extraction
 # ---------------------------------------------------------------------------
