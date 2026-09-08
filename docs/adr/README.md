@@ -73,6 +73,7 @@ for avoiding re-litigating settled questions.
 | [0065](0065-relationship-analyzer-result-projection-unification.md) | Unify RelationshipAnalyzer's three result-row projections (a different C2 from ADR-0030's) | accepted | 2026-09-06 |
 | [0066](0066-free-synthetic-reorder-from-graph-guard.md) | Free the synthetic-chunk reorder from Block F's graph guard (C3) | accepted | 2026-09-06 |
 | [0067](0067-widen-find-similar-code-exclude-same-file-starvation.md) | Widen `find_similar_code(exclude_same_file=True)` on starved pools | accepted | 2026-09-07 |
+| [0068](0068-cleanup-probe-migration-and-canon-repin.md) | Cleanup + probe-harness migration + the owed canon re-pin | accepted | 2026-09-07 |
 
 ## Adding a new ADR
 
