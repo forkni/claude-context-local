@@ -75,6 +75,7 @@ for avoiding re-litigating settled questions.
 | [0067](0067-widen-find-similar-code-exclude-same-file-starvation.md) | Widen `find_similar_code(exclude_same_file=True)` on starved pools | accepted | 2026-09-07 |
 | [0068](0068-cleanup-probe-migration-and-canon-repin.md) | Cleanup + probe-harness migration + the owed canon re-pin | accepted | 2026-09-07 |
 | [0069](0069-fix-phantom-node-shadowing-of-resolved-call-edges.md) | Fix phantom-node shadowing of resolved call edges (D1 + D2) | accepted | 2026-09-08 |
+| [0070](0070-rust-call-edge-tier.md) | Rust call-graph tier: chunking, extraction, resolution | accepted | 2026-09-08 |
 
 ## Adding a new ADR
 

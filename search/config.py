@@ -1796,7 +1796,14 @@ class CallGraphConfig:
                 "[graph] ADR-0060 §probe: cap=3 holds voro-engine ambiguous-edge "
                 "growth to +36,318 (+90% links) vs +77,172 (+190%) uncapped; "
                 "CANON_GATE_FANOUT_CAP_20260903 confirms Python retrieval "
-                "unaffected (63q 0.8348 / 133q 0.6375, both flat)"
+                "unaffected (63q 0.8348 / 133q 0.6375, both flat). ADR-0070 "
+                "§Rust reuse: openheizenberg 190-row hand-labeled sample "
+                "confirms the cap is load-bearing for Rust's own worst "
+                "fan-out names (new/default/cook/spec) without a dedicated "
+                "probe; stratum C (capped ambiguous set) measures 0.375 "
+                "precision -- expected, since that population is hidden by "
+                "default via hide_ambiguous_edges_default, not a regression "
+                "in the cap itself (RUST_CALLGRAPH_PRECISION_SAMPLE_20260908)"
             ),
         ),
     )
@@ -1821,9 +1828,13 @@ class CallGraphConfig:
 
     Rust's own worst fan-out names (`new`, `default`, `cook`, `spec` --
     trait-object-shaped `Arc<dyn NodeType>` constructors, up to 39 owners for
-    `new`) reuse this same measured cap rather than a dedicated Rust probe;
-    the ``openheizenberg`` Phase-4 hand-labeled precision sample is the
-    check that confirms or revises this for Rust specifically.
+    `new`) reuse this same measured cap rather than a dedicated Rust probe.
+    Confirmed, not revised, by the ``openheizenberg`` Phase-4 hand-labeled
+    precision sample (ADR-0070): the cap is load-bearing for these names,
+    and the default-visible A+B gate passes independent of the capped
+    ambiguous stratum's own 0.375 precision -- that stratum is hidden by
+    default (``hide_ambiguous_edges_default``) regardless of this cap's
+    value, see ADR-0070 for the failure-mode breakdown.
     """
 
     def __post_init__(self) -> None:
