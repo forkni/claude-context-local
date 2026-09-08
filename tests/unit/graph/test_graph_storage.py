@@ -1115,6 +1115,128 @@ class TestCodeGraphStorage:
         )
 
     # ------------------------------------------------------------------
+    # D2 — untagged unresolved phantom call edges must not default to 1.0
+    # ------------------------------------------------------------------
+
+    def _add_untagged_edge(
+        self, gs: "CodeGraphStorage", *, relationship_type: str, is_resolved
+    ) -> None:
+        """Helper: add a calls/other edge with NO confidence key at all -- exactly
+        what add_call_edge(is_resolved=False) leaves, and what the untouched
+        branches (resolved, non-calls) also leave when no resolver stamped one."""
+        edge_kwargs = {"type": relationship_type, "line": 2}
+        if is_resolved is not None:
+            edge_kwargs["is_resolved"] = is_resolved
+        gs.graph.add_edge(
+            "src/caller.py:1-5:function:caller",
+            "src/callee.py:1-5:function:callee",
+            **edge_kwargs,
+        )
+
+    def test_get_edge_data_tags_untagged_unresolved_call_as_ambiguous(
+        self, graph_storage: "CodeGraphStorage"
+    ) -> None:
+        """D2: an unresolved (is_resolved=False), untagged 'calls' edge -- the
+        exact shape add_call_edge(is_resolved=False) writes for a phantom
+        symbol-name target -- must default to 'ambiguous', not float 1.0."""
+        caller = "src/caller.py:1-5:function:caller"
+        callee = "src/callee.py:1-5:function:callee"
+        graph_storage.add_node(caller, "caller", "function", "src/caller.py")
+        graph_storage.add_node(callee, "callee", "function", "src/callee.py")
+        self._add_untagged_edge(
+            graph_storage, relationship_type="calls", is_resolved=False
+        )
+
+        edge_data = graph_storage.get_edge_data(caller, callee)
+        assert edge_data is not None
+        assert edge_data["confidence"] == "ambiguous", (
+            "Untagged unresolved 'calls' edge must default to 'ambiguous' -- it "
+            "was never confirmed by any resolver and must not be presented as "
+            "maximally confident"
+        )
+
+    def test_get_edge_data_resolved_untagged_call_still_defaults_to_1_0(
+        self, graph_storage: "CodeGraphStorage"
+    ) -> None:
+        """D2 must not touch resolved-but-untagged edges: a high-tier resolver
+        (libcst 0.90, LSP 0.98) that didn't stamp 'confidence' still legitimately
+        earns default visibility."""
+        caller = "src/caller.py:1-5:function:caller"
+        callee = "src/callee.py:1-5:function:callee"
+        graph_storage.add_node(caller, "caller", "function", "src/caller.py")
+        graph_storage.add_node(callee, "callee", "function", "src/callee.py")
+        self._add_untagged_edge(
+            graph_storage, relationship_type="calls", is_resolved=True
+        )
+
+        edge_data = graph_storage.get_edge_data(caller, callee)
+        assert edge_data is not None
+        assert edge_data["confidence"] == 1.0
+
+    def test_get_edge_data_untagged_call_without_is_resolved_key_defaults_to_1_0(
+        self, graph_storage: "CodeGraphStorage"
+    ) -> None:
+        """D2's guard is `is_resolved is False`, not falsy: an edge where the key
+        is absent entirely (non-call/injected edges) must keep the 1.0 default."""
+        caller = "src/caller.py:1-5:function:caller"
+        callee = "src/callee.py:1-5:function:callee"
+        graph_storage.add_node(caller, "caller", "function", "src/caller.py")
+        graph_storage.add_node(callee, "callee", "function", "src/callee.py")
+        self._add_untagged_edge(
+            graph_storage, relationship_type="calls", is_resolved=None
+        )
+
+        edge_data = graph_storage.get_edge_data(caller, callee)
+        assert edge_data is not None
+        assert edge_data["confidence"] == 1.0
+
+    def test_get_edge_data_untagged_non_calls_edge_unaffected(
+        self, graph_storage: "CodeGraphStorage"
+    ) -> None:
+        """D2 is scoped to 'calls' edges only -- an untagged 'imports' edge with
+        is_resolved=False (if such a combination ever arises) must not be
+        reinterpreted as 'ambiguous'."""
+        caller = "src/caller.py:1-5:function:caller"
+        callee = "src/callee.py:1-5:function:callee"
+        graph_storage.add_node(caller, "caller", "function", "src/caller.py")
+        graph_storage.add_node(callee, "callee", "function", "src/callee.py")
+        self._add_untagged_edge(
+            graph_storage, relationship_type="imports", is_resolved=False
+        )
+
+        edge_data = graph_storage.get_edge_data(caller, callee)
+        assert edge_data is not None
+        assert edge_data["confidence"] == 1.0
+
+    def test_get_edge_data_untagged_unresolved_call_to_python_builtin_stays_1_0(
+        self, graph_storage: "CodeGraphStorage"
+    ) -> None:
+        """D2 exception: a phantom call edge whose target is a genuine Python
+        builtin (e.g. len) must NOT be downgraded to 'ambiguous'. At index
+        time search.graph_integration._resolve_call_target checks
+        `hasattr(builtins, callee_name)` before attempting any resolution and
+        returns None specifically so the call becomes a phantom edge -- it
+        was never a multi-candidate "ambiguous" project reference (that path
+        tags confidence="ambiguous" itself, at index time). callee_id for
+        this edge shape is the bare builtin name itself, never a chunk_id.
+        Regression guard for
+        tests/fast_integration/test_resolution_roundtrip.py::
+        TestBuiltinFalsePositiveGuard, which D2's first cut broke."""
+        caller = "src/caller.py:1-5:function:caller"
+        graph_storage.add_node(caller, "caller", "function", "src/caller.py")
+        graph_storage.graph.add_edge(
+            caller, "len", type="calls", line=2, is_resolved=False
+        )
+
+        edge_data = graph_storage.get_edge_data(caller, "len")
+        assert edge_data is not None
+        assert edge_data["confidence"] == 1.0, (
+            "Untagged unresolved 'calls' edge to a Python builtin must keep "
+            "the 1.0 default -- it is a confirmed non-project reference, "
+            "not an unresolved ambiguous one"
+        )
+
+    # ------------------------------------------------------------------
     # MultiDiGraph — parallel edge correctness (#3)
     # ------------------------------------------------------------------
 

@@ -8,6 +8,9 @@ unfiltered path, since verification showed find_connections's normal
 (unfiltered) call was the one silently losing relationships.
 """
 
+import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -15,6 +18,7 @@ import pytest
 
 from graph.graph_queries import GraphQueryEngine
 from graph.graph_storage import CodeGraphStorage
+from graph.schema import NODE_ATTR_IS_TARGET_NAME, NODE_ATTR_TYPE, NODE_TYPE_SYMBOL_NAME
 
 
 @pytest.fixture
@@ -309,3 +313,202 @@ def test_kind_fallback_when_td_node_is_absent_from_graph(query_engine):
     assert query_engine._node_variants(missing) == [missing]
     py_missing = "log.py:1-5:class:Logger"
     assert query_engine._node_variants(py_missing) == [py_missing, "Logger"]
+
+
+# ---------------------------------------------------------------------------
+# Phantom-node shadowing of resolved call edges (D1 fix)
+#
+# One call site produces two edges from the same caller: a resolved edge to
+# the real chunk (index-time resolution, carries the real "confidence" tag)
+# and a phantom edge to the bare symbol name (base AST extraction, no
+# "confidence" key at all -- see CodeGraphStorage.add_call_edge). Both edges
+# share the same caller, so the traversal's caller-keyed first-visit dedup
+# races between them. Reproduces the UndoStack::push defect: the resolver
+# correctly tagged the edge "ambiguous", but querying inbound "calls"
+# returned it as "exact" whenever the phantom edge was visited first.
+# ---------------------------------------------------------------------------
+
+
+def _add_phantom_call_target(storage, name):
+    """Mirror CodeGraphStorage.add_call_edge's placeholder-node creation for
+    an unresolved callee (NODE_TYPE_SYMBOL_NAME / NODE_ATTR_IS_TARGET_NAME)."""
+    storage.graph.add_node(
+        name,
+        **{
+            "name": name,
+            NODE_ATTR_TYPE: NODE_TYPE_SYMBOL_NAME,
+            NODE_ATTR_IS_TARGET_NAME: True,
+            "file": "",
+            "language": "",
+        },
+    )
+
+
+@pytest.fixture
+def phantom_shadow_graph(graph_storage):
+    caller = "caller.py:1-10:function:do_thing"
+    real_callee = "undo.py:1-20:method:UndoStack.push"
+    phantom = "push"
+    graph_storage.add_node(
+        caller, "do_thing", "function", "caller.py", language="python"
+    )
+    graph_storage.add_node(real_callee, "push", "method", "undo.py", language="python")
+    _add_phantom_call_target(graph_storage, phantom)
+
+    graph_storage.graph.add_edge(
+        caller,
+        real_callee,
+        key="calls",
+        type="calls",
+        line=3,
+        is_method=True,
+        is_resolved=True,
+        confidence="ambiguous",
+    )
+    graph_storage.graph.add_edge(
+        caller,
+        phantom,
+        key="calls",
+        type="calls",
+        line=3,
+        is_method=True,
+        is_resolved=False,
+        # No confidence key -- exactly what add_call_edge(is_resolved=False) leaves.
+    )
+    return graph_storage, caller, real_callee, phantom
+
+
+def test_inbound_confidence_survives_phantom_shadow_race(
+    query_engine, phantom_shadow_graph
+):
+    """The resolved edge's "ambiguous" tag must win regardless of which of
+    the two same-caller edges the traversal visits first (in-process repro,
+    at whatever hash seed this pytest process happens to have).
+
+    _traverse_inbound's race is over ``current_query``, a *set* of 2-3
+    query-node variants rebuilt via a set comprehension on every call -- its
+    iteration order depends on CPython's per-process, siphash-randomized
+    string hashing, not on graph/edge insertion order. That makes this
+    in-process assertion pass or fail depending on PYTHONHASHSEED, which
+    nothing in this repo's unit-test harness pins (see
+    test_inbound_confidence_survives_phantom_shadow_race_hash_seed_pinned
+    below for the seed-independent version of this same repro, which is the
+    actual regression gate)."""
+    _storage, caller, real_callee, _phantom = phantom_shadow_graph
+
+    entries = query_engine.get_relationships(
+        real_callee, direction="inbound", relation_types=["calls"], max_depth=1
+    )
+
+    assert len(entries) == 1
+    assert entries[0].chunk_id == caller
+    assert entries[0].edge_data.get("confidence") == "ambiguous"
+
+
+_PHANTOM_SHADOW_REPRO_SCRIPT = """
+import sys
+sys.path.insert(0, {project_root!r})
+
+from graph.graph_queries import GraphQueryEngine
+from graph.graph_storage import CodeGraphStorage
+from graph.schema import NODE_ATTR_IS_TARGET_NAME, NODE_ATTR_TYPE, NODE_TYPE_SYMBOL_NAME
+
+import tempfile
+from pathlib import Path
+
+with tempfile.TemporaryDirectory() as temp_dir:
+    storage = CodeGraphStorage(project_id="test_project", storage_dir=Path(temp_dir))
+
+    caller = "caller.py:1-10:function:do_thing"
+    real_callee = "undo.py:1-20:method:UndoStack.push"
+    phantom = "push"
+    storage.add_node(caller, "do_thing", "function", "caller.py", language="python")
+    storage.add_node(real_callee, "push", "method", "undo.py", language="python")
+    storage.graph.add_node(
+        phantom,
+        **{{
+            "name": phantom,
+            NODE_ATTR_TYPE: NODE_TYPE_SYMBOL_NAME,
+            NODE_ATTR_IS_TARGET_NAME: True,
+            "file": "",
+            "language": "",
+        }},
+    )
+    storage.graph.add_edge(
+        caller, real_callee, key="calls", type="calls", line=3,
+        is_method=True, is_resolved=True, confidence="ambiguous",
+    )
+    storage.graph.add_edge(
+        caller, phantom, key="calls", type="calls", line=3,
+        is_method=True, is_resolved=False,
+    )
+
+    engine = GraphQueryEngine(storage)
+    entries = engine.get_relationships(
+        real_callee, direction="inbound", relation_types=["calls"], max_depth=1
+    )
+    assert len(entries) == 1, entries
+    print(entries[0].edge_data.get("confidence"))
+"""
+
+
+@pytest.mark.parametrize("hash_seed", ["2", "7"])
+def test_inbound_confidence_survives_phantom_shadow_race_hash_seed_pinned(hash_seed):
+    """Seed-independent regression gate for the same race as the test above.
+
+    Python randomizes str hashing per-process unless PYTHONHASHSEED is pinned
+    before interpreter startup -- something no fixture or monkeypatch can
+    control retroactively, because the actual race site
+    (GraphQueryEngine._traverse_inbound's ``current_query: set[str] = {v for
+    v in origin_set if ...}``) is a set *comprehension*, compiled straight to
+    BUILD_SET/SET_ADD bytecode -- it never calls the module-level ``set``
+    name, so monkeypatching ``graph_queries.set`` cannot intercept it either.
+    A subprocess with PYTHONHASHSEED pinned is the only mechanically correct
+    way to make this deterministic.
+
+    Seeds "2" and "7" were empirically confirmed (by sweeping
+    PYTHONHASHSEED=0..10 against this exact fixture) to reproduce the bug
+    pre-fix: the phantom edge wins the race and the caller is reported with
+    confidence 1.0 instead of "ambiguous". After D1 lands (_authority_order
+    sorts query nodes real-chunk-before-phantom, then lexicographically) the
+    outcome no longer depends on hash order at all, so this stays green on
+    every seed -- these two are not "the seeds that happen to work", they are
+    two of many that demonstrate the pre-fix failure.
+    """
+    project_root = str(Path(__file__).resolve().parents[3])
+    script = _PHANTOM_SHADOW_REPRO_SCRIPT.format(project_root=project_root)
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env={**os.environ, "PYTHONHASHSEED": hash_seed},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=project_root,
+    )
+
+    assert result.returncode == 0, (
+        f"seed={hash_seed}: repro script failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert result.stdout.strip().splitlines()[-1] == "ambiguous", (
+        f"seed={hash_seed}: expected confidence 'ambiguous', "
+        f"got stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+def test_authority_order_ranks_real_chunk_before_phantom_both_input_orders(
+    query_engine, phantom_shadow_graph
+):
+    """_authority_order must put the real chunk node before the phantom
+    symbol-name node regardless of input order -- the fix must not depend on
+    set/hash iteration order to be deterministic."""
+    _storage, _caller, real_callee, phantom = phantom_shadow_graph
+
+    assert query_engine._authority_order([real_callee, phantom]) == [
+        real_callee,
+        phantom,
+    ]
+    assert query_engine._authority_order([phantom, real_callee]) == [
+        real_callee,
+        phantom,
+    ]

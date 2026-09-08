@@ -6,6 +6,7 @@ Provides high-level query operations on code graphs.
 
 import logging
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -740,6 +741,22 @@ class GraphQueryEngine:
         parts = chunk_id.split(":")
         return len(parts) >= 4 and parts[-2] in self._FULL_ID_EDGE_KINDS
 
+    def _authority_order(self, nodes: Iterable[str]) -> list[str]:
+        """Deterministic, authority-first ordering: real chunk nodes before phantom
+        symbol-name nodes, then lexicographic.
+
+        Every call site can write two edges into the graph -- a resolved edge
+        (chunk_id -> real chunk_id, carrying the confidence tag) and a phantom
+        edge (chunk_id -> bare symbol-name node, untagged) for the same callee.
+        Both share the same caller, so the traversal's first-visit-wins dedup
+        (``reported`` in ``_traverse_inbound``/``_traverse_outbound``) races
+        between them. Without this ordering the race is resolved by Python's
+        per-process, hash-randomized ``set`` iteration order -- the resolved
+        edge's data must always win, not whichever edge happens to hash first.
+        """
+        node_attrs = self.storage.graph.nodes
+        return sorted(nodes, key=lambda n: (_is_phantom_node(node_attrs.get(n, {})), n))
+
     @staticmethod
     def _resolve_entry_type(
         edge_data: dict[str, Any],
@@ -808,7 +825,7 @@ class GraphQueryEngine:
         for depth in range(1, max_depth + 1):
             next_query: set[str] = set()
 
-            for query_node in current_query:
+            for query_node in self._authority_order(current_query):
                 for pred in self.storage.get_callers(query_node):
                     edge_data = self.storage.get_edge_data(pred, query_node) or {}
                     parallel_edges = self.storage.get_all_edge_data(
@@ -876,7 +893,7 @@ class GraphQueryEngine:
         for depth in range(1, max_depth + 1):
             next_nodes: set[str] = set()
 
-            for node in current_nodes:
+            for node in self._authority_order(current_nodes):
                 for succ in self.storage.get_callees(node):
                     edge_data = self.storage.get_edge_data(node, succ) or {}
                     parallel_edges = self.storage.get_all_edge_data(node, succ) or [

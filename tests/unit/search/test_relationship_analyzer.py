@@ -945,6 +945,131 @@ class TestFilterAmbiguousEdges(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Tests: D1+D2 phantom-shadow fix, end-to-end through _enrich_callers and
+# filter_ambiguous_edges (not just get_edge_data in isolation -- see
+# tests/unit/graph/test_graph_queries_relationships.py and
+# tests/unit/graph/test_graph_storage.py for the lower-level seams)
+# ---------------------------------------------------------------------------
+
+
+class TestPhantomShadowEndToEndFiltering(TestCase):
+    """A caller reached through a shadowing phantom edge must come out the far
+    end of the real pipeline -- GraphQueryEngine -> _enrich_callers ->
+    filter_ambiguous_edges -- tagged 'ambiguous' and actually hidden.
+
+    Pre-fix, the phantom edge (no confidence key) wins the traversal race,
+    get_edge_data defaults it to float 1.0, _enrich_callers'
+    ``assigned_confidence = edge_confidence if edge_confidence else "exact"``
+    buckets it as 'exact', and filter_ambiguous_edges -- which only ever
+    looks for the literal string 'ambiguous' -- has nothing to filter.
+    """
+
+    def _build_phantom_shadow_engine(self):
+        import tempfile
+        from pathlib import Path
+
+        from graph.graph_queries import GraphQueryEngine
+        from graph.graph_storage import CodeGraphStorage
+        from graph.schema import (
+            NODE_ATTR_IS_TARGET_NAME,
+            NODE_ATTR_TYPE,
+            NODE_TYPE_SYMBOL_NAME,
+        )
+
+        temp_dir = tempfile.mkdtemp()
+        storage = CodeGraphStorage(
+            project_id="test_project", storage_dir=Path(temp_dir)
+        )
+        caller = "caller.py:1-10:function:do_thing"
+        real_callee = "undo.py:1-20:method:UndoStack.push"
+        phantom = "push"
+        storage.add_node(caller, "do_thing", "function", "caller.py", language="python")
+        storage.add_node(real_callee, "push", "method", "undo.py", language="python")
+        storage.graph.add_node(
+            phantom,
+            **{
+                "name": phantom,
+                NODE_ATTR_TYPE: NODE_TYPE_SYMBOL_NAME,
+                NODE_ATTR_IS_TARGET_NAME: True,
+                "file": "",
+                "language": "",
+            },
+        )
+        storage.graph.add_edge(
+            caller,
+            real_callee,
+            key="calls",
+            type="calls",
+            line=3,
+            is_method=True,
+            is_resolved=True,
+            confidence="ambiguous",
+        )
+        storage.graph.add_edge(
+            caller,
+            phantom,
+            key="calls",
+            type="calls",
+            line=3,
+            is_method=True,
+            is_resolved=False,
+        )
+        return GraphQueryEngine(storage), caller, real_callee
+
+    def test_shadowed_ambiguous_caller_is_hidden_after_enrich_and_filter(self):
+        """End-to-end repro of the plan's blast-radius claim: a caller that
+        should be ambiguous must not survive filter_ambiguous_edges as a
+        visible 'exact' entry."""
+        from search.relationship_analyzer import filter_ambiguous_edges
+        from search.types import ImpactReport
+
+        engine, caller, real_callee = self._build_phantom_shadow_engine()
+        entries = engine.get_relationships(
+            real_callee, direction="inbound", relation_types=["calls"], max_depth=1
+        )
+        self.assertEqual(len(entries), 1)
+
+        analyzer, _mock_searcher = _make_analyzer(
+            get_by_chunk_id_side_effect=lambda cid, **kw: (
+                _FakeResult(chunk_id=cid) if cid == caller else None
+            ),
+        )
+        direct_callers, _stale, exact_count, _recovered_count, ambiguous_count = (
+            analyzer._enrich_callers(entries, exclude_dirs=None)
+        )
+        self.assertEqual(len(direct_callers), 1)
+        self.assertEqual(
+            direct_callers[0]["confidence"],
+            "ambiguous",
+            "_enrich_callers must tag the shadowed caller 'ambiguous', not 'exact'",
+        )
+        self.assertEqual(ambiguous_count, 1)
+        self.assertEqual(exact_count, 0)
+
+        report = ImpactReport(
+            symbol={"name": "push"},
+            chunk_id=real_callee,
+            direct_callers=direct_callers,
+            indirect_callers=[],
+            similar_code=[],
+            total_impacted=1,
+            unique_files={"caller.py"},
+            dependency_graph={},
+            direct_callers_ambiguous=ambiguous_count,
+            direct_callers_exact=exact_count,
+        ).to_dict()
+
+        filtered = filter_ambiguous_edges(report)
+        self.assertEqual(
+            filtered["direct_callers"],
+            [],
+            "The phantom-shadowed caller must be hidden by filter_ambiguous_edges "
+            "(hide_ambiguous_edges_default=True's actual production path) once "
+            "D1+D2 restore its true confidence tag",
+        )
+
+
+# ---------------------------------------------------------------------------
 # Tests: analyze_impact caller lists are `calls`-edge only
 # ---------------------------------------------------------------------------
 

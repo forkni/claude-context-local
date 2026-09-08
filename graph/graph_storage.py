@@ -4,6 +4,7 @@ Graph storage and persistence using NetworkX.
 Provides NetworkX-based storage for code call graphs with JSON persistence.
 """
 
+import builtins
 import contextlib
 import heapq
 import itertools
@@ -1032,7 +1033,42 @@ class CodeGraphStorage:
 
         # 3. Ensure confidence exists (optional but useful)
         if "confidence" not in edge_data:
-            edge_data["confidence"] = 1.0  # Default to full confidence
+            if (
+                edge_data["relationship_type"] == "calls"
+                and edge_data.get("is_resolved") is False
+                and not hasattr(builtins, callee_id)
+            ):
+                # Unresolved phantom call edge: no resolver ever confirmed this
+                # target, so it must not be presented as a high-confidence
+                # caller. "ambiguous" maps to 0.5 in AST_CONFIDENCE_BY_TAG --
+                # identical to the value edge_confidence() already assigns an
+                # untagged `calls` edge (see graph_storage.edge_confidence).
+                #
+                # Exception: Python builtins (len, print, ...). At index time
+                # search.graph_integration._resolve_call_target checks
+                # `hasattr(builtins, callee_name)` *before* attempting any
+                # resolution and returns None specifically so the call becomes
+                # a phantom node -- it is never a candidate for the
+                # multi-match "ambiguous" bucket (that path tags
+                # confidence="ambiguous" itself, at index time, and never
+                # reaches this untagged-default branch at all). A phantom
+                # edge to a builtin isn't an unresolved *project* reference;
+                # it's a confirmed non-project one, so it keeps the "exact"
+                # default below rather than being miscast as "ambiguous".
+                # callee_id for a phantom edge is the bare symbol name (e.g.
+                # "len"), never a chunk_id, so this hasattr check is exact --
+                # not a heuristic -- for this one edge shape.
+                #
+                # This does not extend to the C-family/Rust common-member
+                # blocklists (_C_FAMILY_COMMON_MEMBERS, _RUST_COMMON_MEMBERS)
+                # or the cross-language _COMMON_METHODS set -- those live in
+                # search/graph_integration.py, a layer above graph/, and
+                # importing them here would invert that dependency. No test
+                # currently pins that distinction; left as a documented
+                # scope boundary, not an oversight.
+                edge_data["confidence"] = "ambiguous"
+            else:
+                edge_data["confidence"] = 1.0  # Default to full confidence
 
         # 4. Validate data types
         try:
