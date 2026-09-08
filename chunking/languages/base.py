@@ -1019,7 +1019,17 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                         "parent_name": metadata.get("name"),
                         "parent_type": (
                             "namespace"
-                            if container_root.type == "namespace_definition"
+                            # C++'s namespace_definition and Rust's mod_item
+                            # (RustChunker._CONTAINER_NODE_TYPES) are both
+                            # namespace-like: a free function inside either
+                            # must stay chunk_type "function" rather than
+                            # being promoted to "method" by
+                            # MultiLanguageChunker._map_node_type, which
+                            # promotes whenever parent_type in (None, "class").
+                            # impl_item/trait_item correctly fall through to
+                            # "class" -- their members *are* methods.
+                            if container_root.type
+                            in ("namespace_definition", "mod_item")
                             else "class"
                         ),
                     }

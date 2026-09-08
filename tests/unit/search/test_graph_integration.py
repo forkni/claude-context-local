@@ -1534,6 +1534,388 @@ class TestWall2CFamilyResolution(TestCase):
         self.assertEqual(len(ambiguous_calls), 2)
 
 
+class TestWall2RustResolution(TestCase):
+    """Wall-2 Rust resolution (search/graph_integration.py): the qualified-
+    first lookup (item 3), the Rust common-member blocklist (item 4),
+    separator-agnostic Pass-1 indexing extended to Rust (item 2), the
+    ambiguous fan-out cap extended to Rust (item 5), and the confidence-
+    tagging divergence from C-family's blanket method-call downgrade
+    (item 6). Each Rust-only behavior change is paired with a Python
+    byte-identical test proving the existing Python path is untouched."""
+
+    def _make_graph(self) -> tuple[GraphIntegration, Mock]:
+        storage = Mock()
+        storage.__len__ = Mock(return_value=0)
+        graph = GraphIntegration.from_storage(storage)
+        return graph, storage
+
+    # ----- items 2+3: Pass-1 "::" indexing + qualified-first lookup -----
+
+    def test_rust_self_call_resolves_via_qualified_lookup(self):
+        """New behavior: a `self.`-receiver call whose Wall-1 walk already
+        rewrote `callee_qualified` to `Point::compute` resolves through the
+        qualified-first lookup (item 3) once Pass-1 indexes the callee
+        under its `Parent::name` spelling (item 2) -- the combination that
+        converts `self.m()` into an exact edge, the exactness lever the
+        whole feature is built around. Because it resolved through the
+        qualified spelling, `_rust_qualified_resolved` keeps the edge
+        tagged "exact" rather than the "ambiguous" downgrade a name-only
+        guess would get."""
+        graph, storage = self._make_graph()
+        method = _make_result(
+            "point.rs:10-12:method:compute",
+            chunk_type="method",
+            name="compute",
+            parent_name="Point",
+            file_path="point.rs",
+            language="rust",
+        )
+        caller = _make_result(
+            "point.rs:20-24:method:combined",
+            chunk_type="method",
+            name="combined",
+            parent_name="Point",
+            file_path="point.rs",
+            language="rust",
+            calls=[
+                {
+                    "callee_name": "compute",
+                    "line_number": 21,
+                    "is_method_call": True,
+                    "callee_qualified": "Point::compute",
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([method, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "point.rs:10-12:method:compute")
+        self.assertTrue(kwargs["is_resolved"])
+        self.assertEqual(kwargs.get("confidence"), "exact")
+
+    def test_rust_qualified_lookup_falls_through_when_qualified_name_ambiguous(
+        self,
+    ):
+        """When `callee_qualified` itself matches more than one chunk (two
+        unrelated `impl Widget` blocks across files coincidentally sharing
+        one qualified path), the qualified-first lookup (item 3)
+        deliberately does not attempt further disambiguation -- it falls
+        through unchanged to ordinary bare-name resolution (here, same-file
+        preference), same as if no qualified name had been supplied at
+        all."""
+        graph, storage = self._make_graph()
+        method_a = _make_result(
+            "a.rs:1-3:method:compute",
+            chunk_type="method",
+            name="compute",
+            parent_name="Widget",
+            file_path="a.rs",
+            language="rust",
+        )
+        method_b = _make_result(
+            "b.rs:1-3:method:compute",
+            chunk_type="method",
+            name="compute",
+            parent_name="Widget",
+            file_path="b.rs",
+            language="rust",
+        )
+        caller = _make_result(
+            "a.rs:10-14:method:run",
+            chunk_type="method",
+            name="run",
+            parent_name="Widget",
+            file_path="a.rs",
+            language="rust",
+            calls=[
+                {
+                    "callee_name": "compute",
+                    "line_number": 11,
+                    "is_method_call": True,
+                    "callee_qualified": "Widget::compute",
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([method_a, method_b, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "a.rs:1-3:method:compute")
+        self.assertTrue(kwargs["is_resolved"])
+
+    def test_python_dotted_name_indexing_unaffected_by_rust_qualified_indexing(
+        self,
+    ):
+        """Byte-identical: a Python qualified-name resolution (`ClassName.
+        method`) is untouched by the Rust-specific `Parent::name` Pass-1
+        indexing and the qualified-first lookup, both gated to
+        `language == "rust"` only."""
+        graph, storage = self._make_graph()
+        method = _make_result(
+            "c.py:10-20:method:MyClass.process",
+            chunk_type="method",
+            name="process",
+            parent_name="MyClass",
+        )
+        caller = _make_result(
+            "c.py:30-40:method:MyClass.run",
+            chunk_type="method",
+            name="run",
+            parent_name="MyClass",
+            calls=[
+                {
+                    "callee_name": "process",
+                    "line_number": 35,
+                    "is_method_call": True,
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([method, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "c.py:10-20:method:MyClass.process")
+        self.assertTrue(kwargs["is_resolved"])
+
+    # ----- item 4: Rust common-member blocklist -----
+
+    def test_rust_std_common_member_stays_phantom_without_project_definition(
+        self,
+    ):
+        """`.unwrap()` with no project-defined `unwrap` symbol stays
+        phantom -- the Rust sibling of the C-family `_C_FAMILY_COMMON_MEMBERS`
+        rule."""
+        graph, storage = self._make_graph()
+        caller = _make_result(
+            "f.rs:1-5:function:process",
+            name="process",
+            file_path="f.rs",
+            language="rust",
+            calls=[
+                {
+                    "callee_name": "unwrap",
+                    "line_number": 2,
+                    "is_method_call": True,
+                    "callee_qualified": None,
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "unwrap")
+        self.assertFalse(kwargs["is_resolved"])
+
+    def test_rust_project_defined_unwrap_resolves(self):
+        """When the project itself defines an `unwrap` symbol, the call
+        resolves to it instead of being dropped -- same "unless the
+        project defines it" rule as `_COMMON_METHODS`/
+        `_C_FAMILY_COMMON_MEMBERS`. It still did not resolve through its
+        qualified spelling (no `impl` context here), so item 6 still
+        downgrades it to "ambiguous"."""
+        graph, storage = self._make_graph()
+        project_unwrap = _make_result(
+            "f.rs:1-3:function:unwrap",
+            name="unwrap",
+            file_path="f.rs",
+            language="rust",
+        )
+        caller = _make_result(
+            "f.rs:10-20:function:process",
+            name="process",
+            file_path="f.rs",
+            language="rust",
+            calls=[
+                {
+                    "callee_name": "unwrap",
+                    "line_number": 15,
+                    "is_method_call": True,
+                    "callee_qualified": None,
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([project_unwrap, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "f.rs:1-3:function:unwrap")
+        self.assertTrue(kwargs["is_resolved"])
+        self.assertEqual(kwargs.get("confidence"), "ambiguous")
+
+    def test_python_call_to_rust_only_common_name_still_resolves(self):
+        """Regression guard: `map` is in the new `_RUST_COMMON_MEMBERS` set
+        but not in `_COMMON_METHODS`. A Python caller resolving a
+        project-defined `map` symbol must be unaffected by the new set's
+        existence -- resolution proceeds exactly as before."""
+        graph, storage = self._make_graph()
+        project_map = _make_result("f.py:1-3:function:map", name="map")
+        caller = _make_result(
+            "f.py:10-20:function:describe",
+            name="describe",
+            calls=[{"callee_name": "map", "line_number": 15, "is_method_call": True}],
+        )
+
+        graph.populate_from_embeddings([project_map, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "f.py:1-3:function:map")
+        self.assertTrue(kwargs["is_resolved"])
+
+    # ----- item 6: confidence-tagging divergence from C-family -----
+
+    def test_rust_other_receiver_method_call_downgraded_to_ambiguous(self):
+        """The `_rust_qualified_resolved` divergence (item 6): a method
+        call that did NOT resolve through its qualified spelling (a bare
+        `h.compute()` "other receiver" shape, no `callee_qualified`) is
+        downgraded to "ambiguous" -- the same suppression C-family gets
+        unconditionally, but Rust only applies it when the type-scoped
+        signal was unavailable."""
+        graph, storage = self._make_graph()
+        method = _make_result(
+            "helper.rs:1-3:method:compute",
+            chunk_type="method",
+            name="compute",
+            parent_name="Helper",
+            file_path="helper.rs",
+            language="rust",
+        )
+        caller = _make_result(
+            "helper.rs:10-12:function:other_receiver_call",
+            chunk_type="function",
+            name="other_receiver_call",
+            file_path="helper.rs",
+            language="rust",
+            calls=[
+                {
+                    "callee_name": "compute",
+                    "line_number": 11,
+                    "is_method_call": True,
+                    "callee_qualified": None,
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([method, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "helper.rs:1-3:method:compute")
+        self.assertTrue(kwargs["is_resolved"])
+        self.assertEqual(kwargs.get("confidence"), "ambiguous")
+
+    def test_rust_free_function_call_stays_exact_even_when_unqualified(self):
+        """`downgrade_method_confidence` is gated on `is_method_call` for
+        both families. A free-function Rust call (`is_method_call=False`,
+        no `callee_qualified`) is never downgraded; it keeps the ordinary
+        "exact" tag once uniquely resolved by bare name."""
+        graph, storage = self._make_graph()
+        callee = _make_result(
+            "util.rs:1-3:function:helper",
+            chunk_type="function",
+            name="helper",
+            file_path="util.rs",
+            language="rust",
+        )
+        caller = _make_result(
+            "util.rs:10-12:function:free_function_calls",
+            chunk_type="function",
+            name="free_function_calls",
+            file_path="util.rs",
+            language="rust",
+            calls=[
+                {
+                    "callee_name": "helper",
+                    "line_number": 11,
+                    "is_method_call": False,
+                    "callee_qualified": None,
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([callee, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "util.rs:1-3:function:helper")
+        self.assertTrue(kwargs["is_resolved"])
+        self.assertEqual(kwargs.get("confidence"), "exact")
+
+    def test_python_method_call_confidence_unaffected_by_rust_downgrade_rule(
+        self,
+    ):
+        """Byte-identical: a Python method-call edge is tagged "exact" as
+        before -- the Rust half of `downgrade_method_confidence` is gated
+        to `language in _RUST_LANGUAGES`, so a Python caller never reaches
+        `_rust_qualified_resolved` at all."""
+        graph, storage = self._make_graph()
+        method = _make_result(
+            "c.py:1-3:method:process",
+            chunk_type="method",
+            name="process",
+            parent_name="MyClass",
+        )
+        caller = _make_result(
+            "c.py:10-20:method:run",
+            chunk_type="method",
+            name="run",
+            parent_name="MyClass",
+            calls=[
+                {
+                    "callee_name": "process",
+                    "line_number": 15,
+                    "is_method_call": True,
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([method, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "c.py:1-3:method:process")
+        self.assertEqual(kwargs.get("confidence"), "exact")
+
+    # ----- item 5: build-time ambiguous fan-out cap extended to Rust -----
+
+    def test_rust_ambiguous_fanout_capped(self):
+        """New behavior: a Rust ambiguous call (e.g. the `new` trait-object
+        fan-out) with more candidates than `fanout_cap` is truncated to the
+        cap, preserving candidate order -- Rust reuses the same
+        `ambiguous_fanout_cap` C-family measured."""
+        graph, _storage = self._make_graph()
+        name_to_chunk_ids = {
+            "new": [
+                "a.rs:1-2:function:new",
+                "b.rs:1-2:function:new",
+                "c.rs:1-2:function:new",
+                "d.rs:1-2:function:new",
+            ]
+        }
+        candidates = graph._get_ambiguous_candidates(
+            "new", name_to_chunk_ids, language="rust", fanout_cap=2
+        )
+        self.assertEqual(
+            candidates,
+            ["a.rs:1-2:function:new", "b.rs:1-2:function:new"],
+        )
+
+    def test_rust_ambiguous_fanout_cap_none_disables_capping(self):
+        """`fanout_cap=None` (the default) disables capping entirely even
+        for Rust -- the value every pre-existing direct caller (one that
+        predates this parameter) gets."""
+        graph, _storage = self._make_graph()
+        name_to_chunk_ids = {
+            "new": [
+                "a.rs:1-2:function:new",
+                "b.rs:1-2:function:new",
+                "c.rs:1-2:function:new",
+            ]
+        }
+        candidates = graph._get_ambiguous_candidates(
+            "new", name_to_chunk_ids, language="rust"
+        )
+        self.assertEqual(len(candidates), 3)
+
+
 # ---------------------------------------------------------------------------
 # ADR-0062 C6 / name-resolution fence
 # ---------------------------------------------------------------------------

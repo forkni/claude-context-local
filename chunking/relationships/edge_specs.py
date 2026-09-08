@@ -102,6 +102,18 @@ EDGE_EMISSION_SPECS: dict[str, EdgeEmissionSpec] = {
         call_chunk_types=frozenset({"function", "split_block"}),
         imports_from_relationships=True,
     ),
+    "rust": EdgeEmissionSpec(
+        call_confidence=0.6,
+        # No "split_block": Rust has no split-node support at all (no
+        # `_get_block_boundary_types` override, and the split gate at
+        # `chunking/languages/base.py`'s hardcoded `("function_definition",
+        # "decorated_definition")` literal tuple can never match
+        # `function_item`) -- declaring it here would be provably dead, the
+        # same reason `_in_split_block_window` is a no-op safety net rather
+        # than load-bearing for this language.
+        call_chunk_types=frozenset({"function", "method"}),
+        imports_from_relationships=True,
+    ),
 }
 
 

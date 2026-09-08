@@ -1800,14 +1800,15 @@ class CallGraphConfig:
             ),
         ),
     )
-    """Maximum candidate edges written for one ambiguous C-family call site.
+    """Maximum candidate edges written for one ambiguous C-family or Rust
+    call site.
 
     Applies to the same-pass tree-sitter build in
     ``GraphIntegration._get_ambiguous_candidates`` -- a different stage than
     the cross-module resolver pipeline the fields above tune (``min_confidence``
-    et al.). Gated to C-family languages (``"c"``, ``"cpp"``) only; Python call
-    sites are never capped regardless of this value, so Python stays
-    byte-identical.
+    et al.). Gated to C-family languages (``"c"``, ``"cpp"``) and Rust
+    (``"rust"``) only; Python call sites are never capped regardless of this
+    value, so Python stays byte-identical.
 
     C/C++ symbol names collide far more than Python's -- vendored headers,
     STL member names, and decl/def pairs all land in the same
@@ -1817,6 +1818,12 @@ class CallGraphConfig:
     call sites with fan-out >=10. The default ``3`` was the Phase-0 probe's
     measured sweet spot -- 36,318 edges (+90% links) while keeping every
     candidate for names with <=3 collisions.
+
+    Rust's own worst fan-out names (`new`, `default`, `cook`, `spec` --
+    trait-object-shaped `Arc<dyn NodeType>` constructors, up to 39 owners for
+    `new`) reuse this same measured cap rather than a dedicated Rust probe;
+    the ``openheizenberg`` Phase-4 hand-labeled precision sample is the
+    check that confirms or revises this for Rust specifically.
     """
 
     def __post_init__(self) -> None:

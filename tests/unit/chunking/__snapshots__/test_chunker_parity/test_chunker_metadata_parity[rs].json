@@ -4,9 +4,18 @@
     "end_line": 5,
     "language": "rust",
     "metadata": {
+      "calls": [
+        [
+          "from",
+          4,
+          false,
+          "String::from"
+        ]
+      ],
       "is_async": true,
       "name": "fetch",
-      "node_type": "function_item"
+      "node_type": "function_item",
+      "relationships": []
     },
     "start_line": 3,
     "type": "function_item"
@@ -17,7 +26,8 @@
     "language": "rust",
     "metadata": {
       "name": "Point",
-      "node_type": "struct_item"
+      "node_type": "struct_item",
+      "relationships": []
     },
     "start_line": 7,
     "type": "struct_item"
@@ -29,9 +39,165 @@
     "metadata": {
       "impl_type": "Point",
       "name": "Point",
-      "node_type": "impl_item"
+      "node_type": "impl_item",
+      "relationships": []
     },
     "start_line": 12,
     "type": "impl_item"
+  },
+  {
+    "content": "pub fn distance(&self) -> f64 {\n        (self.x * self.x + self.y * self.y).sqrt()\n    }",
+    "end_line": 15,
+    "language": "rust",
+    "metadata": {
+      "calls": [
+        [
+          "sqrt",
+          14,
+          true,
+          null
+        ]
+      ],
+      "name": "distance",
+      "node_type": "function_item",
+      "parent_name": "Point",
+      "parent_type": "class",
+      "relationships": []
+    },
+    "start_line": 13,
+    "type": "function_item"
+  },
+  {
+    "content": "impl Default for Point {\n    fn default() -> Self {\n        Point { x: 0.0, y: 0.0 }\n    }\n}",
+    "end_line": 24,
+    "language": "rust",
+    "metadata": {
+      "impl_trait": "Default",
+      "impl_type": "Point",
+      "name": "Point",
+      "node_type": "impl_item",
+      "relationships": [
+        {
+          "line_number": 20,
+          "metadata": {},
+          "relationship_type": "implements",
+          "target_name": "Default"
+        }
+      ]
+    },
+    "start_line": 20,
+    "type": "impl_item"
+  },
+  {
+    "content": "fn default() -> Self {\n        Point { x: 0.0, y: 0.0 }\n    }",
+    "end_line": 23,
+    "language": "rust",
+    "metadata": {
+      "calls": [],
+      "name": "default",
+      "node_type": "function_item",
+      "parent_name": "Point",
+      "parent_type": "class",
+      "relationships": [
+        {
+          "line_number": 22,
+          "metadata": {},
+          "relationship_type": "instantiates",
+          "target_name": "Point"
+        }
+      ]
+    },
+    "start_line": 21,
+    "type": "function_item"
+  },
+  {
+    "content": "trait Shape {\n    fn area(&self) -> f64;\n}",
+    "end_line": 29,
+    "language": "rust",
+    "metadata": {
+      "name": "Shape",
+      "node_type": "trait_item",
+      "relationships": []
+    },
+    "start_line": 27,
+    "type": "trait_item"
+  },
+  {
+    "content": "mod geometry {\n    pub fn unit_length() -> f64 {\n        1.0\n    }\n\n    pub struct Line {\n        pub length: f64,\n    }\n\n    impl Line {\n        pub fn new(length: f64) -> Self {\n            Line { length }\n        }\n    }\n}",
+    "end_line": 48,
+    "language": "rust",
+    "metadata": {
+      "name": "geometry",
+      "node_type": "mod_item",
+      "relationships": []
+    },
+    "start_line": 34,
+    "type": "mod_item"
+  },
+  {
+    "content": "pub fn unit_length() -> f64 {\n        1.0\n    }",
+    "end_line": 37,
+    "language": "rust",
+    "metadata": {
+      "calls": [],
+      "name": "unit_length",
+      "node_type": "function_item",
+      "parent_name": "geometry",
+      "parent_type": "namespace",
+      "relationships": []
+    },
+    "start_line": 35,
+    "type": "function_item"
+  },
+  {
+    "content": "pub struct Line {\n        pub length: f64,\n    }",
+    "end_line": 41,
+    "language": "rust",
+    "metadata": {
+      "name": "Line",
+      "node_type": "struct_item",
+      "parent_name": "geometry",
+      "parent_type": "namespace",
+      "relationships": []
+    },
+    "start_line": 39,
+    "type": "struct_item"
+  },
+  {
+    "content": "impl Line {\n        pub fn new(length: f64) -> Self {\n            Line { length }\n        }\n    }",
+    "end_line": 47,
+    "language": "rust",
+    "metadata": {
+      "impl_type": "Line",
+      "name": "Line",
+      "node_type": "impl_item",
+      "parent_name": "geometry",
+      "parent_type": "namespace",
+      "relationships": []
+    },
+    "start_line": 43,
+    "type": "impl_item"
+  },
+  {
+    "content": "pub fn new(length: f64) -> Self {\n            Line { length }\n        }",
+    "end_line": 46,
+    "language": "rust",
+    "metadata": {
+      "calls": [],
+      "name": "new",
+      "node_type": "function_item",
+      "parent_name": "Line",
+      "parent_type": "class",
+      "relationships": [
+        {
+          "line_number": 45,
+          "metadata": {},
+          "relationship_type": "instantiates",
+          "target_name": "Line"
+        }
+      ]
+    },
+    "start_line": 44,
+    "type": "function_item"
   }
 ]

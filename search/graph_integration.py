@@ -172,6 +172,37 @@ def _file_suffix_matches(chunk_id: str, suffix: str) -> bool:
     )
 
 
+def _rust_qualified_resolved(
+    callee_qualified: str | None, name_to_chunk_ids: dict[str, list[str]]
+) -> bool:
+    """True when a Rust method call's ``callee_qualified`` text is itself a
+    unique key in ``name_to_chunk_ids`` -- i.e. the qualified-first branch in
+    ``_resolve_call_target`` (Wall-2 item 3) would resolve it.
+
+    Mirrors that branch's own lookup+uniqueness check rather than changing
+    ``_resolve_call_target``'s return contract to also report *how* a match
+    was found: the two call sites (confidence tagging here, resolution
+    there) both need the same yes/no answer to the same question, and a
+    small duplicated lookup is simpler than threading resolution provenance
+    back through a function whose only other caller only ever wants the
+    chunk id.
+
+    This is the Rust analogue of ADR-0060's blanket
+    ``is_method_call and language in _C_FAMILY_LANGUAGES`` downgrade, except
+    inverted: `self.m()` is type-scoped at parse time (the enclosing
+    ``impl``'s type is baked into ``callee_qualified`` by
+    ``RustChunker._dispatch_call_site``), so a Rust method call that
+    resolves through its qualified spelling is genuinely exact, not a
+    name-only guess. Every other Rust method call (a non-``self`` receiver,
+    or a ``self``-receiver whose qualified spelling didn't uniquely match)
+    still gets the same "ambiguous" downgrade C-family gets unconditionally.
+    """
+    if not callee_qualified:
+        return False
+    candidates = name_to_chunk_ids.get(callee_qualified)
+    return bool(candidates and len(candidates) == 1)
+
+
 # Semantic chunk types that can have relationships
 # Based on Codanna's approach: index ALL semantic symbols
 SEMANTIC_TYPES = (
@@ -220,6 +251,15 @@ _COMMON_METHODS: frozenset[str] = frozenset(
 # EXT_TO_LANGUAGE), so there is no separate "cu" key to add here.
 _C_FAMILY_LANGUAGES: frozenset[str] = frozenset({"c", "cpp"})
 
+# Languages that get the Rust Wall-2 treatment (qualified-callee-first
+# lookup, the std/core idiom blocklist below, the shared ambiguous fan-out
+# cap). Deliberately its own frozenset, not merged into `_C_FAMILY_LANGUAGES`:
+# Rust's confidence-tagging rule (Wall-2 item 6, `_rust_qualified_resolved`)
+# diverges from C-family's blanket method-call downgrade, so every gate
+# needs to distinguish the two families even where the *treatment* happens
+# to be identical (e.g. separator-agnostic indexing, the fan-out cap).
+_RUST_LANGUAGES: frozenset[str] = frozenset({"rust"})
+
 # C-family sibling of `_COMMON_METHODS`: STL container/smart-pointer/idiom
 # member names that are almost certainly library targets (std::vector,
 # std::string, std::unique_ptr, std::atomic, std::map, ...) when the
@@ -248,6 +288,47 @@ _C_FAMILY_COMMON_MEMBERS: frozenset[str] = frozenset(
         "at",
         "count",
         "length",
+    }
+)
+
+# Rust sibling of `_C_FAMILY_COMMON_MEMBERS`: std/core trait-method and
+# collection-idiom names (`Iterator`, `Option`/`Result`, `Vec`/`String`,
+# `Clone`/`Into`) that are almost certainly library targets when the
+# project itself defines no symbol of that name. Same "unless the project
+# defines it" rule as `_COMMON_METHODS`/`_C_FAMILY_COMMON_MEMBERS` -- see
+# `_resolve_call_target`.
+_RUST_COMMON_MEMBERS: frozenset[str] = frozenset(
+    {
+        "clone",
+        "unwrap",
+        "unwrap_or",
+        "unwrap_or_else",
+        "unwrap_or_default",
+        "expect",
+        "map",
+        "map_err",
+        "and_then",
+        "iter",
+        "iter_mut",
+        "into_iter",
+        "collect",
+        "into",
+        "as_ref",
+        "as_str",
+        "as_slice",
+        "to_string",
+        "to_owned",
+        "len",
+        "is_empty",
+        "push",
+        "pop",
+        "get",
+        "get_mut",
+        "insert",
+        "remove",
+        "contains",
+        "contains_key",
+        "clear",
     }
 )
 
@@ -789,29 +870,51 @@ class GraphIntegration:
                             spec.chunk_id
                         )
 
-                    # Separator-agnostic indexing (Wall-2 item 3, C-family
-                    # only -- Python identifiers never contain "::", so this
-                    # branch never fires for them). C/C++ chunk names arrive
-                    # under BOTH separators for the same logical symbol: a
-                    # synthesized "Parent.method" (via parent_name, above)
-                    # for in-class declarations, and a verbatim
-                    # "Parent::method" for out-of-class definitions.
-                    # Cross-indexing both spellings -- full name, last
-                    # segment, and canonical parent+sep+leaf under both
-                    # separators -- lands a decl/def pair in the same
-                    # bucket, which is the prerequisite for prefer-
-                    # definition disambiguation (item 4). Do NOT switch to
-                    # indexing "::" only: that would split the two halves
-                    # of the same symbol into different buckets instead of
-                    # unifying them.
-                    if spec.language in _C_FAMILY_LANGUAGES and ("::" in spec.name):
+                    # Separator-agnostic indexing (Wall-2 item 3 for
+                    # C-family, item 2 for Rust -- Python identifiers never
+                    # contain "::", so this branch never fires for them).
+                    # C/C++ chunk names arrive under BOTH separators for the
+                    # same logical symbol: a synthesized "Parent.method"
+                    # (via parent_name, above) for in-class declarations,
+                    # and a verbatim "Parent::method" for out-of-class
+                    # definitions. Cross-indexing both spellings -- full
+                    # name, last segment, and canonical parent+sep+leaf
+                    # under both separators -- lands a decl/def pair in the
+                    # same bucket, which is the prerequisite for prefer-
+                    # definition disambiguation (item 4, C-family only --
+                    # Rust has no header/source split for this to apply
+                    # to). Do NOT switch to indexing "::" only: that would
+                    # split the two halves of the same symbol into
+                    # different buckets instead of unifying them.
+                    #
+                    # Rust chunk names never contain "::" (RustChunker's
+                    # `name` is always a bare identifier -- see
+                    # `_extract_name`/the impl-naming override in
+                    # chunking/languages/rust.py), so the first branch below
+                    # is a harmless no-op for Rust; it is gated together
+                    # with the second branch only because both key off the
+                    # same combined language check. The second branch is
+                    # the one Rust actually needs: it indexes every chunk
+                    # under its "Parent::method" spelling too, matching the
+                    # literal "::"-separated qualified text Wall 1 emits
+                    # for a resolved `self.`/`Type::`/`Self::` call
+                    # (`RustChunker._dispatch_call_site`) -- the direct
+                    # lookup key the qualified-first branch in
+                    # `_resolve_call_target` (Wall-2 item 3) needs.
+                    if (
+                        spec.language in _C_FAMILY_LANGUAGES
+                        or spec.language in _RUST_LANGUAGES
+                    ) and ("::" in spec.name):
                         name_to_chunk_ids[spec.name.split("::")[-1]].append(
                             spec.chunk_id
                         )
                         name_to_chunk_ids[spec.name.replace("::", ".")].append(
                             spec.chunk_id
                         )
-                    if spec.language in _C_FAMILY_LANGUAGES and spec.parent_name:
+                    if (
+                        spec.language in _C_FAMILY_LANGUAGES
+                        or spec.language in _RUST_LANGUAGES
+                    ) and spec.parent_name:
                         name_to_chunk_ids[f"{spec.parent_name}::{spec.name}"].append(
                             spec.chunk_id
                         )
@@ -854,8 +957,27 @@ class GraphIntegration:
                     # fan-out already is (hide_ambiguous_edges_default), without
                     # adding a new confidence tier. Free-function and Python
                     # method-call edges are unaffected.
+                    #
+                    # Rust deliberately diverges (Wall-2 item 6): unlike
+                    # tree-sitter-cpp, `RustChunker._dispatch_call_site`
+                    # bakes the enclosing `impl` type into `callee_qualified`
+                    # for every `self.m()` call, so tree-sitter *does* have
+                    # receiver-type info for the self-receiver case -- it is
+                    # not a name-only guess. Only downgrade a Rust method
+                    # call when it did NOT resolve through that qualified
+                    # spelling (`_rust_qualified_resolved` mirrors the
+                    # qualified-first lookup in `_resolve_call_target`);
+                    # free-function Rust edges (`is_method_call=False`, e.g.
+                    # `Type::m`/`Self::m`/`mod::fn`) are never downgraded by
+                    # this clause regardless of resolution path.
                     downgrade_method_confidence = (
                         is_method_call and spec.language in _C_FAMILY_LANGUAGES
+                    ) or (
+                        is_method_call
+                        and spec.language in _RUST_LANGUAGES
+                        and not _rust_qualified_resolved(
+                            callee_qualified, name_to_chunk_ids
+                        )
                     )
                     resolved = self._resolve_call_target(
                         callee_name,
@@ -1248,13 +1370,17 @@ class GraphIntegration:
             callee_qualified: Optional dotted import-scope name of the callee
                 (``CallEdge.callee_qualified``). When it derives a file suffix
                 that uniquely narrows the candidates, that wins before the
-                same-file fallback.
+                same-file fallback. For Rust it is instead a "::"-separated
+                spelling tried as a direct lookup key (the qualified-first
+                branch below) ahead of the file-suffix logic, which stays
+                C-family-only.
             language: The calling chunk's language (``_BuildSpec.language``).
-                Gates the Python-builtins check and the C-family
-                blocklist/prefer-definition rules below so C/C++ resolution
-                additions are byte-identical no-ops for Python callers.
-                Defaults to "python" to preserve existing callers/tests that
-                don't pass it.
+                Gates the Python-builtins check, the C-family
+                blocklist/prefer-definition rules, and the Rust
+                blocklist/qualified-first rules below so each language's
+                resolution additions are byte-identical no-ops for the
+                others. Defaults to "python" to preserve existing
+                callers/tests that don't pass it.
 
         Returns:
             chunk_id if exactly one match, None otherwise
@@ -1270,6 +1396,22 @@ class GraphIntegration:
             if hasattr(builtins, callee_name):
                 return None  # Create phantom node (will be filtered in traversals)
 
+        # Qualified-first lookup (Wall-2 item 3, Rust only): `callee_qualified`
+        # for Rust is the "::"-separated spelling `RustChunker._dispatch_call_site`
+        # already resolved at parse time -- `Type::method` for a `self.`-receiver
+        # or `Type::`/`Self::`-scoped call. Pass-1 indexes every chunk under
+        # exactly this spelling (the `f"{spec.parent_name}::{spec.name}"` key
+        # above), so if it uniquely matches, trust it ahead of every bare-name
+        # rule below: this is the type-scoped signal ADR-0060's C-family
+        # resolver never had. When it's absent or matches >1 chunk (e.g. two
+        # unrelated types coincidentally sharing one qualified path across
+        # files), fall through unchanged to bare-name resolution -- deliberately
+        # not attempting further disambiguation here.
+        if language in _RUST_LANGUAGES and callee_qualified:
+            qualified_candidates = name_to_chunk_ids.get(callee_qualified)
+            if qualified_candidates and len(qualified_candidates) == 1:
+                return qualified_candidates[0]
+
         # Refined common-method blocklist: drop the name ONLY when the project has
         # no definition for it.  If the project defines its own `get`, `format`,
         # etc., we keep the edge (resolved below via same-file / unique-match).
@@ -1277,6 +1419,12 @@ class GraphIntegration:
         if language in _C_FAMILY_LANGUAGES:
             if (
                 base_name in _C_FAMILY_COMMON_MEMBERS
+                and callee_name not in name_to_chunk_ids
+            ):
+                return None
+        elif language in _RUST_LANGUAGES:
+            if (
+                base_name in _RUST_COMMON_MEMBERS
                 and callee_name not in name_to_chunk_ids
             ):
                 return None
@@ -1364,26 +1512,30 @@ class GraphIntegration:
                 ``_resolve_call_target`` has already tried and failed to
                 narrow candidates with it).
             language: Chunk source language (e.g. ``"python"``, ``"cpp"``,
-                ``"c"``). Gates the build-time ambiguous fan-out cap
-                (Wall-2 item 5) to C-family languages only — with the
-                default ``"python"``, `fanout_cap` is never applied, so
-                Python callers keep every candidate exactly as before this
-                parameter existed.
+                ``"c"``, ``"rust"``). Gates the build-time ambiguous fan-out
+                cap (Wall-2 item 5) to C-family and Rust languages only —
+                with the default ``"python"``, `fanout_cap` is never
+                applied, so Python callers keep every candidate exactly as
+                before this parameter existed.
             fanout_cap: Maximum number of candidates to return for a
-                C-family ambiguous name (``CallGraphConfig.ambiguous_fanout_cap``,
-                default 3 in production). Ignored unless `language` is
-                C-family. ``None`` (the default here) disables capping
-                entirely — the value existing direct callers (e.g. unit
-                tests that construct this call without it) get.
+                C-family or Rust ambiguous name
+                (``CallGraphConfig.ambiguous_fanout_cap``, default 3 in
+                production — Rust's own worst fan-out names, `new`/`default`/
+                `cook`/`spec`, reuse this measured value rather than a
+                dedicated Rust probe; see the Phase 4 precision sample for
+                confirmation). Ignored unless `language` is C-family or
+                Rust. ``None`` (the default here) disables capping entirely
+                — the value existing direct callers (e.g. unit tests that
+                construct this call without it) get.
 
         Returns:
             List of candidate chunk_ids (possibly empty), truncated to
-            `fanout_cap` entries when `language` is C-family and a cap is
-            given.
+            `fanout_cap` entries when `language` is C-family or Rust and a
+            cap is given.
         """
         candidates = list(name_to_chunk_ids.get(callee_name, []))
         if (
-            language in _C_FAMILY_LANGUAGES
+            (language in _C_FAMILY_LANGUAGES or language in _RUST_LANGUAGES)
             and fanout_cap is not None
             and fanout_cap > 0
         ):

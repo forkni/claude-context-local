@@ -915,9 +915,30 @@ class MultiLanguageChunker:
             # chunk (nested functions are not chunked). This also *shrinks*
             # that function's last-registered fallback reach, by stopping
             # large decorated classes from splitting their span short.
+            # "impl"/"trait"/"module" were added for Rust container-traversal
+            # parity (discharges ADR-0038's Rust reopening condition,
+            # RustChunker._CONTAINER_NODE_TYPES): without registering them
+            # here, RustChunker widening traversal into `impl`/`trait`/`mod`
+            # bodies would set `parent_name` on their members via base.py's
+            # container traversal but `parent_chunk_id` would stay None,
+            # same failure mode as the "decorated_definition" case above.
+            # "module" collides in name only with the synthetic
+            # file-summary chunk (`file_summarizer.py`, also
+            # `chunk_type="module"`) -- that chunk is built directly, never
+            # passed through this `tree_chunks` loop, so it can never reach
+            # this branch or pollute `class_chunk_map`.
             if (
                 chunk_type
-                in ("class", "struct", "union", "namespace", "decorated_definition")
+                in (
+                    "class",
+                    "struct",
+                    "union",
+                    "namespace",
+                    "decorated_definition",
+                    "impl",
+                    "trait",
+                    "module",
+                )
                 and name
             ):
                 class_chunk_map.setdefault((relative_path, name), []).append(
