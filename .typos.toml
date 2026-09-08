@@ -21,3 +21,4 @@ tesc = "tesc"  # GLSL tessellation control shader extension
 certifi = "certifi"  # PyPI package name
 unparseable = "unparseable"  # valid spelling variant of unparsable, used in docs/
 mis = "mis"  # hyphenated compound prefix (e.g. "mis-flagging"), not a typo of miss/mist
+unparented = "unparented"  # has no parent_chunk_id (chunking/graph docs), not a typo of parentless
