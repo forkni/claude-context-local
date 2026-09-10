@@ -9,6 +9,7 @@ This module handles loading SentenceTransformer models with:
 
 import logging
 import shutil
+import time
 from collections.abc import Callable
 from typing import Any, Optional
 
@@ -424,14 +425,53 @@ class ModelLoader:
 
         # Step 2: Validate model exists on HuggingFace (if no valid cache)
         if not cache_valid:
-            # Model not cached or cache was corrupted - validate on HuggingFace Hub
+            # Model not cached or cache was corrupted - validate on HuggingFace Hub.
+            # A single model_info() call is prone to transient failures (timeouts,
+            # 5xx responses, connection resets) that have nothing to do with
+            # whether the model actually exists. Retry a couple of times before
+            # giving up, so a momentary HF Hub hiccup doesn't get misreported as
+            # "model not found" (transient Hub errors observed failing CI's
+            # test_observability_e2e slow tests -- see CHANGELOG).
+            # Defined before the try so they're always bound in the except
+            # blocks below, even if an import line itself raises something
+            # other than ImportError (pyrefly: unbound-name otherwise).
+            max_attempts = 3
+            model_not_found = False
             try:
                 from huggingface_hub import model_info
+                from huggingface_hub.utils import (
+                    HFValidationError,
+                    RepositoryNotFoundError,
+                )
 
                 self._logger.info(
                     f"Checking if '{self.model_name}' exists on HuggingFace Hub..."
                 )
-                info = model_info(self.model_name)
+                info = None
+                last_error: Exception | None = None
+                for attempt in range(1, max_attempts + 1):
+                    try:
+                        info = model_info(self.model_name)
+                        last_error = None
+                        break
+                    except (RepositoryNotFoundError, HFValidationError):
+                        # Genuine 404, or a repo id that's malformed on its face
+                        # (HFValidationError). Neither can change between
+                        # attempts, so fail immediately instead of burning the
+                        # backoff budget on something retrying can't fix.
+                        model_not_found = True
+                        raise
+                    except Exception as e:  # noqa: BLE001 - retry-then-reraise: transient HF Hub errors of every type get one retry before surfacing
+                        last_error = e
+                        if attempt < max_attempts:
+                            self._logger.warning(
+                                f"[HF HUB] Transient error checking "
+                                f"'{self.model_name}' (attempt {attempt}/"
+                                f"{max_attempts}): {e}. Retrying..."
+                            )
+                            time.sleep(attempt)  # 1s, then 2s backoff
+                if last_error is not None:
+                    raise last_error
                 self._logger.info(
                     # pyrefly: ignore [missing-attribute]
                     f"Model found: {info.modelId} (library: {info.library_name or 'unknown'})"
@@ -442,18 +482,32 @@ class ModelLoader:
                     "Install with: pip install huggingface_hub"
                 )
             except Exception as e:
-                # Model not found on HuggingFace Hub
                 from search.config import MODEL_REGISTRY
 
                 available_models = list(MODEL_REGISTRY.keys())
+                if model_not_found:
+                    # Genuine 404, or a malformed repo id - either way the model
+                    # name itself is the problem, not connectivity.
+                    raise ValueError(
+                        f"Model '{self.model_name}' not found on HuggingFace Hub!\n"
+                        f"Error: {e}\n"
+                        f"Available models in registry: {available_models}\n"
+                        f"Please check:\n"
+                        f"  1. Model name for typos (e.g., 'Qodo/Qodo-Embed-1-1.5B')\n"
+                        f"  2. Model exists on https://huggingface.co/{self.model_name}\n"
+                        f"  3. You have internet access to download the model"
+                    ) from e
+                # All retries exhausted on a non-404 error - most likely a sustained
+                # network/Hub outage, not proof the model doesn't exist.
                 raise ValueError(
-                    f"Model '{self.model_name}' not found on HuggingFace Hub!\n"
-                    f"Error: {e}\n"
+                    f"Could not verify model '{self.model_name}' on HuggingFace Hub "
+                    f"after {max_attempts} attempts!\n"
+                    f"Last error: {e}\n"
                     f"Available models in registry: {available_models}\n"
                     f"Please check:\n"
-                    f"  1. Model name for typos (e.g., 'Qodo/Qodo-Embed-1-1.5B')\n"
-                    f"  2. Model exists on https://huggingface.co/{self.model_name}\n"
-                    f"  3. You have internet access to download the model"
+                    f"  1. You have internet access to reach huggingface.co\n"
+                    f"  2. HuggingFace Hub isn't experiencing an outage\n"
+                    f"  3. Model exists on https://huggingface.co/{self.model_name}"
                 ) from e
 
         # Step 3: Prepare for loading (find local cache dir if cache is valid)
