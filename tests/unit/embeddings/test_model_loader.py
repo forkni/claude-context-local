@@ -499,9 +499,8 @@ class TestModelLoader:
         self, mock_st, mock_model_info, mock_sleep, model_loader
     ):
         """A transient model_info() failure must be retried, not treated as
-        "model not found" (see CI flake: Nightly run 2026-09-08, where a
-        single HF Hub hiccup failed both test_observability_e2e slow tests).
-        """
+        "model not found" (a single HF Hub hiccup was observed failing both
+        test_observability_e2e slow tests in CI -- see CHANGELOG)."""
         mock_model_info.side_effect = [
             ConnectionError("connection reset"),
             Mock(modelId="BAAI/bge-m3", library_name="sentence-transformers"),

@@ -430,8 +430,8 @@ class ModelLoader:
             # 5xx responses, connection resets) that have nothing to do with
             # whether the model actually exists. Retry a couple of times before
             # giving up, so a momentary HF Hub hiccup doesn't get misreported as
-            # "model not found" (see CI flake: Nightly run 2026-09-08, both
-            # test_observability_e2e slow tests failed on a transient Hub error).
+            # "model not found" (transient Hub errors observed failing CI's
+            # test_observability_e2e slow tests -- see CHANGELOG).
             # Defined before the try so they're always bound in the except
             # blocks below, even if an import line itself raises something
             # other than ImportError (pyrefly: unbound-name otherwise).
