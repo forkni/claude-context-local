@@ -527,8 +527,9 @@ class TestModelLoader:
     def test_load_raises_after_exhausting_retries(
         self, mock_model_info, mock_sleep, model_loader
     ):
-        """When every attempt fails, load() still raises the "not found"
-        ValueError -- but only after retrying, not on the first hiccup."""
+        """When every attempt fails, load() still raises -- but only after
+        retrying, not on the first hiccup -- with a message that points at
+        connectivity/outage rather than claiming the model doesn't exist."""
         mock_model_info.side_effect = ConnectionError("connection reset")
 
         model_loader._cache_manager.validate_cache = Mock(
@@ -536,7 +537,7 @@ class TestModelLoader:
         )
         model_loader._cache_manager.get_model_cache_path = Mock(return_value=None)
 
-        with pytest.raises(ValueError, match="not found on HuggingFace Hub"):
+        with pytest.raises(ValueError, match="Could not verify model"):
             model_loader.load()
 
         assert mock_model_info.call_count == 3

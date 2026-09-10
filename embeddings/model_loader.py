@@ -472,18 +472,31 @@ class ModelLoader:
                     "Install with: pip install huggingface_hub"
                 )
             except Exception as e:
-                # Model not found on HuggingFace Hub (or unreachable after retries)
                 from search.config import MODEL_REGISTRY
 
                 available_models = list(MODEL_REGISTRY.keys())
+                if isinstance(e, RepositoryNotFoundError):
+                    # Genuine 404 - the model really doesn't exist under this name.
+                    raise ValueError(
+                        f"Model '{self.model_name}' not found on HuggingFace Hub!\n"
+                        f"Error: {e}\n"
+                        f"Available models in registry: {available_models}\n"
+                        f"Please check:\n"
+                        f"  1. Model name for typos (e.g., 'Qodo/Qodo-Embed-1-1.5B')\n"
+                        f"  2. Model exists on https://huggingface.co/{self.model_name}\n"
+                        f"  3. You have internet access to download the model"
+                    ) from e
+                # All retries exhausted on a non-404 error - most likely a sustained
+                # network/Hub outage, not proof the model doesn't exist.
                 raise ValueError(
-                    f"Model '{self.model_name}' not found on HuggingFace Hub!\n"
-                    f"Error: {e}\n"
+                    f"Could not verify model '{self.model_name}' on HuggingFace Hub "
+                    f"after {max_attempts} attempts!\n"
+                    f"Last error: {e}\n"
                     f"Available models in registry: {available_models}\n"
                     f"Please check:\n"
-                    f"  1. Model name for typos (e.g., 'Qodo/Qodo-Embed-1-1.5B')\n"
-                    f"  2. Model exists on https://huggingface.co/{self.model_name}\n"
-                    f"  3. You have internet access to download the model"
+                    f"  1. You have internet access to reach huggingface.co\n"
+                    f"  2. HuggingFace Hub isn't experiencing an outage\n"
+                    f"  3. Model exists on https://huggingface.co/{self.model_name}"
                 ) from e
 
         # Step 3: Prepare for loading (find local cache dir if cache is valid)
