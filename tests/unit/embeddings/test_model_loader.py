@@ -492,6 +492,102 @@ class TestModelLoader:
         with pytest.raises(RuntimeError, match="MODEL DOWNLOAD FAILED"):
             model_loader.load()
 
+    @patch("embeddings.model_loader.time.sleep")
+    @patch("huggingface_hub.model_info")
+    @patch("embeddings.model_loader.SentenceTransformer")
+    def test_load_retries_model_info_on_transient_error(
+        self, mock_st, mock_model_info, mock_sleep, model_loader
+    ):
+        """A transient model_info() failure must be retried, not treated as
+        "model not found" (a single HF Hub hiccup was observed failing both
+        test_observability_e2e slow tests in CI -- see CHANGELOG)."""
+        mock_model_info.side_effect = [
+            ConnectionError("connection reset"),
+            Mock(modelId="BAAI/bge-m3", library_name="sentence-transformers"),
+        ]
+
+        model_loader._cache_manager.validate_cache = Mock(
+            return_value=(False, "Cache not found")
+        )
+        model_loader._cache_manager.get_model_cache_path = Mock(return_value=None)
+
+        mock_model = Mock()
+        mock_model.device = "cpu"
+        mock_st.return_value = mock_model
+
+        model, device = model_loader.load()
+
+        assert model == mock_model
+        assert mock_model_info.call_count == 2
+        mock_sleep.assert_called_once_with(1)
+
+    @patch("embeddings.model_loader.time.sleep")
+    @patch("huggingface_hub.model_info")
+    def test_load_raises_after_exhausting_retries(
+        self, mock_model_info, mock_sleep, model_loader
+    ):
+        """When every attempt fails, load() still raises -- but only after
+        retrying, not on the first hiccup -- with a message that points at
+        connectivity/outage rather than claiming the model doesn't exist."""
+        mock_model_info.side_effect = ConnectionError("connection reset")
+
+        model_loader._cache_manager.validate_cache = Mock(
+            return_value=(False, "Cache not found")
+        )
+        model_loader._cache_manager.get_model_cache_path = Mock(return_value=None)
+
+        with pytest.raises(ValueError, match="Could not verify model"):
+            model_loader.load()
+
+        assert mock_model_info.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    @patch("embeddings.model_loader.time.sleep")
+    @patch("huggingface_hub.model_info")
+    def test_load_does_not_retry_genuine_not_found(
+        self, mock_model_info, mock_sleep, model_loader
+    ):
+        """A real 404 (RepositoryNotFoundError) must fail fast -- retrying a
+        typo'd model name can't ever succeed."""
+        from huggingface_hub.utils import RepositoryNotFoundError
+
+        mock_model_info.side_effect = RepositoryNotFoundError(
+            "no such repo", response=Mock()
+        )
+
+        model_loader._cache_manager.validate_cache = Mock(
+            return_value=(False, "Cache not found")
+        )
+        model_loader._cache_manager.get_model_cache_path = Mock(return_value=None)
+
+        with pytest.raises(ValueError, match="not found on HuggingFace Hub"):
+            model_loader.load()
+
+        assert mock_model_info.call_count == 1
+        mock_sleep.assert_not_called()
+
+    @patch("embeddings.model_loader.time.sleep")
+    @patch("huggingface_hub.model_info")
+    def test_load_does_not_retry_malformed_model_name(
+        self, mock_model_info, mock_sleep, model_loader
+    ):
+        """A malformed repo id raises HFValidationError, which no amount of
+        retrying can fix -- it must fail fast like a genuine 404."""
+        from huggingface_hub.utils import HFValidationError
+
+        mock_model_info.side_effect = HFValidationError("bad repo id")
+
+        model_loader._cache_manager.validate_cache = Mock(
+            return_value=(False, "Cache not found")
+        )
+        model_loader._cache_manager.get_model_cache_path = Mock(return_value=None)
+
+        with pytest.raises(ValueError, match="not found on HuggingFace Hub"):
+            model_loader.load()
+
+        assert mock_model_info.call_count == 1
+        mock_sleep.assert_not_called()
+
     def test_model_vram_usage_property(self, model_loader):
         """Test model_vram_usage property."""
         model_loader._model_vram_usage["test-model"] = 123.4
