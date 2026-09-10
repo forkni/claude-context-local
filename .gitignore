@@ -307,6 +307,9 @@ docs/PRE_COMMIT_HOOKS.md
 !docs/plans/
 !docs/plans/**
 
+# Research papers read locally; the plans themselves stay tracked, the PDFs don't
+docs/plans/*.pdf
+
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/
 evaluation_results/
