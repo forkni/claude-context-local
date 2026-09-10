@@ -566,6 +566,28 @@ class TestModelLoader:
         assert mock_model_info.call_count == 1
         mock_sleep.assert_not_called()
 
+    @patch("embeddings.model_loader.time.sleep")
+    @patch("huggingface_hub.model_info")
+    def test_load_does_not_retry_malformed_model_name(
+        self, mock_model_info, mock_sleep, model_loader
+    ):
+        """A malformed repo id raises HFValidationError, which no amount of
+        retrying can fix -- it must fail fast like a genuine 404."""
+        from huggingface_hub.utils import HFValidationError
+
+        mock_model_info.side_effect = HFValidationError("bad repo id")
+
+        model_loader._cache_manager.validate_cache = Mock(
+            return_value=(False, "Cache not found")
+        )
+        model_loader._cache_manager.get_model_cache_path = Mock(return_value=None)
+
+        with pytest.raises(ValueError, match="not found on HuggingFace Hub"):
+            model_loader.load()
+
+        assert mock_model_info.call_count == 1
+        mock_sleep.assert_not_called()
+
     def test_model_vram_usage_property(self, model_loader):
         """Test model_vram_usage property."""
         model_loader._model_vram_usage["test-model"] = 123.4

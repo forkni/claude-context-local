@@ -439,7 +439,10 @@ class ModelLoader:
             model_not_found = False
             try:
                 from huggingface_hub import model_info
-                from huggingface_hub.utils import RepositoryNotFoundError
+                from huggingface_hub.utils import (
+                    HFValidationError,
+                    RepositoryNotFoundError,
+                )
 
                 self._logger.info(
                     f"Checking if '{self.model_name}' exists on HuggingFace Hub..."
@@ -451,9 +454,11 @@ class ModelLoader:
                         info = model_info(self.model_name)
                         last_error = None
                         break
-                    except RepositoryNotFoundError:
-                        # Genuine 404 - the model really doesn't exist under this
-                        # name. Retrying won't change that, so fail immediately.
+                    except (RepositoryNotFoundError, HFValidationError):
+                        # Genuine 404, or a repo id that's malformed on its face
+                        # (HFValidationError). Neither can change between
+                        # attempts, so fail immediately instead of burning the
+                        # backoff budget on something retrying can't fix.
                         model_not_found = True
                         raise
                     except Exception as e:  # noqa: BLE001 - retry-then-reraise: transient HF Hub errors of every type get one retry before surfacing
@@ -481,7 +486,8 @@ class ModelLoader:
 
                 available_models = list(MODEL_REGISTRY.keys())
                 if model_not_found:
-                    # Genuine 404 - the model really doesn't exist under this name.
+                    # Genuine 404, or a malformed repo id - either way the model
+                    # name itself is the problem, not connectivity.
                     raise ValueError(
                         f"Model '{self.model_name}' not found on HuggingFace Hub!\n"
                         f"Error: {e}\n"

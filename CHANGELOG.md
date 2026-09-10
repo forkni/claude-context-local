@@ -18,8 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/integration/test_observability_e2e.py` tests on 2026-09-08 against a commit that passed
   cleanly on every other run that week. Now retries the check up to 3 times with a short (1s,
   2s) backoff before giving up; a genuine `RepositoryNotFoundError` (real 404) still fails
-  immediately since retrying a bad model name can't help. The exhausted-retries error message
-  now points at connectivity/outage rather than implying the model name is wrong.
+  immediately since retrying a bad model name can't help. A malformed repo id
+  (`HFValidationError`) fails fast the same way, since retrying can't fix that either. The
+  exhausted-retries error message now points at connectivity/outage rather than implying the
+  model name is wrong.
 
 ---
 
