@@ -9,6 +9,7 @@ This module handles loading SentenceTransformer models with:
 
 import logging
 import shutil
+import time
 from collections.abc import Callable
 from typing import Any, Optional
 
@@ -424,14 +425,43 @@ class ModelLoader:
 
         # Step 2: Validate model exists on HuggingFace (if no valid cache)
         if not cache_valid:
-            # Model not cached or cache was corrupted - validate on HuggingFace Hub
+            # Model not cached or cache was corrupted - validate on HuggingFace Hub.
+            # A single model_info() call is prone to transient failures (timeouts,
+            # 5xx responses, connection resets) that have nothing to do with
+            # whether the model actually exists. Retry a couple of times before
+            # giving up, so a momentary HF Hub hiccup doesn't get misreported as
+            # "model not found" (see CI flake: Nightly run 2026-09-08, both
+            # test_observability_e2e slow tests failed on a transient Hub error).
             try:
                 from huggingface_hub import model_info
+                from huggingface_hub.utils import RepositoryNotFoundError
 
                 self._logger.info(
                     f"Checking if '{self.model_name}' exists on HuggingFace Hub..."
                 )
-                info = model_info(self.model_name)
+                max_attempts = 3
+                info = None
+                last_error: Exception | None = None
+                for attempt in range(1, max_attempts + 1):
+                    try:
+                        info = model_info(self.model_name)
+                        last_error = None
+                        break
+                    except RepositoryNotFoundError:
+                        # Genuine 404 - the model really doesn't exist under this
+                        # name. Retrying won't change that, so fail immediately.
+                        raise
+                    except Exception as e:  # noqa: BLE001 - retry-then-reraise: transient HF Hub errors of every type get one retry before surfacing
+                        last_error = e
+                        if attempt < max_attempts:
+                            self._logger.warning(
+                                f"[HF HUB] Transient error checking "
+                                f"'{self.model_name}' (attempt {attempt}/"
+                                f"{max_attempts}): {e}. Retrying..."
+                            )
+                            time.sleep(attempt)  # 1s, then 2s backoff
+                if last_error is not None:
+                    raise last_error
                 self._logger.info(
                     # pyrefly: ignore [missing-attribute]
                     f"Model found: {info.modelId} (library: {info.library_name or 'unknown'})"
@@ -442,7 +472,7 @@ class ModelLoader:
                     "Install with: pip install huggingface_hub"
                 )
             except Exception as e:
-                # Model not found on HuggingFace Hub
+                # Model not found on HuggingFace Hub (or unreachable after retries)
                 from search.config import MODEL_REGISTRY
 
                 available_models = list(MODEL_REGISTRY.keys())
