@@ -432,6 +432,11 @@ class ModelLoader:
             # giving up, so a momentary HF Hub hiccup doesn't get misreported as
             # "model not found" (see CI flake: Nightly run 2026-09-08, both
             # test_observability_e2e slow tests failed on a transient Hub error).
+            # Defined before the try so they're always bound in the except
+            # blocks below, even if an import line itself raises something
+            # other than ImportError (pyrefly: unbound-name otherwise).
+            max_attempts = 3
+            model_not_found = False
             try:
                 from huggingface_hub import model_info
                 from huggingface_hub.utils import RepositoryNotFoundError
@@ -439,7 +444,6 @@ class ModelLoader:
                 self._logger.info(
                     f"Checking if '{self.model_name}' exists on HuggingFace Hub..."
                 )
-                max_attempts = 3
                 info = None
                 last_error: Exception | None = None
                 for attempt in range(1, max_attempts + 1):
@@ -450,6 +454,7 @@ class ModelLoader:
                     except RepositoryNotFoundError:
                         # Genuine 404 - the model really doesn't exist under this
                         # name. Retrying won't change that, so fail immediately.
+                        model_not_found = True
                         raise
                     except Exception as e:  # noqa: BLE001 - retry-then-reraise: transient HF Hub errors of every type get one retry before surfacing
                         last_error = e
@@ -475,7 +480,7 @@ class ModelLoader:
                 from search.config import MODEL_REGISTRY
 
                 available_models = list(MODEL_REGISTRY.keys())
-                if isinstance(e, RepositoryNotFoundError):
+                if model_not_found:
                     # Genuine 404 - the model really doesn't exist under this name.
                     raise ValueError(
                         f"Model '{self.model_name}' not found on HuggingFace Hub!\n"
