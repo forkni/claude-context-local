@@ -676,7 +676,7 @@ class TDNetworkChunker:
 
             else:
                 logger.debug("Unrecognized .tdgraph.json edge type %r, skipped", etype)
-                unhandled_edge_counts[etype] += 1
+                unhandled_edge_counts[etype or "<missing>"] += 1
 
         if unhandled_edge_counts:
             logger.warning(
