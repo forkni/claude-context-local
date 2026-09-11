@@ -72,9 +72,13 @@ plan doc above):
    which nodes are centrality-eligible on the *existing* Python self-index, independent of TD.
 2. **C1 — relationship vocabulary.** 8 new `RelationshipType` members (`WIRES_TO`, `DOCKED_TO`,
    `CONTAINS`, `REFERENCES_OP`, `BINDS_TO`, `EXPORTS_TO`, `SCRIPTED_BY`, `SHARES_TAG`), mapped in
-   `get_relationship_field_mapping`, `REVERSE_RELATIONS`, `DEFAULT_EDGE_WEIGHTS`,
-   `EDGE_EMISSION_SPECS`, and the `find_connections` tool schema — all enumeration sites the
-   source plan missed are listed in the plan doc's "Additional gaps" section.
+   `get_relationship_field_mapping`, `REVERSE_RELATIONS`, `DEFAULT_EDGE_WEIGHTS`, and the
+   `find_connections` tool schema — all enumeration sites the source plan missed are listed in
+   the plan doc's "Additional gaps" section. **Correction (2026-09-10):** this list originally
+   also named `EDGE_EMISSION_SPECS` as an enumeration site; it is not one.
+   `chunking/relationships/edge_specs.py:89` keys that dict by *language* (`"glsl"`, `"cpp"`,
+   `"c"`, …) to configure per-language call-edge confidence and eligible chunk types — it has no
+   axis for `RelationshipType` members at all, so a new relationship type is never added there.
 3. **C2 — semantic types.** `operator`, `network` added to both `SEMANTIC_TYPES`
    (`search/graph_integration.py`) and the separate `DEFAULT_SEMANTIC_TYPES`
    (`evaluation/chunk_mapping.py`) — two independent lists, not one.
@@ -210,6 +214,43 @@ describes chunk types or relationship types), any `document_composer.compose` br
 policy flags, never `chunk_type`; a JSON file already composes to `""` harmlessly). C6's
 *cross-file* `SCRIPTED_BY` edge emission, originally deferred for lack of a data source, landed
 2026-09-05 once the exporter started writing `script.file` (see the C6 update above).
+
+**Update 2026-09-10 — `clone` edges, loud producer/consumer drift, `expressions:` content.**
+The producer moved to 13 edge types and a `par_modes` block while the consumer still handled 12
+and read neither `edge_types[]` nor `schema_version`; `clone` edges (COMP-level, load-bearing —
+a cloned COMP's behaviour is defined elsewhere) fell into a debug log and vanished silently.
+
+- **`clone` reuses `REFERENCES_OP`**, not a new `RelationshipType.CLONES` member: one row in
+  `_SIMPLE_EDGE_MAP`, `td_edge_type: "clone"` preserved in edge metadata (already set
+  unconditionally for every simple-mapped edge). A dedicated type was rejected because the same
+  relationship ships as a plain `par_ref` when `enablecloning`/`evalexpressions` is off
+  (`TD_Glossary_tox/docs/architecture/network-graph.md:29`) — a dedicated type would make the
+  graph's edge type change under a parameter toggle the consumer has no visibility into. Reuse
+  also costs zero enumeration-site edits (no `get_relationship_field_mapping`,
+  `REVERSE_RELATIONS`, `DEFAULT_EDGE_WEIGHTS`, `get_priority_groups`, tool-schema, or
+  `test_extractor_registry.py` changes), unlike a new member. **Revisit trigger:** any snapshot
+  reporting `clone` count > 50 justifies promoting it to its own type.
+- **Unhandled edge types and schema drift are now loud.** A module-level
+  `_SUPPORTED_SCHEMA_VERSION` guard warns once per distinct observed version (never rejects —
+  additive producer fields don't bump the version, only removal/rename/type changes do).
+  `_build_relationship_edges` now also returns an `unhandled_edge_counts` dict (third tuple
+  element) so an invented/renamed edge type it has no branch for produces one summarising
+  `logger.warning` instead of a silent per-edge debug line. The network chunk cross-checks the
+  artifact's own `edge_types[]` histogram both ways — handled types missing a nonzero-count
+  declaration, and declared nonzero types the chunker doesn't handle — filtered to `count > 0`
+  (the histogram always lists all 13 types, zero-count included, so an unfiltered diff would
+  flag every type a given network happens not to use).
+- **`expressions:` content line** renders `par_modes` entries with `mode == "expression"` as
+  `name=expr` pairs, inserted before `params:` (which holds only the evaluated value, not the TD
+  source). Bind/export-mode pars are excluded — they already render in `references:`. Capped at
+  900 chars per the measured SDTD worst case (1,692 chars, one node of 781); this closes the gap
+  where a BM25 query for `me.par.Width expression` returned 0 results against a live SDTD index.
+- Re-baselined `evaluation/td_golden.json` (19 -> 21 queries, `TD020`/`TD021` covering items 3
+  and 1 respectively) and `evaluation/td_caller_golden.json` (unchanged, still passes) against
+  the corrected fixture — see `docs/BENCHMARKS.md`'s TD Network Retrieval Benchmark section for
+  the numbers. `evaluation/CANON_20260908_REBASELINE.md` (self-index 63q/133q canon) is
+  unaffected by construction: `tests/` is excluded from the self-index, so no `.tdgraph.json`
+  fixture content ever reaches it.
 
 ## Consequences
 

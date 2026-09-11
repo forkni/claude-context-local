@@ -83,6 +83,9 @@
       "parent": "/project1/Test_network",
       "tags": ["audio"],
       "params": {"value1": 0.5},
+      "par_modes": {
+        "value1": {"mode": "export", "expr": null}
+      },
       "layout": {"x": 400.0, "y": 200.0, "w": 160.0, "h": 20.0}
     },
     {
@@ -98,6 +101,9 @@
       "shortcuts": [{"kind": "op", "name": "GLSL1"}],
       "tags": ["comp", "shader"],
       "params": {"pixeldat": "/project1/Test_network/glslpixel1"},
+      "par_modes": {
+        "resolutionw": {"mode": "expression", "expr": "me.par.Width"}
+      },
       "layout": {"x": 200.0, "y": 0.0, "w": 160.0, "h": 20.0}
     },
     {
@@ -242,6 +248,7 @@
     {"type": "shortcut_ref", "src": "/project1/Test_network/info1", "dst": "/project1/Test_network/glsl1", "shortcut": "GLSL1"},
     {"type": "scripted_by", "src": "/project1/Test_network/comp1", "dst": "/project1/Test_network/info1", "par": "callbacks", "via": "callbacks"},
     {"type": "replicator", "src": "/project1/Test_network/rep1", "dst": "/project1/Test_network/rep1/item1"},
+    {"type": "clone", "src": "/project1/Test_network/rep1/item1", "dst": "/project1/Test_network/ctrl1"},
     {"type": "shared_tag", "src": "/project1/Test_network", "dst": "/project1/Test_network/comp1", "tag": "ui"},
     {"type": "shared_tag", "src": "/project1/Test_network/comp1", "dst": "/project1/Test_network/ctrl1", "tag": "comp"},
     {"type": "shared_tag", "src": "/project1/Test_network/comp1", "dst": "/project1/Test_network/glsl1", "tag": "comp"},
@@ -304,12 +311,14 @@
     {"type": "export", "count": 1},
     {"type": "script_ref", "count": 4},
     {"type": "shortcut_ref", "count": 2},
+    {"type": "scripted_by", "count": 1},
     {"type": "replicator", "count": 1},
-    {"type": "shared_tag", "count": 9}
+    {"type": "shared_tag", "count": 9},
+    {"type": "clone", "count": 1}
   ],
   "stats": {
     "node_count": 15,
-    "edge_count": 38,
+    "edge_count": 39,
     "class_count": 8,
     "family_counts": {"CHOP": 4, "COMP": 5, "DAT": 2, "SOP": 2, "TOP": 2},
     "isolated_nodes": []

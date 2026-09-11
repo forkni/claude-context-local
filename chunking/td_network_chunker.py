@@ -17,7 +17,7 @@ Schema: derived directly from ``TD_Glossary_tox``'s ``Scripts/dat_NetworkGraphEx
 ``docs/adr/0062-td-network-indexing.md`` and
 ``tests/fixtures/td_network/Test_network.tdgraph.json`` for the authoritative shape:
 ``schema_version`` (int), ``target``, ``nodes`` (``stub: true`` for out-of-subtree
-placeholders), ``edges`` (11 types), ``classes`` (``{mro, signature}`` per class
+placeholders), ``edges`` (13 types), ``classes`` (``{mro, signature}`` per class
 actually instantiated by a node -- *not* every class in ``mro``), ``scripts``,
 ``tag_groups``, ``node_line_spans``, ``edge_types``, ``stats``.
 
@@ -91,7 +91,33 @@ _SIMPLE_EDGE_MAP: dict[str, tuple[RelationshipType, tuple[str, ...]]] = {
     "shortcut_ref": (RelationshipType.REFERENCES_OP, ("shortcut",)),
     # host op -> the DAT that scripts it (par="callbacks"|"op"|..., via="callbacks"|"execute")
     "scripted_by": (RelationshipType.SCRIPTED_BY, ("par", "via")),
+    # clone -> master: no dedicated RelationshipType (see docs/adr/0062-td-network-
+    # indexing.md, Update 2026-09-10) -- the identical relationship degrades to a
+    # plain par_ref the instant enablecloning/evalexpressions is off, so reusing
+    # REFERENCES_OP keeps the graph stable across that toggle. Carries only
+    # type/src/dst, hence the empty metadata-key tuple.
+    "clone": (RelationshipType.REFERENCES_OP, ()),
 }
+
+# All edge types this chunker has a code path for, whether via _SIMPLE_EDGE_MAP or
+# one of the hand-written branches in _build_relationship_edges (contains/wire/
+# comp_wire/dock/script_ref/replicator/shared_tag each need extra per-edge logic --
+# see the comment on _SIMPLE_EDGE_MAP above). Single source of truth for the
+# unhandled-edge-type diff in _build_network_chunk, so a new _SIMPLE_EDGE_MAP row
+# can never drift out of sync with the validator.
+_HANDLED_EDGE_TYPES: frozenset[str] = frozenset(_SIMPLE_EDGE_MAP) | frozenset(
+    {"contains", "wire", "comp_wire", "dock", "script_ref", "replicator", "shared_tag"}
+)
+
+# Schema version this chunker was written against (mirrors TD_Glossary_tox's
+# tdgraph_contract.py / docs/schema/tdgraph.schema.json's hard `const`). A mismatch
+# is only ever *warned* on, never rejected -- additive producer fields never bump
+# this, only a removal/rename/type change would, and even then the chunker should
+# degrade gracefully rather than drop the whole file. Warn once per distinct
+# observed version so reindexing N snapshots on a stale exporter doesn't spam N
+# identical warnings.
+_SUPPORTED_SCHEMA_VERSION = 1
+_warned_schema_versions: set[int] = set()
 
 
 def _resolve_script_file(
@@ -181,6 +207,21 @@ class TDNetworkChunker:
                 "Malformed .tdgraph.json %s: top level is not an object", file_path
             )
             return []
+
+        schema_version = graph.get("schema_version")
+        if (
+            schema_version is not None
+            and schema_version != _SUPPORTED_SCHEMA_VERSION
+            and schema_version not in _warned_schema_versions
+        ):
+            _warned_schema_versions.add(schema_version)
+            logger.warning(
+                "%s: schema_version %r != supported %d -- additive fields are "
+                "fine, but a removed/renamed/retyped field may not chunk correctly",
+                file_path,
+                schema_version,
+                _SUPPORTED_SCHEMA_VERSION,
+            )
 
         if relative_path is None:
             relative_path = self._compute_relative_path(file_path)
@@ -309,7 +350,7 @@ class TDNetworkChunker:
             if e.get("dst"):
                 in_edges[e["dst"]].append(e)
 
-        relationships_by_source, unresolved_script_refs = (
+        relationships_by_source, unresolved_script_refs, unhandled_edge_counts = (
             self._build_relationship_edges(
                 graph,
                 edges,
@@ -381,6 +422,7 @@ class TDNetworkChunker:
                 relative_path,
                 folder_structure,
                 unresolved_script_refs,
+                unhandled_edge_counts,
                 relationships_by_source.get(network_chunk_id),
             )
         )
@@ -477,12 +519,16 @@ class TDNetworkChunker:
         class_chunk_for,
         network_chunk_id: str,
         target: str,
-    ) -> tuple[dict[str, list[RelationshipEdge]], int]:
+    ) -> tuple[dict[str, list[RelationshipEdge]], int, dict[str, int]]:
         """Build every RelationshipEdge, grouped by source chunk_id.
 
-        Returns (relationships_by_source, unresolved_script_ref_count). The count
-        is surfaced on the network chunk's content per ADR-0062 ("dst: null edges
-        are dropped and counted on the network chunk").
+        Returns (relationships_by_source, unresolved_script_ref_count,
+        unhandled_edge_counts). The script-ref count is surfaced on the network
+        chunk's content per ADR-0062 ("dst: null edges are dropped and counted on
+        the network chunk"); unhandled_edge_counts (edge type -> occurrence count,
+        for any type this chunker has no branch for) is surfaced the same way per
+        the 2026-09-10 update -- producer/consumer edge-type drift should be loud,
+        not a silent ``logger.debug``.
         """
         scripts = graph.get("scripts") or {}
         scripts_index = {
@@ -512,6 +558,7 @@ class TDNetworkChunker:
             )
 
         unresolved_script_refs = 0
+        unhandled_edge_counts: dict[str, int] = defaultdict(int)
 
         for e in edges:
             etype = e.get("type")
@@ -629,6 +676,16 @@ class TDNetworkChunker:
 
             else:
                 logger.debug("Unrecognized .tdgraph.json edge type %r, skipped", etype)
+                unhandled_edge_counts[etype] += 1
+
+        if unhandled_edge_counts:
+            logger.warning(
+                "Unhandled .tdgraph.json edge type(s), skipped: %s",
+                ", ".join(
+                    f"{etype!r}={count}"
+                    for etype, count in sorted(unhandled_edge_counts.items())
+                ),
+            )
 
         # Class hierarchy: each class inherits from the first entry after itself
         # in its own mro (mro[0] is always the class itself).
@@ -662,7 +719,7 @@ class TDNetworkChunker:
                     },
                 )
 
-        return by_source, unresolved_script_refs
+        return by_source, unresolved_script_refs, dict(unhandled_edge_counts)
 
     # ------------------------------------------------------------------
     # Individual chunk builders
@@ -689,6 +746,7 @@ class TDNetworkChunker:
         mro = node.get("mro") or []
         signature = node.get("signature")
         params = node.get("params") or {}
+        par_modes = node.get("par_modes") or {}
         user_tags = node.get("tags") or []
         shortcuts = node.get("shortcuts") or []
         rel = node.get("rel") or {}
@@ -727,6 +785,22 @@ class TDNetworkChunker:
             )
             lines.append(f"hosts docked: {names}")
 
+        # par_modes carries the TD *source* (e.g. "me.par.Width") behind an
+        # expression-mode par; params carries only its evaluated value. Bind/export
+        # modes are deliberately excluded here -- they already render via
+        # references:/referenced by: below. Inserted before params: so compose()'s
+        # head-window budget admits it first (embeddings/document_composer.py).
+        expr_entries = [
+            f"{name}={info.get('expr')}"
+            for name, info in par_modes.items()
+            if info.get("mode") == "expression" and info.get("expr")
+        ]
+        if expr_entries:
+            expr_line = f"expressions: {', '.join(expr_entries)}"
+            if len(expr_line) > 900:
+                expr_line = expr_line[:900]
+            lines.append(expr_line)
+
         if params:
             param_str = ", ".join(f"{k}={v!r}" for k, v in params.items())
             lines.append(f"params: {param_str}")
@@ -735,7 +809,7 @@ class TDNetworkChunker:
             e
             for e in node_out_edges
             if e.get("type")
-            in ("par_ref", "bind", "export", "script_ref", "shortcut_ref")
+            in ("par_ref", "bind", "export", "script_ref", "shortcut_ref", "clone")
         ]
         if ref_edges:
             refs = []
@@ -756,7 +830,7 @@ class TDNetworkChunker:
             e
             for e in node_in_edges
             if e.get("type")
-            in ("par_ref", "bind", "export", "script_ref", "shortcut_ref")
+            in ("par_ref", "bind", "export", "script_ref", "shortcut_ref", "clone")
         ]
         if referenced_by:
             names = sorted(
@@ -878,6 +952,7 @@ class TDNetworkChunker:
         relative_path: str,
         folder_structure: list[str],
         unresolved_script_refs: int,
+        unhandled_edge_counts: dict[str, int],
         relationships: list[RelationshipEdge] | None,
     ) -> CodeChunk:
         target = graph.get("target", "")
@@ -925,6 +1000,43 @@ class TDNetworkChunker:
 
         if unresolved_script_refs:
             lines.append(f"{unresolved_script_refs} unresolved script reference(s)")
+
+        default_pars_skipped = stats.get("default_pars_skipped")
+        if default_pars_skipped:
+            lines.append(f"default pars skipped: {default_pars_skipped}")
+
+        # Producer/consumer edge-type drift, made loud (2026-09-10 update). Three
+        # independent signals, each catching a different failure mode:
+        #  - unhandled_edge_counts: types this chunker has no branch for, counted
+        #    while actually walking edges[] (see _build_relationship_edges).
+        #  - declared-but-unhandled: the artifact's own edge_types[] histogram
+        #    (filtered to count > 0 -- it always lists all known types, zeros
+        #    included) claims a type this chunker cannot handle.
+        #  - observed-but-undeclared: a type appears in edges[] but the artifact's
+        #    own histogram never declares it (or declares a zero count for it) --
+        #    the producer under-reporting its own output (ADR-0062 correction C8).
+        if unhandled_edge_counts:
+            parts = ", ".join(
+                f"{etype}={count}"
+                for etype, count in sorted(unhandled_edge_counts.items())
+            )
+            lines.append(f"unhandled edge type(s): {parts}")
+
+        declared_counts = {t.get("type"): t.get("count", 0) for t in edge_types}
+        declared_present = {t for t, c in declared_counts.items() if c}
+        declared_unhandled = sorted(declared_present - _HANDLED_EDGE_TYPES)
+        if declared_unhandled:
+            lines.append(
+                f"declared-but-unhandled edge type(s): {', '.join(declared_unhandled)}"
+            )
+
+        observed_types = {e.get("type") for e in graph.get("edges") or ()}
+        undeclared_observed = sorted(observed_types - set(declared_counts))
+        if undeclared_observed:
+            lines.append(
+                "observed-but-undeclared edge type(s): "
+                f"{', '.join(undeclared_observed)}"
+            )
 
         content = "\n".join(lines)
 

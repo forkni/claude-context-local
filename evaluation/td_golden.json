@@ -11,7 +11,7 @@
     "expected": "chunk IDs with label >= 2 (used for Recall@k, NDCG@k)",
     "expected_primary": "chunk IDs with label == 3 (used for MRR)",
     "scope_note": "A 22-chunk corpus is a wiring/contract gate (are TD chunks indexed, searchable and ranked at all), not a discriminating retrieval-quality measure. Numbers are corpus-specific and not comparable to the 63q/133q canonical sets.",
-    "total_queries": 19,
+    "total_queries": 21,
     "categories": {
       "TA": "Operator by role (find the operator that plays a described role)",
       "TB": "Network structure (wires, docks, containment, replicator, bind)",
@@ -20,11 +20,11 @@
     },
     "category_prefix_note": "Two-letter categories on purpose: run_sscg_benchmark.py excludes bare 'D' by default and routes bare 'F' through find_similar.",
     "splits": {
-      "train": 11,
+      "train": 13,
       "val": 4,
       "test": 4
     },
-    "split_note": "Stratified: TA=3/1/1, TB=3/1/1, TC=2/1/1, TD=3/1/1"
+    "split_note": "Stratified: TA=4/1/1, TB=4/1/1, TC=2/1/1, TD=3/1/1"
   },
   "thresholds": {
     "mrr": 0.85,
@@ -337,6 +337,37 @@
       "relevance_grades": {
         "Test_network.tdgraph.json:network:Test_network": 3,
         "Test_network.tdgraph.json:operator:comp1": 1
+      }
+    },
+    {
+      "id": "TD020",
+      "query": "operator whose resolution is driven by a Width parameter expression",
+      "category": "TA",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:operator:glsl1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:glsl1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:glsl1": 3
+      }
+    },
+    {
+      "id": "TD021",
+      "query": "replicator item operator that is a clone instance of its master component",
+      "category": "TB",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:operator:rep1/item1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:rep1/item1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:rep1/item1": 3,
+        "Test_network.tdgraph.json:operator:ctrl1": 1
       }
     }
   ]

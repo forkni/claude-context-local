@@ -4,11 +4,11 @@ Exercises the chunker directly against the hand-built fixture
 ``tests/fixtures/td_network/Test_network.tdgraph.json`` -- see the ADR and
 ``docs/adr/0062-td-network-indexing.md`` for the schema this fixture stands in for
 (shape cross-checked against a real Part B export, ``D:\\dev\\SDTD_040``,
-2026-09-04). The fixture covers every one of the 11 edge types once, plus the
-``dock``/``replicator`` direction-inversion cases documented in
-``_build_relationship_edges``, and -- like every real export -- carries the
-target COMP itself as a depth-0 node (the "root"), which must never become an
-operator chunk.
+2026-09-04). The fixture covers all 13 edge types (not once each -- ``contains``
+and ``shared_tag`` recur), plus the ``dock``/``replicator`` direction-inversion
+cases documented in ``_build_relationship_edges``, and -- like every real export
+-- carries the target COMP itself as a depth-0 node (the "root"), which must
+never become an operator chunk.
 """
 
 from pathlib import Path
@@ -392,6 +392,34 @@ class TestEdgeTypeMapping:
             is not None
         )
 
+    def test_clone_edge_maps_to_references_op(self, caplog):
+        """fixture: {type: clone, src: rep1/item1, dst: ctrl1}. No dedicated
+        RelationshipType -- reuses REFERENCES_OP (see docs/adr/0062-td-network-
+        indexing.md, Update 2026-09-10) so the graph doesn't change shape when
+        enablecloning/evalexpressions toggles off. Metadata carries only the
+        td_edge_type tag: the edge itself has no par/via keys to surface."""
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="chunking.td_network_chunker"):
+            chunks = _chunk_fixture()
+        item1 = _by_name(chunks, "rep1/item1")
+        ctrl1 = _by_name(chunks, "ctrl1")
+        edge = _rel(item1, RelationshipType.REFERENCES_OP, ":operator:ctrl1")
+        assert edge is not None
+        assert edge.target_name == ctrl1.chunk_id
+        assert edge.metadata["td_edge_type"] == "clone"
+        assert "par" not in edge.metadata
+        assert "'clone'" not in caplog.text  # not the "Unrecognized" branch
+
+    def test_clone_edge_appears_in_references_and_referenced_by_content(self):
+        chunks = _chunk_fixture()
+        item1 = _by_name(chunks, "rep1/item1")
+        ctrl1 = _by_name(chunks, "ctrl1")
+        assert "references: ctrl1" in item1.content
+        # ctrl1 already carries an incoming shortcut_ref from info1, so this only
+        # asserts membership, not the whole "referenced by:" line.
+        assert "rep1/item1" in ctrl1.content
+
 
 class TestClassHierarchy:
     def test_class_inherits_from_second_mro_entry(self):
@@ -460,6 +488,45 @@ class TestChunkContent:
         assert "glsl1" in network.content
         assert "comp1/box1" not in network.content  # nested, not top-level
 
+    def test_expression_mode_par_renders_as_expressions_line(self):
+        """fixture: glsl1.par_modes.resolutionw = {mode: expression, expr:
+        me.par.Width}. par_modes carries the TD *source*; params carries only
+        the evaluated value -- both must be searchable."""
+        chunks = _chunk_fixture()
+        glsl1 = _by_name(chunks, "glsl1")
+        assert "expressions: resolutionw=me.par.Width" in glsl1.content
+
+    def test_expressions_line_precedes_params_line(self):
+        chunks = _chunk_fixture()
+        glsl1 = _by_name(chunks, "glsl1")
+        lines = glsl1.content.splitlines()
+        expr_idx = next(
+            i for i, ln in enumerate(lines) if ln.startswith("expressions:")
+        )
+        params_idx = next(i for i, ln in enumerate(lines) if ln.startswith("params:"))
+        assert expr_idx < params_idx
+
+    def test_export_mode_par_does_not_render_as_expressions_line(self):
+        """fixture: exportsrc1.par_modes.value1 = {mode: export, expr: null} --
+        export/bind modes are already covered by references:/referenced by: and
+        must not leak an "expressions:" line."""
+        chunks = _chunk_fixture()
+        exportsrc1 = _by_name(chunks, "exportsrc1")
+        assert "expressions:" not in exportsrc1.content
+
+    def test_node_with_no_par_modes_gets_no_expressions_line(self):
+        chunks = _chunk_fixture()
+        noise1 = _by_name(chunks, "noise1")
+        assert "expressions:" not in noise1.content
+
+    def test_network_root_params_never_get_an_expressions_line(self):
+        """The root COMP's par_modes (if any) must never land on the network
+        chunk's params: line -- that would put every expression-mode par in the
+        whole snapshot on one chunk."""
+        chunks = _chunk_fixture()
+        network = next(c for c in chunks if c.chunk_type == "network")
+        assert "expressions:" not in network.content
+
 
 class TestConfigGate:
     def test_disabled_by_default_via_multi_language_chunker(self, monkeypatch):
@@ -486,6 +553,108 @@ class TestConfigGate:
         chunks = mc.chunk_file(str(FIXTURE_PATH))
         assert len(chunks) == 22
         assert {c.language for c in chunks} == {"td_network"}
+
+
+class TestSchemaAndEdgeTypeValidation:
+    """2026-09-10 update (item 2): producer/consumer drift is loud, never a
+    silent ``logger.debug``. Unit tests do not need the feature flag -- these
+    construct ``TDNetworkChunker`` directly, same as the fixture tests above."""
+
+    @staticmethod
+    def _minimal_graph(**overrides) -> dict:
+        graph = {
+            "schema_version": 1,
+            "target": "/project1/Mini",
+            "nodes": [
+                {
+                    "id": "/project1/Mini",
+                    "name": "Mini",
+                    "family": "COMP",
+                    "op_type": "baseCOMP",
+                    "class_name": "baseCOMP",
+                    "mro": ["baseCOMP", "COMP", "OP"],
+                    "parent": None,
+                    "params": {},
+                }
+            ],
+            "edges": [],
+            "classes": {},
+            "edge_types": [],
+            "stats": {},
+        }
+        graph.update(overrides)
+        return graph
+
+    @staticmethod
+    def _chunk_graph(tmp_path: Path, graph: dict, name: str = "Mini.tdgraph.json"):
+        import json
+
+        out = tmp_path / name
+        out.write_text(json.dumps(graph, indent=2), encoding="utf-8")
+        chunker = TDNetworkChunker(root_path=str(tmp_path))
+        return chunker.chunk_file(str(out), name)
+
+    def test_unhandled_edge_type_warns_and_surfaces_on_network_chunk(
+        self, tmp_path, caplog, monkeypatch
+    ):
+        import logging
+
+        import chunking.td_network_chunker as td_mod
+
+        monkeypatch.setattr(td_mod, "_warned_schema_versions", set())
+        graph = self._minimal_graph(
+            edges=[{"type": "warp_link", "src": "/project1/Mini", "dst": None}]
+        )
+        with caplog.at_level(logging.WARNING, logger="chunking.td_network_chunker"):
+            chunks = self._chunk_graph(tmp_path, graph)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "warp_link" in warnings[0].getMessage()
+        network = next(c for c in chunks if c.chunk_type == "network")
+        assert "unhandled edge type(s): warp_link=1" in network.content
+
+    def test_schema_version_mismatch_warns_once_per_version(
+        self, tmp_path, caplog, monkeypatch
+    ):
+        import logging
+
+        import chunking.td_network_chunker as td_mod
+
+        monkeypatch.setattr(td_mod, "_warned_schema_versions", set())
+        graph = self._minimal_graph(schema_version=2)
+        with caplog.at_level(logging.WARNING, logger="chunking.td_network_chunker"):
+            self._chunk_graph(tmp_path, graph, name="A.tdgraph.json")
+            self._chunk_graph(tmp_path, graph, name="B.tdgraph.json")
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "schema_version" in warnings[0].getMessage()
+
+    def test_invented_edge_type_plus_schema_mismatch_is_exactly_two_warnings(
+        self, tmp_path, caplog, monkeypatch
+    ):
+        """The plan's negative check, verbatim: a synthetic snapshot carrying
+        both an invented edge type and a bumped schema_version produces exactly
+        two warnings -- one per independent defect, no cross-contamination."""
+        import logging
+
+        import chunking.td_network_chunker as td_mod
+
+        monkeypatch.setattr(td_mod, "_warned_schema_versions", set())
+        graph = self._minimal_graph(
+            schema_version=2,
+            edges=[{"type": "warp_link", "src": "/project1/Mini", "dst": None}],
+        )
+        with caplog.at_level(logging.WARNING, logger="chunking.td_network_chunker"):
+            self._chunk_graph(tmp_path, graph)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 2
+
+    def test_corrected_fixture_produces_no_validation_warnings(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="chunking.td_network_chunker"):
+            _chunk_fixture()
+        assert caplog.records == []
 
 
 class TestScriptFileJoin:

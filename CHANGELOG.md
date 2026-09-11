@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TD network consumer gaps closed: `clone` edges, loud producer/consumer drift, `expressions:`
+  content** (ADR-0062, 2026-09-10) — `TDNetworkChunker` now maps `clone` edges onto
+  `RelationshipType.REFERENCES_OP` (`td_edge_type: "clone"` preserved) instead of silently
+  dropping them; warns once per distinct unsupported `schema_version` and once per file on any
+  edge type it has no branch for, and cross-checks the artifact's own `edge_types[]` histogram
+  against the handled set in both directions (nonzero-count types the chunker can't handle, and
+  handled types the histogram fails to declare); and renders `par_modes` `mode == "expression"`
+  entries as an `expressions: name=expr, ...` content line (before `params:`, capped at 900
+  chars), making TD expression source text (e.g. `me.par.Width`) searchable for the first time.
+  `evaluation/td_golden.json` grew from 19 to 21 queries to cover the clone and expression
+  additions; `evaluation/td_caller_golden.json` needed no change.
 - **Cross-file `SCRIPTED_BY` join for synced TouchDesigner DATs** (ADR-0062 C6) —
   `TDNetworkChunker` now reads the exporter's `script.file` / `script.synced` fields and emits
   a `scripted_by` edge (`via: file`, confidence 0.98, `resolver_source: td_live`) from each
@@ -324,6 +335,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   condition (raise the floor once nltk publishes >3.10.3); Dependabot alert #33 dismissed
   `not_used`. The predecessor deferral for CVE-2026-12243 no longer flags on 3.10.3 and was
   folded into the same ledger entry.
+
 ### Fixed
 
 - **Flaky HF Hub model-existence check** (`embeddings/model_loader.py`) — `ModelLoader.load()`
