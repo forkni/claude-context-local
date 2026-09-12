@@ -504,16 +504,25 @@ class TestFaissVectorIndexClear:
             assert not instance2.chunk_id_path.exists()
 
     @pytest.mark.skipif(
-        sys.platform != "win32", reason="POSIX unlinks mapped files freely"
+        sys.platform != "win32", reason="only Windows has a share-mode to prove here"
     )
-    def test_clear_still_blocked_by_live_foreign_mapping(self):
-        """A second instance's clear() must still fail if nobody closes the
-        foreign live mapping -- ``close()`` releases handles, it must not
-        make ``clear()`` silently tolerate a mapping it does not own.
+    def test_clear_no_longer_blocked_by_live_foreign_mapping(self):
+        """A second instance's clear() must succeed even if nobody closes a
+        foreign live mapping first.
 
-        Companion to ``test_close_releases_mmap_handle_so_second_instance_can_clear``:
-        guards against a fix that hides the real error instead of closing
-        the actual blocking handle.
+        Supersedes the old (pre-share-delete) contract asserted by this test:
+        this repo's recurring WinError-32 mmap-handle failure
+        (docs/adr/0025-clear-index-directory-in-place.md) kept recurring
+        because releasing *this* instance's own handle can never help when
+        the blocking handle always belongs to a *different* instance --
+        ``_check_auto_reindex`` (mcp_server/tools/search_handlers.py) built a
+        second HybridSearcher/CodeIndexManager on a warm project without
+        ever closing the first. The fix instead removes the OS precondition:
+        ``MmapVectorStorage`` opens ``code_vectors.mmap`` with
+        ``FILE_SHARE_DELETE`` on Windows, matching POSIX's always-unlinkable
+        semantics, so a foreign live mapping no longer blocks ``clear()`` at
+        all -- companion coverage in ``test_indexer_clear_index.py`` exercises
+        the same shape one layer up, through ``CodeIndexManager``.
         """
         import pickle
 
@@ -543,11 +552,17 @@ class TestFaissVectorIndexClear:
             instance2 = FaissVectorIndex(index_path)
             assert instance2.load()
 
-            # instance1 is never closed here -- its live handle must still
-            # block instance2's unlink.
-            with pytest.raises(PermissionError):
-                instance2.clear()
+            # instance1 is deliberately never closed here -- clear() must
+            # succeed anyway now, without needing to close a handle it does
+            # not own.
+            instance2.clear()
 
+            assert instance2._mmap_storage is None
+            assert not instance2._mmap_path.exists()
+
+            # instance1's own mapping stays valid (reading the deleted
+            # file's old bytes) until it is separately closed -- Windows
+            # share-delete semantics, matching POSIX unlink-of-open-file.
             instance1.close()
 
 

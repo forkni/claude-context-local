@@ -296,6 +296,24 @@ class FaissVectorIndex:
                         self._logger.debug(
                             "Mmap vectors not available, using FAISS reconstruct"
                         )
+                    elif self._mmap_storage.count != self._index.ntotal:
+                        # Stale-generation guard: a residual mmap file can
+                        # survive a failed delete (e.g. a foreign process
+                        # held it, see save()'s below-threshold branch)
+                        # while self._index above was loaded fresh from
+                        # code.index. Mapping vectors from the wrong
+                        # generation would silently return wrong-but-valid
+                        # -looking embeddings, so refuse the mapping instead
+                        # -- get_vector()/reconstruct() already fall back to
+                        # FAISS reconstruct() when _mmap_storage is None.
+                        self._logger.warning(
+                            f"Discarding stale mmap storage: {self._mmap_storage.count} "
+                            f"vectors on disk != {self._index.ntotal} in loaded index "
+                            f"(likely a residual file from a failed delete); "
+                            "falling back to FAISS reconstruct"
+                        )
+                        self._mmap_storage.close()
+                        self._mmap_storage = None
                     else:
                         self._logger.info(
                             f"Loaded mmap storage: {self._mmap_storage.count} vectors "
@@ -380,10 +398,19 @@ class FaissVectorIndex:
                     # Release this instance's own mapping before unlinking --
                     # same rationale as the rewrite branch above.
                     self.close()
-                    self._mmap_path.unlink()
-                    self._logger.info(
-                        f"Deleted mmap file (below threshold): {vector_count} vectors < {MMAP_THRESHOLD}"
-                    )
+                    try:
+                        self._mmap_path.unlink()
+                        self._logger.info(
+                            f"Deleted mmap file (below threshold): {vector_count} vectors < {MMAP_THRESHOLD}"
+                        )
+                    except OSError as e:
+                        # Symmetric with the >=MMAP_THRESHOLD branch above:
+                        # a residual lock here (e.g. a genuinely separate
+                        # process, not just another in-process instance --
+                        # those are now covered by _open_shared_delete())
+                        # must not abort save_indices() mid-way through a
+                        # BM25/dense write and leave the two legs desynced.
+                        self._logger.warning(f"Failed to delete stale mmap file: {e}")
                 else:
                     self._logger.info(
                         f"Skipping mmap storage: {vector_count} vectors < {MMAP_THRESHOLD} threshold "

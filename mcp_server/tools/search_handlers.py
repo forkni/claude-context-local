@@ -149,11 +149,30 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
 
     config = get_config()
     if config.search_mode.enable_hybrid:
-        indexer = build_hybrid_searcher(config, project_storage, embedder)
+        state = get_state()
+        # Reuse the already-cached searcher instead of unconditionally
+        # building a second HybridSearcher. build_hybrid_searcher() maps
+        # code_vectors.mmap again in this same process; if state.searcher
+        # was already warm (the common case -- a stale-but-not-missing
+        # index) that second mapping was never closed (it was only bound
+        # back into state.searcher when it started out None, see below),
+        # and its live handle blocked the reindex's own clear()/save() from
+        # unlinking/rewriting the shared file (PermissionError [WinError 32]
+        # on Windows, invisible on POSIX). ADR-0025's stable index object
+        # identity is what makes reusing the cached searcher here safe --
+        # clear/resync mutate it in place, so later queries see the update
+        # instead of a discarded duplicate doing the work for nothing.
+        if (
+            state.searcher is not None
+            and state.current_project == project_path
+            and state.embedders.get("default") is embedder
+        ):
+            indexer = state.searcher
+        else:
+            indexer = build_hybrid_searcher(config, project_storage, embedder)
         # Track project/model key eagerly (used by downstream get_searcher() routing).
         # Searcher bind is deferred until after auto_reindex_if_needed so we never
         # cache a HybridSearcher whose embedder was just nulled by clear_embedders().
-        state = get_state()
         if state.searcher is None or state.current_project != project_path:
             state.current_project = project_path
     else:

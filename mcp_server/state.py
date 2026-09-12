@@ -211,6 +211,43 @@ class ApplicationState:
         """
         self.embedders[key] = embedder
 
+    @staticmethod
+    def _shutdown_searcher(searcher: Any, logger: Any) -> None:
+        """Release a dropped searcher's own handles before it's GC'd.
+
+        A ``HybridSearcher.shutdown()`` closes its ``dense_index``
+        (``CodeIndexManager``) metadata connection *and* its FAISS mmap
+        mapping (ADR-0025's 2026-08-28 amendment). Nulling ``self.searcher``
+        without this call used to leave that mmap mapping of
+        ``code_vectors.mmap`` open indefinitely (until GC), which could block
+        a later ``clear()``/``save()`` on the same file from a freshly-built
+        searcher with ``PermissionError: [WinError 32]`` on Windows -- this
+        repo's recurring mmap-handle failure class (see
+        docs/adr/0025-clear-index-directory-in-place.md). Call outside any
+        lock: shutdown can be slow (SQLite commit, GPU-backed reranker
+        teardown) and must not block other threads reading state.
+        """
+        if searcher is not None and hasattr(searcher, "shutdown"):
+            try:
+                searcher.shutdown()
+            except Exception as e:  # noqa: BLE001 - cleanup: isolated teardown step, must not block caller
+                logger.warning(f"Error shutting down dropped searcher: {e}")
+
+    @staticmethod
+    def _close_index_manager(index_manager: Any, logger: Any) -> None:
+        """Release a dropped index_manager's own handles before it's GC'd.
+
+        Same rationale as ``_shutdown_searcher`` above, for the standalone
+        ``CodeIndexManager`` used in non-hybrid mode (``state.index_manager``
+        is a distinct instance from a ``HybridSearcher``'s ``dense_index``,
+        so both need releasing independently).
+        """
+        if index_manager is not None and hasattr(index_manager, "close"):
+            try:
+                index_manager.close()
+            except Exception as e:  # noqa: BLE001 - cleanup: isolated teardown step, must not block caller
+                logger.warning(f"Error closing dropped index_manager: {e}")
+
     def clear_embedders(self) -> None:
         """Clear all cached embedder instances and release GPU memory."""
         import logging
@@ -225,7 +262,12 @@ class ApplicationState:
             self.embedders = {}
             # Every searcher component stashes embedder refs that are now dead.
             # Force rebuild on next search request.
+            old_searcher = self.searcher
             self.searcher = None
+
+        # Release the dropped searcher's own handles before the embedders it
+        # depended on go away (outside lock, see _shutdown_searcher).
+        self._shutdown_searcher(old_searcher, logger)
 
         # Call cleanup on each embedder to release GPU memory (outside lock)
         for key, embedder in old_embedders.items():
@@ -244,9 +286,18 @@ class ApplicationState:
         - After multi-model batch indexing
         - When search components need to be recreated
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         with self._lock:
+            old_index_manager = self.index_manager
+            old_searcher = self.searcher
             self.index_manager = None
             self.searcher = None
+
+        self._shutdown_searcher(old_searcher, logger)
+        self._close_index_manager(old_index_manager, logger)
 
     def reset_searcher(self) -> None:
         """Reset only the searcher (preserves index_manager).
@@ -255,8 +306,15 @@ class ApplicationState:
         - Search configuration changes (hybrid settings, weights, etc.)
         - Searcher needs refresh but index is still valid
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         with self._lock:
+            old_searcher = self.searcher
             self.searcher = None
+
+        self._shutdown_searcher(old_searcher, logger)
 
     def reset_for_model_switch(self) -> None:
         """Full reset including embedders for model switch.
@@ -265,12 +323,20 @@ class ApplicationState:
         - Switching embedding models
         - Need to reload all model-dependent components
         """
-        # clear_embedders() acquires _lock internally to snapshot+null embedders.
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # clear_embedders() acquires _lock internally to snapshot+null
+        # embedders and shuts down+nulls the searcher.
         self.clear_embedders()
         # Null index_manager under lock as a separate step (searcher already
         # nulled by clear_embedders).
         with self._lock:
+            old_index_manager = self.index_manager
             self.index_manager = None
+
+        self._close_index_manager(old_index_manager, logger)
 
     def __repr__(self) -> str:
         return (

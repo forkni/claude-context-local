@@ -40,6 +40,7 @@ Performance:
 import logging
 import mmap
 import struct
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -48,6 +49,78 @@ from search.symbol_cache import SymbolHashCache
 
 
 logger = logging.getLogger(__name__)
+
+
+def _open_shared_delete(path: Path):
+    """Open ``path`` for reading so a *different* handle can unlink it later.
+
+    On POSIX, unlinking a file that is still mmap'd (by this or another
+    process) always succeeds -- the directory entry is removed, the mapping
+    stays valid until unmapped, and Python's plain ``open()`` already gets
+    this for free.
+
+    On Windows, ``open()``/``CreateFileW`` defaults to a share mode that
+    excludes deletion, so a second ``CodeIndexManager`` instance mapping the
+    same ``code_vectors.mmap`` blocks ``os.unlink()``/``Path.unlink()`` calls
+    made by *this* instance (and vice versa) with ``PermissionError:
+    [WinError 32]`` -- this is this repo's recurring mmap-handle failure
+    (see docs/adr/0025-clear-index-directory-in-place.md). Opening with
+    ``FILE_SHARE_DELETE`` makes Windows behave like POSIX: the file can be
+    unlinked (or replaced by unlink-then-create, see ``save()``) while this
+    handle's mapping stays live and readable.
+
+    Falls back to a plain ``open()`` if the Win32 call fails for any reason
+    -- the mmap path is a performance optimization, not a correctness
+    requirement (callers fall back to FAISS ``reconstruct()``).
+    """
+    if sys.platform != "win32":
+        return open(path, "rb")  # noqa: SIM115 - file handle stored for mmap
+
+    try:
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        generic_read = 0x80000000
+        file_share_read = 0x00000001
+        file_share_write = 0x00000002
+        file_share_delete = 0x00000004
+        open_existing = 3
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.CreateFileW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
+
+        handle = kernel32.CreateFileW(
+            str(path),
+            generic_read,
+            file_share_read | file_share_write | file_share_delete,
+            None,
+            open_existing,
+            0,
+            None,
+        )
+        if handle == wintypes.HANDLE(-1).value:
+            raise OSError(f"CreateFileW failed with error {ctypes.get_last_error()}")
+
+        # open_osfhandle transfers ownership of `handle` to the fd; the
+        # resulting file object's close() releases it -- no separate
+        # CloseHandle call needed or wanted.
+        fd = msvcrt.open_osfhandle(handle, 0)  # 0 == O_RDONLY
+        return open(fd, "rb")  # noqa: SIM115 - file handle stored for mmap
+    except OSError as e:
+        logger.debug(
+            f"Falling back to plain open() for {path} (share-delete open failed: {e})"
+        )
+        return open(path, "rb")  # noqa: SIM115 - file handle stored for mmap
 
 
 class MmapVectorStorage:
@@ -137,6 +210,18 @@ class MmapVectorStorage:
         # Ensure parent directory exists
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Unlink any existing file before writing a fresh one, rather than
+        # truncating it in place. On Windows, a truncating open() (and a
+        # replace-over via os.replace()) both still fail with WinError 32
+        # against a file another CodeIndexManager instance has mmap'd via
+        # _open_shared_delete() above -- share-delete only unblocks
+        # unlink(), not truncation. unlink-then-create leaves any existing
+        # foreign mapping reading the old (now nameless-but-still-open)
+        # file contents until it closes, while this call writes the new
+        # generation under the same path with no delete-pending conflict.
+        if self._path.exists():
+            self._path.unlink()
+
         with open(self._path, "wb") as f:
             # Write header
             f.write(self.MAGIC)
@@ -165,7 +250,7 @@ class MmapVectorStorage:
             return False
 
         try:
-            self._file = open(self._path, "rb")  # noqa: SIM115 - file handle stored for mmap
+            self._file = _open_shared_delete(self._path)
             self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
 
             # Validate header

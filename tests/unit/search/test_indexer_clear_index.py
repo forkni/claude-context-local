@@ -317,3 +317,38 @@ class TestCloseReleasesFaissMmapHandle:
 
         assert manager2._faiss_index._mmap_storage is None
         assert not manager2._faiss_index._mmap_path.exists()
+
+    def test_second_manager_can_save_and_clear_while_first_still_mapped(self, tmp_path):
+        """The save-after-load shape: before this fix, nothing exercised a
+        second manager's save_index() (FaissVectorIndex.save()'s
+        below-MMAP_THRESHOLD delete-mmap branch, faiss_index.py's
+        unprotected ``self._mmap_path.unlink()``) against a *foreign* live
+        mapping -- every existing regression test here went straight to
+        clear_index() without a save() in between. That's the exact gap
+        that let the 2026-08-28 fix (releasing only this instance's own
+        handle) look complete while the bug kept recurring through
+        whichever door still had two live instances and no closed handle.
+
+        Unlike ``test_close_lets_a_second_manager_clear_the_shared_mmap_file``,
+        manager1 is never closed at all here -- its live mapping must not
+        block manager2's save() or its later clear_index().
+        """
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        self._plant_index_with_mmap(storage_dir)
+
+        manager1 = CodeIndexManager(storage_dir=str(storage_dir))
+        manager2 = CodeIndexManager(storage_dir=str(storage_dir))
+        assert manager1._faiss_index._mmap_storage is not None
+        assert manager2._faiss_index._mmap_storage is not None
+
+        # manager1 is deliberately never closed -- both of manager2's calls
+        # below must succeed despite manager1's foreign live mapping.
+        manager2.save_index()
+        assert not manager2._faiss_index._mmap_path.exists(), (
+            "save() below MMAP_THRESHOLD deletes the stale mmap file -- "
+            "that unlink must not be blocked by manager1's mapping"
+        )
+
+        manager2.clear_index()
+        assert manager2._faiss_index._mmap_storage is None

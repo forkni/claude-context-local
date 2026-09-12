@@ -1,11 +1,13 @@
 """Unit tests for MmapVectorStorage."""
 
 import struct
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from search.mmap_vectors import MmapVectorStorage
 from search.symbol_cache import SymbolHashCache
@@ -255,6 +257,79 @@ class TestMmapVectorStorage(unittest.TestCase):
         # Trigger destructor
         del storage
         # No assertion - just verify no errors
+
+    # === Windows Share-Delete Tests ===
+    #
+    # These lock in the WinError-32 fix (docs/adr/0025-clear-index-directory-in-place.md):
+    # a second CodeIndexManager mapping the same code_vectors.mmap must not
+    # block a delete/rewrite done by a different instance. Both tests are
+    # win32-specific because POSIX already unlinks mapped files freely --
+    # there is nothing to regress-guard there.
+
+    @pytest.mark.skipif(
+        sys.platform != "win32", reason="only Windows has a share-mode to prove here"
+    )
+    def test_second_instance_can_unlink_file_while_first_still_mapped(self):
+        """A foreign live mapping must not block unlinking the file.
+
+        ``_open_shared_delete`` opens with ``FILE_SHARE_DELETE`` so a second
+        instance's ``os.unlink()`` succeeds even while a first instance keeps
+        its mapping live -- matching POSIX unlink-of-mapped-file semantics.
+        """
+        storage = MmapVectorStorage(self.test_file, self.dimension)
+        embeddings = np.random.randn(5, self.dimension).astype(np.float32)
+        chunk_ids = [f"file{i}.py:1-10:function:func{i}" for i in range(5)]
+        storage.save(embeddings, chunk_ids)
+
+        instance1 = MmapVectorStorage(self.test_file, self.dimension)
+        self.assertTrue(instance1.load())
+
+        # instance1 is deliberately left open -- unlink must succeed anyway.
+        self.test_file.unlink()
+        self.assertFalse(self.test_file.exists())
+
+        # instance1's mapping keeps serving its old bytes until it is
+        # separately closed.
+        retrieved = instance1.get_vector(0)
+        np.testing.assert_array_almost_equal(retrieved, embeddings[0], decimal=5)
+
+        instance1.close()
+
+    @pytest.mark.skipif(
+        sys.platform != "win32", reason="only Windows has a share-mode to prove here"
+    )
+    def test_save_succeeds_over_a_live_foreign_mapping(self):
+        """save() must succeed (via unlink-then-create) even when a
+        different instance still has the previous generation mapped.
+
+        A truncating rewrite or ``os.replace()`` both still fail with a live
+        foreign mapping on Windows (verified via a ctypes spike during
+        diagnosis) -- only unlink-then-create survives it. Write-side
+        companion to
+        ``test_second_instance_can_unlink_file_while_first_still_mapped``.
+        """
+        embeddings = np.random.randn(5, self.dimension).astype(np.float32)
+        chunk_ids = [f"file{i}.py:1-10:function:func{i}" for i in range(5)]
+        MmapVectorStorage(self.test_file, self.dimension).save(embeddings, chunk_ids)
+
+        foreign = MmapVectorStorage(self.test_file, self.dimension)
+        self.assertTrue(
+            foreign.load()
+        )  # never closed here -- must not block the rewrite
+
+        writer = MmapVectorStorage(self.test_file, self.dimension)
+        embeddings2 = np.random.randn(3, self.dimension).astype(np.float32)
+        chunk_ids2 = [f"other{i}.py:1-10:function:func{i}" for i in range(3)]
+        writer.save(embeddings2, chunk_ids2)  # must not raise WinError 32/5
+
+        reader = MmapVectorStorage(self.test_file, self.dimension)
+        self.assertTrue(reader.load())
+        self.assertEqual(reader.count, 3)
+        retrieved = reader.get_vector(0)
+        np.testing.assert_array_almost_equal(retrieved, embeddings2[0], decimal=5)
+
+        foreign.close()
+        reader.close()
 
     # === Custom Indices Tests ===
 
