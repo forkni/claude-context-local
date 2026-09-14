@@ -1573,7 +1573,7 @@ class CallGraphConfig:
     in the ``chunking/relationships/`` package; only resolvers that are also
     *available* (i.e. their optional dependency is installed) are executed::
 
-        "pyan"   → PyanResolver   (pyan3>=2.6.0, optional extra [callgraph])
+        "pyan"   → PyanResolver   (pyan3>=2.8.0, optional extra [callgraph])
         "libcst" → LibCSTResolver (libcst>=1.8.6, optional extra [callgraph])
 
     Stage 3 (LSP/basedpyright) is governed **solely** by ``lsp_enabled``

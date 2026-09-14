@@ -433,7 +433,7 @@ The project uses a clean separation between runtime and development dependencies
 
 | Extra | Packages | Adds |
 |-------|----------|------|
-| `[callgraph]` | `pyan3>=2.6.0`, `libcst>=1.8.6` | pyan (0.75 confidence) + LibCST FQN resolver (0.90 confidence) |
+| `[callgraph]` | `pyan3>=2.8.0`, `libcst>=1.8.6` | pyan (0.75 confidence) + LibCST FQN resolver (0.90 confidence) |
 | `[lsp]` | `basedpyright>=1.21` | basedpyright LSP resolver (0.98 confidence; `lsp_enabled=true` by default, no-ops until this extra is installed) |
 
 The core install (no extras) uses only the in-house AST resolver (0.5/0.7 confidence).

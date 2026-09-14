@@ -112,6 +112,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pyan tier silently zeroed on every index since 2026-09-02** — `f5acd585` migrated
+  `chunking/relationships/external_call_graph.py`'s `_TrackedVisitor.postprocess()` to pyan3
+  2.8's postprocessor pipeline (`cull_inherited` dropped, `cull_subsumed` added), but the venv
+  was never re-synced to `uv.lock` and stayed on pyan3 2.6.2. The `cull_subsumed` import lived
+  *inside* `postprocess()` (a method body), not at module scope, so the module-level
+  `try/except ImportError` guard around `pyan.analyzer.CallGraphVisitor` still succeeded and
+  `pyan_available()` kept reporting the tier as usable; the real `ImportError` only fired deep
+  inside a resolver subprocess the first time `postprocess()` actually ran
+  (`chunking/relationships/call_edge_resolver.py:_resolve_in_subprocess`), where it was
+  swallowed as "non-fatal" — every index silently lost the pyan cross-module edge tier (libcst
+  only) for 12 days / 94 commits / six canon re-baselines (09-03 → 09-08), none of which
+  detected it because the venv drift had also broken `pytest-timeout` and made the local test
+  suite uncollectable since 2026-08-20. Fixed on two levels: (1) `uv sync --extra callgraph
+  --extra test --extra otel` to bring the venv back to `uv.lock` (pyan3 2.8.1); (2) the
+  `pyan.postprocessor` import moved to module scope so a *future* API mismatch (any pyan3
+  version whose postprocessor doesn't match what this module needs) flips `pyan_available()` to
+  False at import time with an actionable `pyan_unavailable_reason()` message (names the
+  installed version, the required floor, and the `uv sync` fix) instead of failing lazily and
+  silently inside a subprocess. `pyproject.toml`'s `pyan3` floor raised `>=2.6.0` → `>=2.8.0`
+  to match. A same-model (bge-m3) Leg A (pyan off) / Leg B (pyan on) A/B on this fix showed
+  +0.006 MRR, no regression — see `evaluation/CANON_20260914_REBASELINE.md`, which also
+  documents an unrelated finding surfaced during the same investigation: the prior canon
+  lineage back to 2026-07-26 was measured on `codefuse-ai/F2LLM-v2-0.6B`, not the `BAAI/bge-m3`
+  this (VRAM-constrained) machine runs, making the two canon lineages non-comparable.
 - **Methods of a decorated class were never chunked at all** (ADR-0063). `decorated_definition`
   was splittable but not a container (`chunking/languages/base.py`), so `@dataclass class Foo: def
   bar(self): ...` chunked the whole decorated class as one opaque blob — `bar` never surfaced as
@@ -324,6 +348,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   condition (raise the floor once nltk publishes >3.10.3); Dependabot alert #33 dismissed
   `not_used`. The predecessor deferral for CVE-2026-12243 no longer flags on 3.10.3 and was
   folded into the same ledger entry.
+
 ### Fixed
 
 - **Flaky HF Hub model-existence check** (`embeddings/model_loader.py`) — `ModelLoader.load()`
