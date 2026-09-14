@@ -55,6 +55,7 @@ unmatched id silently degrades to "no edge added".
 from __future__ import annotations
 
 import ast
+import importlib.metadata
 import logging
 import time
 from collections.abc import Callable, Iterator
@@ -341,10 +342,8 @@ try:
 except ImportError as _pyan_import_error:
     _PYAN_AVAILABLE = False
     try:
-        import importlib.metadata as _importlib_metadata
-
-        _pyan_installed_version = _importlib_metadata.version("pyan3")
-    except _importlib_metadata.PackageNotFoundError:
+        _pyan_installed_version = importlib.metadata.version("pyan3")
+    except importlib.metadata.PackageNotFoundError:
         _pyan_installed_version = None
     _PYAN_VERSION_MISMATCH = _pyan_installed_version is not None
     if _pyan_installed_version is None:
