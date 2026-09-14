@@ -103,3 +103,21 @@ confound. Config defaults (`search/config.py`) diffed clean between `f8548812` a
   different (≥12 GB VRAM) machine.
 
 Supersedes nothing in the F2LLM lineage. Establishes the bge-m3 lineage.
+
+## Substrate changed after this pin (2026-09-14, same day)
+
+Later the same day, the `[lsp]` extra was installed (`uv sync --extra callgraph --extra test
+--extra otel --extra lsp`, `basedpyright==1.39.10`) and the Stage-3 LSP resolver tier — dormant on
+this machine until now — came online. `lsp_enabled` was already `true`; installing the binary was
+sufficient, no config change. Post-install, a force reindex on this project's own index moved the
+resolver mix from **two tiers** (pyan 865 @0.75, libcst 2295 @0.90) to **three**
+(lsp 1960 @0.98, libcst 759 @0.90, pyan 556 @0.75) — libcst/pyan counts fell because LSP *upgrades*
+edges those tiers already found, not because it lost coverage.
+
+**The 63q/133q/F-sim numbers above (0.702 / 0.514 / 0.728) were measured with the LSP tier absent.**
+They remain valid as the two-tier bge-m3 baseline but are **not comparable** to any future
+measurement taken with LSP live. Per the "install + verify only" scope decision for that follow-up
+work, no retrieval A/B gate or re-pin was run this session — the LSP tier's effect on MRR/recall on
+this substrate is **unmeasured**. Do not assume the tier is retrieval-neutral just because the pyan
+tier was; that inference has not been tested here. The next re-pin on this machine should gate the
+three-tier substrate against this two-tier pin as its control.

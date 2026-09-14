@@ -460,8 +460,10 @@ whatever `--extra`/`--all-extras` flags were passed on that invocation, so re-ru
 "callgraph but not lsp" combination — `install-windows.cmd` option [4] (`--all-extras`) is the only
 documented path that installs `[lsp]`, and it pulls `test`, `dev`, `callgraph`, `otel`, and `gpu`
 alongside it. If you only want `[lsp]` added to an existing `uv`-managed environment without
-touching the others, use `uv sync --extra callgraph --extra lsp` explicitly rather than a bare
-`uv sync` or a plain `pip install`.
+touching the others, name **every** extra you currently have installed alongside `lsp` — check
+`uv pip list` first if unsure. For the common `test` + `callgraph` + `otel` environment, that's
+`uv sync --extra callgraph --extra test --extra otel --extra lsp`; omitting any of those from the
+command prunes it just the same as a bare `uv sync` would.
 
 To install with test dependencies:
 

@@ -156,7 +156,19 @@ evaluation = ["*.json", "*.md"]
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-09-14 (`/diagnose` on a reported `pyan.postprocessor.cull_subsumed` ImportError
+# Last audit: 2026-09-14 (Stage-3 LSP resolver tier brought online: `uv sync --extra callgraph
+#             --extra test --extra otel --extra lsp` installed `basedpyright==1.39.10` (2 packages,
+#             uv.lock unchanged — already pinned). `lsp_enabled` was already `true` in
+#             `search_config.json`; Stage 3 is gated solely on that flag, not on the `resolvers`
+#             list (ADR-0032 §D3), so no config edit was needed. Force reindex confirmed
+#             `Dispatching 3 resolver(s)`, `lsp: 1960 edges -> added=113, upgraded=1847`, no
+#             silent-zero-edge path (`[LSP] No edges produced` warning absent), no budget
+#             truncation (51.5s resolve vs 180s floor). resolver_source mix: lsp 1960 @0.98,
+#             libcst 759 @0.90, pyan 556 @0.75 (libcst/pyan counts fell as expected — LSP
+#             upgrades, not losses). Install + verify only per user scope; the retrieval A/B gate
+#             and canon re-pin on this three-tier substrate are deferred (see the note appended to
+#             `evaluation/CANON_20260914_REBASELINE.md`).
+# Previous audit: 2026-09-14 (`/diagnose` on a reported `pyan.postprocessor.cull_subsumed` ImportError
 #             — root cause: the venv was never synced after `f5acd585` (2026-09-02) bumped pyan3 to
 #             the 2.8 postprocessor API; `.venv` was still on pyan3 2.6.2 and 34 packages behind
 #             `uv.lock` overall (dist-infos dated 2026-07-30->08-12, `pytest-timeout` missing

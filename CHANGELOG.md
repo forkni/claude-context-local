@@ -136,6 +136,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documents an unrelated finding surfaced during the same investigation: the prior canon
   lineage back to 2026-07-26 was measured on `codefuse-ai/F2LLM-v2-0.6B`, not the `BAAI/bge-m3`
   this (VRAM-constrained) machine runs, making the two canon lineages non-comparable.
+- **Stage-3 LSP resolver tier brought online (install + verify).** Every index had been logging
+  `[RESOLVERS] lsp resolver unavailable (optional dep missing)` — the `[lsp]` extra
+  (`basedpyright>=1.21`) was never installed on this machine, so the highest-confidence resolver
+  tier (`ResolverConfidence.LSP = 0.98`, above libcst 0.90 and pyan 0.75) never dispatched.
+  `uv sync --extra callgraph --extra test --extra otel --extra lsp` installed
+  `basedpyright==1.39.10` (2 packages, `uv.lock` unchanged — already pinned). `lsp_enabled` was
+  already `true` in `search_config.json`; Stage 3 is gated solely on that flag, not on the
+  `resolvers` list (ADR-0032 §D3), so no config edit was needed. A force reindex confirmed
+  `Dispatching 3 resolver(s)`, `[RESOLVERS] lsp: 1960 edges → added=113, upgraded=1847`, no
+  silent-zero-edge path (the `[LSP] No edges produced` warning stayed absent) and no budget
+  truncation (51.5s resolve vs the 180s floor). Resulting `resolver_source` mix: lsp 1960 @0.98,
+  libcst 759 @0.90, pyan 556 @0.75 — libcst/pyan counts fell as expected, since LSP merges last
+  and upgrades edges the lower tiers already found rather than losing coverage. Scoped to install
+  + verify only; the retrieval A/B gate and canon re-pin on this three-tier substrate are
+  deferred — see the note appended to `evaluation/CANON_20260914_REBASELINE.md`.
 - **Methods of a decorated class were never chunked at all** (ADR-0063). `decorated_definition`
   was splittable but not a container (`chunking/languages/base.py`), so `@dataclass class Foo: def
   bar(self): ...` chunked the whole decorated class as one opaque blob — `bar` never surfaced as
