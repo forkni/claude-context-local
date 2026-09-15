@@ -555,7 +555,19 @@ investigation. LSP gate: **PASS on all three views**, `lsp_enabled` stays on.
   regression — see the canon doc), F-via-similar ΔMRR −0.0136 / Δrecall@20 −0.0093. `lsp_enabled`
   stays on as the shipped default. bge-m3 canon-of-record with LSP live: 63q **0.688**, 133q
   **0.511**, F-via-similar **0.712** — not a regression against the 09-14 two-tier pin above; a
-  different (larger) corpus generation, non-comparable per that pin's own note.
+  different (larger) corpus generation, non-comparable per that pin's own note. Superseded by the
+  gold-dataset correction re-pin immediately below.
+- **Gold-dataset correction re-pin, 2026-09-14 (Phase 5, same day)** — three gold defects found
+  during the LSP gate's Q56 investigation were corrected (`evaluation/golden_dataset.json` /
+  `_expanded.json`, 2026-09-14 changelog): Q56's `decorated_definition:CodeIndexManager.index`
+  demoted grade 3→2 (a 4-line `@property` pass-through, not co-primary); Q70 gained
+  `CSharpChunker.__init__` / `GLSLChunker.__init__` at grade 3 (concrete chunker initializers
+  identical in shape to the already-graded-3 ones, previously penalizing correct hits); Q94 gained
+  `CodeGraphStorage.add_node` at grade 3 (closer chunk-insertion analogue to the anchor than the
+  graded-2 edge-adders). Re-scored on the **same, unchanged** leg-B index (no reindex) — this is a
+  declared comparability break against the corrected answer key, **not** a second LSP A/B gate:
+  63q **0.6885**, 133q **0.5111**, F-via-similar **0.7276** (`evaluation/CANON_20260914B_LSP_REBASELINE.md`'s
+  "Gold-dataset correction re-pin" section). This is the current bge-m3 canon-of-record.
 - The 2026-07-28 golden-dataset repair (`6df36db`) changed scoring for 3-part `split_block` chunks; nothing measured before that commit is comparable to what's measured after.
 - The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D); the 2026-08-04 top-up grew it further to 147 (133 non-D). H queries are harder by construction (single-file, ≤2 golds), so treat each generation's figure as a separate measurement, not a before/after comparison.
 - `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, the SDK v2 migration, and every re-pin since; kept only for continuity.

@@ -138,3 +138,37 @@ a single-query benchmark-harness artifact unrelated to the LSP tier, not a genui
    above via Q56) that should be root-caused separately; it is not currently believed to bias
    aggregate gate verdicts beyond single-query noise, but future gates with borderline metrics
    should check the dominant movers the same way before accepting a FAIL.
+
+## Gold-dataset correction re-pin (Phase 5, same day)
+
+The Q56/Q70/Q94 gold defects identified during the investigation above (see "Q56 investigation"
+and the plan's Context section) are corrected in `evaluation/golden_dataset.json` and
+`evaluation/golden_dataset_expanded.json` (2026-09-14 changelog entries):
+
+- **Q56**: `decorated_definition:CodeIndexManager.index` demoted grade 3 → 2, removed from
+  `expected_primary` — a 4-line `@property` pass-through is not co-primary with the class overview.
+- **Q70**: added `CSharpChunker.__init__` and `GLSLChunker.__init__` at grade 3 — concrete
+  chunker initializers with identical signatures to the already-graded-3 cpp/javascript/c ones.
+- **Q94**: added `CodeGraphStorage.add_node` at grade 3 — a closer chunk-insertion analogue to
+  the anchor (`GraphIntegration.add_chunk`) than the already-graded-2 edge-adders.
+
+Re-run on the **unchanged** leg-B substrate (three-tier, `lsp_enabled: true`, same 238 files /
+2,998 chunks, `git_sha` now `12f547b3` at Phase 4 commit, tree dirty with this correction) — no
+reindex, same index used for the LSP gate above:
+
+| Dataset | Queries | MRR (gate pin) | MRR (gold-corrected) | file |
+|---|---|---|---|---|
+| Canonical (63q) | 63 | 0.688 | **0.6885** | `canon_63q.json` |
+| Expanded (133q, non-D) | 133 | 0.5109 | **0.5111** | `canon_133q.json` |
+| F-via-similar (63q) | 63 | 0.712 | **0.7276** | `canon_fsim_63q.json` |
+
+Movement is small (3 of 63/133 queries touched) and in the expected direction (F-via-similar up
+the most, since Q70's two new grade-3 golds are in that view's denominator and were already being
+retrieved — `find_similar_code` was being penalized for correct hits). **This is a declared
+comparability break, not a regression or a second LSP gate**: the same index, same `lsp_enabled`
+setting, and same code are being re-scored against a corrected answer key. Do not diff these
+numbers against the LSP gate table above and read the delta as an LSP effect.
+
+`scripts/benchmark/audit_golden_dataset.py` now also warns (non-blocking) when a gold-referenced
+file has changed since the dataset's own last commit — a hint for future re-reads, not a
+correctness check. Both datasets remain CLEAN (every gold ID resolves against the live index).
