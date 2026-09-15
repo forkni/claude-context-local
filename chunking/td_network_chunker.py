@@ -12,14 +12,16 @@ Only reached when ``chunking.language_registry.td_network_indexing_enabled()`` i
 True (checked by the caller, ``MultiLanguageChunker.chunk_file``) -- this module has
 no gate of its own.
 
-Schema: derived directly from ``TD_Glossary_tox``'s ``Scripts/dat_NetworkGraphExt.py``
-(the real, not-yet-run, Part B exporter), not invented. See
-``docs/adr/0062-td-network-indexing.md`` and
+Schema: derived directly from ``TD_Glossary_tox``'s
+``Extensions/OperatorGlossary/dat_NetworkGraphExt.py`` exporter, not invented. See
+``docs/adr/0062-td-network-indexing.md``, ``docs/adr/0072-td-edge-type-vocabulary-is-
+declared-and-drift-tested.md``, and
 ``tests/fixtures/td_network/Test_network.tdgraph.json`` for the authoritative shape:
 ``schema_version`` (int), ``target``, ``nodes`` (``stub: true`` for out-of-subtree
-placeholders), ``edges`` (11 types), ``classes`` (``{mro, signature}`` per class
-actually instantiated by a node -- *not* every class in ``mro``), ``scripts``,
-``tag_groups``, ``node_line_spans``, ``edge_types``, ``stats``.
+placeholders), ``edges`` (13 types -- see ``TD_GRAPH_EDGE_TYPES`` below),
+``classes`` (``{mro, signature}`` per class actually instantiated by a node -- *not*
+every class in ``mro``), ``scripts``, ``tag_groups``, ``node_line_spans``,
+``edge_types``, ``stats``.
 
 Emits three chunk_type kinds, all ``language="td_network"``, ids built exclusively
 via ``search/chunk_id.py::build()`` (never hand-rolled) and always carrying a real
@@ -91,7 +93,62 @@ _SIMPLE_EDGE_MAP: dict[str, tuple[RelationshipType, tuple[str, ...]]] = {
     "shortcut_ref": (RelationshipType.REFERENCES_OP, ("shortcut",)),
     # host op -> the DAT that scripts it (par="callbacks"|"op"|..., via="callbacks"|"execute")
     "scripted_by": (RelationshipType.SCRIPTED_BY, ("par", "via")),
+    # clone COMP -> its Clone Master (ADR-0072). No extra metadata keys: the
+    # producer's clone edge shape is exactly {"type": "clone", "src", "dst"}
+    # (dat_NetworkGraphExt._emit_clone_edge) -- no "par" field like the other
+    # simple types. The master may be a stub node (out-of-scope utility op,
+    # e.g. the built-in annotateCOMP's master); chunk_id_for already resolves
+    # that to a phantom node, same as any other unindexed target.
+    "clone": (RelationshipType.CLONES, ()),
 }
+
+# Edge types handled by an explicit ``if``/``elif`` branch in
+# _build_relationship_edges below rather than through _SIMPLE_EDGE_MAP --
+# "contains" (network-vs-nested source), "wire"/"comp_wire" (dst_index/carries
+# metadata), "dock" (reversed direction), "script_ref" (dst-null dropping),
+# "replicator", and "shared_tag" (dual-direction emission). Kept as a literal
+# constant next to the dispatch it describes so TD_GRAPH_EDGE_TYPE_SET's
+# handled-set test (tests/unit/chunking/test_td_network_edge_vocabulary.py)
+# doesn't need a second, independently-maintained copy of this list living in
+# the test file -- if a branch is added or removed here, this constant must
+# move with it, in the same diff.
+_EXPLICIT_BRANCH_EDGE_TYPES: frozenset[str] = frozenset(
+    {"contains", "wire", "comp_wire", "dock", "script_ref", "replicator", "shared_tag"}
+)
+
+# The full producer edge-type vocabulary, in the same canonical order as
+# TD_Glossary_tox's ``Extensions/OperatorGlossary/tdgraph_contract.py``
+# ``GRAPH_EDGE_TYPES`` (which drives every ``edge_types[]`` histogram a real
+# export writes -- see that module's docstring and
+# ``tests/test_tdgraph_edge_types_contract.py`` in that repo). The two
+# vocabularies must change in lockstep: adding a 14th producer edge type
+# without adding it here is exactly the drift this constant exists to catch
+# (ADR-0072). Order is asserted, not just membership -- see
+# test_td_network_edge_vocabulary.py.
+TD_GRAPH_EDGE_TYPES: tuple[str, ...] = (
+    "contains",
+    "wire",
+    "comp_wire",
+    "dock",
+    "scripted_by",
+    "par_ref",
+    "bind",
+    "export",
+    "clone",
+    "script_ref",
+    "shortcut_ref",
+    "replicator",
+    "shared_tag",
+)
+TD_GRAPH_EDGE_TYPE_SET: frozenset[str] = frozenset(TD_GRAPH_EDGE_TYPES)
+
+# The ``schema_version`` this chunker was written against, mirroring
+# TD_Glossary_tox's ``tdgraph_contract.GRAPH_SCHEMA_VERSION``. That module's
+# docstring defines the contract: additive fields never bump it; a removal,
+# rename, or type change does. Checked (not enforced) at ingestion time --
+# see chunk_file() -- so an export from a newer/older producer schema is
+# ingested with a loud warning instead of silently, rather than rejected.
+TD_GRAPH_SCHEMA_VERSION = 1
 
 
 def _resolve_script_file(
@@ -184,6 +241,17 @@ class TDNetworkChunker:
 
         if relative_path is None:
             relative_path = self._compute_relative_path(file_path)
+
+        schema_version = graph.get("schema_version")
+        if schema_version != TD_GRAPH_SCHEMA_VERSION:
+            logger.warning(
+                "%s declares schema_version=%r, this chunker was written "
+                "against %r -- ingesting anyway, but the shape may have "
+                "changed (see TD_Glossary_tox's tdgraph_contract.py)",
+                file_path,
+                schema_version,
+                TD_GRAPH_SCHEMA_VERSION,
+            )
 
         node_spans, class_spans = _json_element_spans(text)
         total_lines = text.count("\n") + (0 if text.endswith("\n") else 1)
@@ -320,6 +388,17 @@ class TDNetworkChunker:
                 target,
             )
         )
+        if unresolved_script_refs:
+            # Previously surfaced only as prose inside the network chunk's
+            # body (see _build_network_chunk below) -- invisible to anyone
+            # not reading chunk text. A script_ref with a null dst means the
+            # exporter couldn't resolve a DAT's callback to a project file.
+            logger.warning(
+                "%s: %d unresolved script reference(s) in network %r",
+                file_path,
+                unresolved_script_refs,
+                target,
+            )
         self._add_script_file_edges(
             real_nodes, op_chunk_id, file_path, relative_path, relationships_by_source
         )
@@ -449,6 +528,18 @@ class TDNetworkChunker:
                 continue
             source_id = op_chunk_id[n["id"]]
             target_id = build_chunk_id(rel_py, 0, 0, "module", Path(rel_py).stem)
+            meta = {
+                "td_edge_type": "scripted_by",
+                "via": "file",
+                "file": rel_py,
+                "synced": bool(script.get("synced")),
+                "resolver_source": _RESOLVER_SOURCE,
+            }
+            # Sync Manifest join (schema optional -- omitted by older exports):
+            # "this .py's content on disk still matches the DAT's contents",
+            # independent of "synced" (which means "the sync tool has run").
+            if "file_matches_dat" in script:
+                meta["file_matches_dat"] = bool(script["file_matches_dat"])
             by_source[source_id].append(
                 RelationshipEdge(
                     source_id=source_id,
@@ -456,13 +547,7 @@ class TDNetworkChunker:
                     relationship_type=RelationshipType.SCRIPTED_BY,
                     line_number=0,
                     confidence=_RESOLVED_CONFIDENCE,
-                    metadata={
-                        "td_edge_type": "scripted_by",
-                        "via": "file",
-                        "file": rel_py,
-                        "synced": bool(script.get("synced")),
-                        "resolver_source": _RESOLVER_SOURCE,
-                    },
+                    metadata=meta,
                 )
             )
             emitted += 1
@@ -516,6 +601,25 @@ class TDNetworkChunker:
         for e in edges:
             etype = e.get("type")
             src, dst = e.get("src"), e.get("dst")
+
+            # A null dst is only meaningful for "script_ref" (an unresolved
+            # op_call target -- handled explicitly below, dropped and counted
+            # into unresolved_script_refs). No real export has ever emitted a
+            # null dst on any other type (verified against all TD_Glossary_tox
+            # exports and the schema's other edge shapes), but the schema does
+            # not forbid it, and chunk_id_for(None) -> _relative_op_path(None,
+            # target) raises AttributeError, which multi_language_chunker's
+            # blanket except then turns into a silent whole-file chunk loss.
+            # Guard here instead of trusting that invariant to hold forever.
+            if dst is None and etype != "script_ref":
+                logger.warning(
+                    "td_network: edge type %r has a null dst (only script_ref "
+                    "is expected to) in network %r; skipping edge src=%r",
+                    etype,
+                    target,
+                    src,
+                )
+                continue
 
             if etype == "contains":
                 # Root-sourced contains edges attach to the network chunk (the
@@ -628,7 +732,13 @@ class TDNetworkChunker:
                 add(chunk_id_for(src), chunk_id_for(dst), rtype, 0, meta)
 
             else:
-                logger.debug("Unrecognized .tdgraph.json edge type %r, skipped", etype)
+                # A silently-dropped edge type at DEBUG is what let "clone" sit
+                # unhandled for a full release (ADR-0072) -- WARNING catches it
+                # in the field; the vocabulary-drift test
+                # (test_td_network_edge_vocabulary.py) catches it in CI.
+                logger.warning(
+                    "Unrecognized .tdgraph.json edge type %r, skipped", etype
+                )
 
         # Class hierarchy: each class inherits from the first entry after itself
         # in its own mro (mro[0] is always the class itself).

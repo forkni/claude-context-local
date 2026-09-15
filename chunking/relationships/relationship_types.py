@@ -1,7 +1,7 @@
 """
 Relationship types and edge representations for Phase 3.
 
-This module defines the 29 relationship types used in code graph analysis
+This module defines the 30 relationship types used in code graph analysis
 and provides a unified data structure for relationship edges.
 
 Core Relationship Types (Priority 1-3):
@@ -38,6 +38,7 @@ TouchDesigner Network Relationships (ADR-0062, Priority 6):
 - exports_to: Parameter export targets another operator's channel
 - scripted_by: Operator's script callback lives in a script module chunk
 - shares_tag: Two operators share a user tag (symmetric)
+- clones: Clone COMP -> its Clone Master (ADR-0072)
 
 Edge Direction:
 - Source (source_id): The code chunk creating the relationship
@@ -106,6 +107,7 @@ class RelationshipType(Enum):
     EXPORTS_TO = "exports_to"  # Parameter export
     SCRIPTED_BY = "scripted_by"  # DAT operator's callback -> script module chunk
     SHARES_TAG = "shares_tag"  # Two operators share a user tag (symmetric)
+    CLONES = "clones"  # Clone COMP -> its Clone Master (ADR-0072)
 
     @classmethod
     def from_string(cls, type_str: str) -> Optional["RelationshipType"]:
@@ -166,6 +168,7 @@ class RelationshipType(Enum):
                 cls.EXPORTS_TO,
                 cls.SCRIPTED_BY,
                 cls.SHARES_TAG,
+                cls.CLONES,
             ],
         }
 
@@ -485,6 +488,7 @@ def get_relationship_field_mapping() -> dict[str, tuple]:
         # Symmetric relation: same field name both directions (see graph/schema.py's
         # REVERSE_RELATIONS, which self-reverses "shares_tag" for the same reason).
         "shares_tag": ("shares_tag_with", "shares_tag_with"),
+        "clones": ("clones", "cloned_by"),
     }
 
 

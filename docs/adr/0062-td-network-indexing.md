@@ -348,3 +348,13 @@ project's storage dir (the repo's own `search_config.json` stays off; see `docs/
   per scripted node, 0 python→td_network `calls` edges, `find_path` operator → function) is
   pending a fresh `Synctextdats` → `Exportgraph` run on the TD side; the committed fixture
   covers both paths in unit tests.
+
+---
+
+**Forward pointer (ADR-0072, 2026-09-15):** the producer's edge vocabulary is 13 types, not
+the 11 this ADR's Context section describes (`clone` and `scripted_by` were both undercounted
+here) — the corrected count, the producer's own drift-guard test, and this repo's mirroring
+`TD_GRAPH_EDGE_TYPES` declaration all live in ADR-0072, which also notes the exporter's
+`Scripts/dat_NetworkGraphExt.py` path in this ADR's Context section moved to
+`Extensions/OperatorGlossary/` in 2026-09. This ADR's own history and measurements above are
+left as originally recorded.

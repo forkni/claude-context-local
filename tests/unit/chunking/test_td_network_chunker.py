@@ -4,8 +4,9 @@ Exercises the chunker directly against the hand-built fixture
 ``tests/fixtures/td_network/Test_network.tdgraph.json`` -- see the ADR and
 ``docs/adr/0062-td-network-indexing.md`` for the schema this fixture stands in for
 (shape cross-checked against a real Part B export, ``D:\\dev\\SDTD_040``,
-2026-09-04). The fixture covers every one of the 11 edge types once, plus the
-``dock``/``replicator`` direction-inversion cases documented in
+2026-09-04). The fixture covers every one of the 13 edge types (ADR-0072 added
+``clone``; see ``test_td_network_edge_vocabulary.py`` for the vocabulary drift
+guard), plus the ``dock``/``replicator`` direction-inversion cases documented in
 ``_build_relationship_edges``, and -- like every real export -- carries the
 target COMP itself as a depth-0 node (the "root"), which must never become an
 operator chunk.

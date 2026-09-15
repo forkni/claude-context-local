@@ -25,9 +25,9 @@ from chunking.relationships.relationship_types import (
 
 # Source exercising every relationship type in get_relationship_field_mapping()
 # except "calls" (produced by the call-graph pipeline, not an AST extractor) and
-# the 8 TouchDesigner network types (ADR-0062 -- produced by TDNetworkChunker
-# building RelationshipEdge objects directly from a .tdgraph.json snapshot, not
-# by an AST extractor walking Python source).
+# the 9 TouchDesigner network types (ADR-0062 + ADR-0072 -- produced by
+# TDNetworkChunker building RelationshipEdge objects directly from a
+# .tdgraph.json snapshot, not by an AST extractor walking Python source).
 # See test_extractor_roster_covers_every_mapped_relationship_type below.
 _FIXTURE_SOURCE = '''
 import os
@@ -160,6 +160,7 @@ def test_extractor_roster_covers_every_mapped_relationship_type():
         "exports_to",
         "scripted_by",
         "shares_tag",
+        "clones",
     }
     mapped_types = set(get_relationship_field_mapping()) - {"calls"} - td_network_types
     missing = mapped_types - produced_types

@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`RelationshipType.CLONES` + TD edge-vocabulary drift detection** (ADR-0072) —
+  `TDNetworkChunker` silently dropped the producer's `clone` edge (clone COMP → its Clone
+  Master) at DEBUG level; it is now `RelationshipType.CLONES` (`"clones"`/`"cloned_by"`,
+  weight 0.8 — same tier as `docked_to`/`scripted_by`), reachable via
+  `find_connections(relationship_types=["clones"])` like every other TD type. The producer's
+  13-entry edge vocabulary (`tdgraph_contract.GRAPH_EDGE_TYPES` in `TD_Glossary_tox`) is now
+  declared here too — `TD_GRAPH_EDGE_TYPES` / `TD_GRAPH_EDGE_TYPE_SET` in
+  `td_network_chunker.py` — with a CI test asserting the handled set (derived from
+  `_SIMPLE_EDGE_MAP` and the explicit dispatch branches, not a hand-written second list)
+  matches it exactly, mirroring the drift guard the producer already ships
+  (`test_tdgraph_edge_types_contract.py`) and had been waiting on. The unrecognized-edge-type
+  fallback is now `logger.warning` instead of `logger.debug` — the log level that let `clone`
+  sit unhandled for a full release. `tests/fixtures/td_network/Test_network.tdgraph.json`'s
+  `edge_types` histogram is rebuilt to the full, faithful 13-entry shape (zeros included,
+  matching what a real export always writes) and gained two `clone` edges, one to an in-scope
+  master and one to a new stub node (the built-in `annotateCOMP` utility-node case). Also
+  closes three small silent-ingestion gaps found while auditing the path: a null-`dst` on any
+  edge type other than `script_ref` is now skipped with a warning instead of propagating an
+  `AttributeError` that a broad `except Exception` upstream would otherwise turn into a
+  silently-dropped file; `schema_version` mismatches against the producer's contract now log a
+  warning instead of being ignored; and `script.file_matches_dat` (Sync Manifest join) and a
+  non-zero `unresolved_script_refs` count are now read/logged instead of being invisible
+  outside the network chunk's own body text.
 - **Cross-file `SCRIPTED_BY` join for synced TouchDesigner DATs** (ADR-0062 C6) —
   `TDNetworkChunker` now reads the exporter's `script.file` / `script.synced` fields and emits
   a `scripted_by` edge (`via: file`, confidence 0.98, `resolver_source: td_live`) from each
@@ -149,7 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   truncation (51.5s resolve vs the 180s floor). Resulting `resolver_source` mix: lsp 1960 @0.98,
   libcst 759 @0.90, pyan 556 @0.75 — libcst/pyan counts fell as expected, since LSP merges last
   and upgrades edges the lower tiers already found rather than losing coverage. Scoped to install
-  + verify only; the retrieval A/B gate and canon re-pin on this three-tier substrate are
+  - verify only; the retrieval A/B gate and canon re-pin on this three-tier substrate are
   deferred — see the note appended to `evaluation/CANON_20260914_REBASELINE.md`.
 - **Methods of a decorated class were never chunked at all** (ADR-0063). `decorated_definition`
   was splittable but not a container (`chunking/languages/base.py`), so `@dataclass class Foo: def

@@ -146,6 +146,7 @@
       "contains": 0.9,
       "docked_to": 0.8,
       "scripted_by": 0.8,
+      "clones": 0.8,
       "references_op": 0.7,
       "binds_to": 0.7,
       "exports_to": 0.7,

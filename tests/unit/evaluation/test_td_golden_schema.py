@@ -154,6 +154,9 @@ class TestTdCallerGolden:
         """Each directed TD edge kind appears in at least one query.
 
         `shares_tag` is symmetric grouping noise and deliberately unbenchmarked.
+        `clones` (ADR-0072) is directed but has no golden query fixture yet --
+        deliberately excluded from `_DIRECTED_TD_TYPES` rather than added
+        unexercised, for the same "don't assert what nothing tests" reason.
         """
         from chunking.relationships.relationship_types import (
             get_relationship_field_mapping,
