@@ -46,6 +46,13 @@
     "MD040": false,
 
     // MD041: First line in file should be a top level heading - disabled
-    "MD041": false
+    "MD041": false,
+
+    // MD060: Table pipe column style ("consistent" by default -- locks the
+    // whole file to whichever style its first table happens to use, e.g.
+    // BENCHMARKS.md). Disabled: this repo's tables were never authored to a
+    // single pipe-spacing convention, and retroactively normalizing every
+    // pre-existing table is out of scope for unrelated content commits.
+    "MD060": false
   }
 }
