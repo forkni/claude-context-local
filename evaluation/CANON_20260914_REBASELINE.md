@@ -71,8 +71,7 @@ sentence-transformers 6.0.1, transformers 5.16.1, tokenizers 0.23.1). Full force
 
 | view | ΔMRR | verdict |
 |---|---|---|
-| 63q canonical | **+0.006** | no regression; small positive move, consistent with 3,171 real
-  new-and-correct call edges added by the restored pyan tier |
+| 63q canonical | **+0.006** | no regression; small positive move, consistent with 3,171 real new-and-correct call edges added by the restored pyan tier |
 
 Determinism: 63q r1/r2 on Leg B bit-identical (`n_moved = 0` on every metric,
 `canon_63q_r2_20260914.json`). Dependency-version counterfactuals (ST 5.7.0, transformers
@@ -121,3 +120,12 @@ work, no retrieval A/B gate or re-pin was run this session — the LSP tier's ef
 this substrate is **unmeasured**. Do not assume the tier is retrieval-neutral just because the pyan
 tier was; that inference has not been tested here. The next re-pin on this machine should gate the
 three-tier substrate against this two-tier pin as its control.
+
+**Forward pointer (2026-09-14, later the same day):** this closing instruction was **not**
+followed. A same-day attempt to gate the three-tier substrate against this pin was confounded by
+corpus drift (control 2,991 chunks here vs treatment 2,992 chunks 5 hours later, commit `2779916a`
+landing in between) and its "LSP is retrieval-neutral" conclusion was reverted as unsupportable.
+This pin's substrate is not reproducible, so it could not serve as that gate's control either. The
+actual LSP gate ran instead as a freshly-captured same-corpus leg A/B, published separately at
+`CANON_20260914B_LSP_REBASELINE.md` — PASS on all three views, retrieval-neutral, `lsp_enabled`
+stays on.

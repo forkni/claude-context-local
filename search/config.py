@@ -1607,7 +1607,16 @@ class CallGraphConfig:
 
     lsp_enabled: bool = field(
         default=True,
-        metadata=spec(reader="search/call_edge_injection.py"),
+        metadata=spec(
+            reader="search/call_edge_injection.py",
+            benchmark_locked=(
+                "[retrieval-neutral] CANON_20260914B_LSP_REBASELINE.md: clean "
+                "same-corpus leg A/B gate PASSED on all three views "
+                "(|dMRR|<=0.02, drecall@20>=-0.02 or CI-indistinguishable from "
+                "it) -- 113 new call edges + 1847 confidence upgrades, no "
+                "measurable ranking harm; turning this off is a human decision"
+            ),
+        ),
     )
     """Enable the basedpyright LSP resolver (Stage 3).
 

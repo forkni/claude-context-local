@@ -76,6 +76,7 @@ for avoiding re-litigating settled questions.
 | [0068](0068-cleanup-probe-migration-and-canon-repin.md) | Cleanup + probe-harness migration + the owed canon re-pin | accepted | 2026-09-07 |
 | [0069](0069-fix-phantom-node-shadowing-of-resolved-call-edges.md) | Fix phantom-node shadowing of resolved call edges (D1 + D2) | accepted | 2026-09-08 |
 | [0070](0070-rust-call-edge-tier.md) | Rust call-graph tier: chunking, extraction, resolution | accepted | 2026-09-08 |
+| [0071](0071-lsp-stage3-goes-live-bge-m3.md) | LSP Stage-3 resolver tier goes live on the bge-m3 lineage | accepted | 2026-09-14 |
 
 ## Adding a new ADR
 
