@@ -23,6 +23,16 @@ placeholders), ``edges`` (13 types -- see ``TD_GRAPH_EDGE_TYPES`` below),
 every class in ``mro``), ``scripts``, ``tag_groups``, ``node_line_spans``,
 ``edge_types``, ``stats``.
 
+Anyone comparing ``edge_types``/``stats`` against what this chunker actually
+emits must account for the divergence: ``shared_tag`` is emitted in *both*
+directions (see ``RelationshipType.SHARES_TAG`` below -- halve it to compare),
+``script_ref`` edges with a null ``dst`` are dropped rather than emitted, an
+extra ``scripted_by`` edge is synthesized per synced script file, and
+``inherits``/``instance_of`` edges are synthesized from ``classes``/``nodes``
+and have no entry in ``edge_types`` at all. The network chunk's own operator/
+relationship counts are therefore reported as the *exporter's* numbers, not
+recomputed -- see ``_build_network_chunk``.
+
 Emits three chunk_type kinds, all ``language="td_network"``, ids built exclusively
 via ``search/chunk_id.py::build()`` (never hand-rolled) and always carrying a real
 line span **into the ``.tdgraph.json`` file itself** (see ``_json_element_spans``):
@@ -71,12 +81,12 @@ from utils.path_utils import normalize_path
 logger = logging.getLogger(__name__)
 
 # Every edge this chunker emits comes straight off a live TD network snapshot --
-# there is no fuzzy resolution step, so only two confidence tiers exist: an edge
-# whose endpoint resolved to a real node (0.98, matching the LSP-resolver tier
-# convention elsewhere in the codebase) or one that didn't (0.5). See
-# search/call_edge_injection.py for the established resolver_source/confidence
-# convention this mirrors.
-_RESOLVED_CONFIDENCE = 0.98
+# there is no fuzzy resolution step, so there is nothing to grade: an edge either
+# reflects a fact the exporter wrote down, or (script_ref with a null dst) it is
+# dropped and counted instead of emitted. confidence=1.0 is the honest value for
+# every edge that IS emitted. The tradeoff is lossy: a 1.0 JSON-lookup edge is now
+# indistinguishable from any other 1.0 edge in this codebase (e.g. a type-inferred
+# one) -- provenance lives in metadata["resolver_source"] below instead.
 _RESOLVER_SOURCE = "td_live"
 
 # Edge types whose RelationshipEdge is a straightforward literal src->dst mapping
@@ -389,11 +399,14 @@ class TDNetworkChunker:
             )
         )
         if unresolved_script_refs:
-            # Previously surfaced only as prose inside the network chunk's
-            # body (see _build_network_chunk below) -- invisible to anyone
-            # not reading chunk text. A script_ref with a null dst means the
-            # exporter couldn't resolve a DAT's callback to a project file.
-            logger.warning(
+            # Surfaced as prose on the network chunk's own body too (see
+            # _build_network_chunk below). A script_ref with a null dst is
+            # contract-conformant, not a defect -- it means the exporter
+            # itself couldn't resolve a DAT's callback to a project file
+            # (op_call target outside the snapshot, or an unmatched
+            # shortcut). DEBUG, not WARNING: nothing here is actionable, and
+            # the count is already visible on the network chunk.
+            logger.debug(
                 "%s: %d unresolved script reference(s) in network %r",
                 file_path,
                 unresolved_script_refs,
@@ -546,7 +559,7 @@ class TDNetworkChunker:
                     target_name=target_id,
                     relationship_type=RelationshipType.SCRIPTED_BY,
                     line_number=0,
-                    confidence=_RESOLVED_CONFIDENCE,
+                    confidence=1.0,
                     metadata=meta,
                 )
             )
@@ -575,6 +588,14 @@ class TDNetworkChunker:
             for dat_path, refs in scripts.items()
             for ref in refs
         }
+        # Every non-null dst is resolved via chunk_id_for, which never raises --
+        # an id absent from the snapshot's own node list silently becomes a
+        # phantom node (same machinery used for a legitimate out-of-scope
+        # target, e.g. a clone edge to a stub master). That's indistinguishable
+        # from contract drift unless checked here. Includes stubs and the
+        # network root (both are real entries in "nodes") so neither
+        # false-positives.
+        known_node_ids = {n["id"] for n in graph.get("nodes") or [] if n.get("id")}
 
         by_source: dict[str, list[RelationshipEdge]] = defaultdict(list)
 
@@ -591,7 +612,7 @@ class TDNetworkChunker:
                     target_name=target_id,
                     relationship_type=rtype,
                     line_number=line or 0,
-                    confidence=_RESOLVED_CONFIDENCE,
+                    confidence=1.0,
                     metadata=meta,
                 )
             )
@@ -620,6 +641,25 @@ class TDNetworkChunker:
                     src,
                 )
                 continue
+
+            # A non-null dst that names no node in this snapshot is the
+            # exporter asserting a relationship to something that isn't
+            # there. Left unchecked, chunk_id_for() synthesizes a phantom
+            # node for it -- silently, and indistinguishably from the
+            # legitimate out-of-scope case (a stub node, which *is* in
+            # known_node_ids). Warn instead of dropping: the edge is still
+            # built (the phantom node keeps the relationship traversable),
+            # but the drift is now visible.
+            if dst is not None and dst not in known_node_ids:
+                logger.warning(
+                    "td_network: edge type %r has dst %r that is not a node "
+                    "in network %r; a phantom node will be synthesized for "
+                    "it (src=%r)",
+                    etype,
+                    dst,
+                    target,
+                    src,
+                )
 
             if etype == "contains":
                 # Root-sourced contains edges attach to the network chunk (the
@@ -996,7 +1036,15 @@ class TDNetworkChunker:
         tag_groups = graph.get("tag_groups") or {}
 
         node_count = stats.get("node_count", len(real_nodes))
-        edge_count = stats.get("edge_count", sum(t.get("count", 0) for t in edge_types))
+        # reported_* are the exporter's own tallies (stubs included, shared_tag
+        # counted once) -- never the same number as what this chunker actually
+        # builds/emits. See the module docstring for the divergences. Fallbacks
+        # are producer-sourced too (graph["nodes"], not real_nodes) so the label
+        # stays true even when the exporter omits "stats".
+        reported_nodes = stats.get("node_count", len(graph.get("nodes") or []))
+        reported_edges = stats.get(
+            "edge_count", sum(t.get("count", 0) for t in edge_types)
+        )
         family_counts = stats.get("family_counts") or {}
 
         lines = [f"{network_name} — TouchDesigner network at {target}"]
@@ -1014,7 +1062,10 @@ class TDNetworkChunker:
             if root_params:
                 param_str = ", ".join(f"{k}={v!r}" for k, v in root_params.items())
                 lines.append(f"params: {param_str}")
-        lines.append(f"{node_count} operators, {edge_count} relationships")
+        lines.append(
+            f"{reported_nodes} operators, {reported_edges} relationships "
+            "reported by exporter"
+        )
         if family_counts:
             fam_str = ", ".join(f"{k}:{v}" for k, v in sorted(family_counts.items()))
             lines.append(f"operator families: {fam_str}")

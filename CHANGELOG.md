@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TD network edges carry only honest provenance** (ADR-0073) — `TDNetworkChunker` stamped a
+  fabricated `confidence=0.98` on every edge it emits, borrowed from the LSP call-resolver's own
+  confidence tier and justified by a comment describing a two-tier resolution scheme that does not
+  exist for TD edges; edges are now stamped `confidence=1.0` (the honest value — there is no
+  resolution step to grade), while `resolver_source: td_live` and every other metadata stamp are
+  unchanged. The network chunk's summary line reported the exporter's own `stats.node_count`/
+  `edge_count` as if they were the chunker's own — they diverge by a wide margin (40 reported vs.
+  70 actually emitted for the fixture, from five separate causes including `shared_tag`'s
+  intentional double-emission) — and now reads `"N operators, M relationships reported by
+  exporter"`. A null-`dst` `script_ref` (contract-conformant, already counted on the network
+  chunk) now logs at `logger.debug` instead of `logger.warning`; a new check instead warns when
+  any edge's non-null `dst` names no node in the snapshot at all, before `chunk_id_for()` would
+  otherwise synthesize a phantom node for it silently.
 - **`RelationshipType.CLONES` + TD edge-vocabulary drift detection** (ADR-0072) —
   `TDNetworkChunker` silently dropped the producer's `clone` edge (clone COMP → its Clone
   Master) at DEBUG level; it is now `RelationshipType.CLONES` (`"clones"`/`"cloned_by"`,
@@ -36,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outside the network chunk's own body text.
 - **Cross-file `SCRIPTED_BY` join for synced TouchDesigner DATs** (ADR-0062 C6) —
   `TDNetworkChunker` now reads the exporter's `script.file` / `script.synced` fields and emits
-  a `scripted_by` edge (`via: file`, confidence 0.98, `resolver_source: td_live`) from each
+  a `scripted_by` edge (`via: file`, confidence 1.0, `resolver_source: td_live`) from each
   scripted DAT operator chunk to the synced `.py`/`.glsl` file's module id. Paths are
   normalised, re-rooted against the snapshot's grandparent when that file exists, and rejected
   (DEBUG log) when absolute or escaping the index root. A storage-wide, idempotent post-pass

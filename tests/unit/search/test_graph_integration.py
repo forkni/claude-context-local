@@ -1951,7 +1951,7 @@ def _file_edge(source_id, file="Scripts/X__td.py", synced=True):
         target_name=f"{file}:0-0:module:{stem}",
         relationship_type=RelationshipType.SCRIPTED_BY,
         line_number=0,
-        confidence=0.98,
+        confidence=1.0,
         metadata={
             "td_edge_type": "scripted_by",
             "via": "file",
@@ -2052,7 +2052,7 @@ class TestScriptedByRetarget(TestCase):
         self.assertEqual(data["file"], self.PY_FILE)
         self.assertIs(data["synced"], True)
         self.assertEqual(data["resolver_source"], "td_live")
-        self.assertEqual(data["confidence"], 0.98)
+        self.assertEqual(data["confidence"], 1.0)
         # The module phantom is pruned once nothing points at it.
         self.assertNotIn(self.edge.target_name, self.storage.graph)
 
@@ -2157,7 +2157,7 @@ class TestScriptedByRetarget(TestCase):
             target_name=self.OP,
             relationship_type=RelationshipType.SCRIPTED_BY,
             line_number=0,
-            confidence=0.98,
+            confidence=1.0,
             metadata={
                 "td_edge_type": "scripted_by",
                 "par": "callbacks",
