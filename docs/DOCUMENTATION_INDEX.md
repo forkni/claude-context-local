@@ -81,7 +81,7 @@ Design decisions and their rationale — accepted, rejected, and superseded — 
 | ---------- | ------------- |
 | **[docs/adr/README.md](adr/README.md)** | Index of all ADRs (number, title, status, date) |
 
-Notable recent decisions: ADR-0014 (per-project search config overrides), ADR-0015 (community subsystem removed), ADR-0016 (DSPy eval subsystem removed), ADR-0017 (MCP SDK v2 adoption), ADR-0018 (`RetrievalRequest` carries effective config), ADR-0019 (intent-adaptive fusion weights rejected), ADR-0020 (config field liveness audit).
+Notable recent decisions: ADR-0062 (TouchDesigner network indexing), ADR-0067 (`find_similar_code` same-file exclusion widened on starved pools), ADR-0069 (phantom-node shadowing of resolved call edges fixed), ADR-0070 (Rust call-graph tier), ADR-0071 (LSP Stage-3 resolver goes live), ADR-0072 (`RelationshipType.CLONES` + TD edge-vocabulary drift detection), ADR-0073 (TD network edges carry only honest provenance).
 
 ---
 
@@ -310,4 +310,4 @@ Detailed technical documentation.
 
 ---
 
-**Last Updated**: 2026-09-02 (v0.26.0 — retrieval campaigns closed, ADR-0039–0059 architecture wave, index-freshness verdict, test-suite hardening Phases 13–14; 4,351 unit tests)
+**Last Updated**: 2026-09-16 (development HEAD, unreleased — Rust call-graph tier (ADR-0070), LSP Stage-3 resolver goes live (ADR-0071), TD edge-vocabulary drift detection + honest edge provenance (ADR-0072/0073); 4,965 unit tests)
