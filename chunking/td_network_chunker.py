@@ -387,7 +387,7 @@ class TDNetworkChunker:
             if e.get("dst"):
                 in_edges[e["dst"]].append(e)
 
-        relationships_by_source, unresolved_script_refs = (
+        relationships_by_source, unresolved_script_refs, phantom_dst_count = (
             self._build_relationship_edges(
                 graph,
                 edges,
@@ -473,6 +473,7 @@ class TDNetworkChunker:
                 relative_path,
                 folder_structure,
                 unresolved_script_refs,
+                phantom_dst_count,
                 relationships_by_source.get(network_chunk_id),
             )
         )
@@ -575,12 +576,16 @@ class TDNetworkChunker:
         class_chunk_for,
         network_chunk_id: str,
         target: str,
-    ) -> tuple[dict[str, list[RelationshipEdge]], int]:
+    ) -> tuple[dict[str, list[RelationshipEdge]], int, int]:
         """Build every RelationshipEdge, grouped by source chunk_id.
 
-        Returns (relationships_by_source, unresolved_script_ref_count). The count
-        is surfaced on the network chunk's content per ADR-0062 ("dst: null edges
-        are dropped and counted on the network chunk").
+        Returns (relationships_by_source, unresolved_script_ref_count,
+        phantom_dst_count). Both counts are surfaced on the network chunk's
+        content per ADR-0062 ("dst: null edges are dropped and counted on the
+        network chunk") and ADR-0073 (phantom-target dst warned once per
+        unique (etype, dst) pair, not once per edge -- a fan-in target hit by
+        many edges would otherwise flood the log with one identical warning
+        per edge).
         """
         scripts = graph.get("scripts") or {}
         scripts_index = {
@@ -618,6 +623,13 @@ class TDNetworkChunker:
             )
 
         unresolved_script_refs = 0
+        # De-dup key is (etype, dst), not (src, etype, dst): the point is to
+        # warn once per distinct phantom target, not once per edge reaching
+        # it -- a single mistyped/renamed dst can be the target of many
+        # edges (e.g. every op in a group referencing a deleted shortcut),
+        # and one warning per edge would drown the log without adding
+        # information the reader doesn't already have after the first.
+        phantom_dst_seen: set[tuple[str, str]] = set()
 
         for e in edges:
             etype = e.get("type")
@@ -651,15 +663,18 @@ class TDNetworkChunker:
             # built (the phantom node keeps the relationship traversable),
             # but the drift is now visible.
             if dst is not None and dst not in known_node_ids:
-                logger.warning(
-                    "td_network: edge type %r has dst %r that is not a node "
-                    "in network %r; a phantom node will be synthesized for "
-                    "it (src=%r)",
-                    etype,
-                    dst,
-                    target,
-                    src,
-                )
+                phantom_key = (str(etype), str(dst))
+                if phantom_key not in phantom_dst_seen:
+                    phantom_dst_seen.add(phantom_key)
+                    logger.warning(
+                        "td_network: edge type %r has dst %r that is not a "
+                        "node in network %r; a phantom node will be "
+                        "synthesized for it (src=%r, first occurrence)",
+                        etype,
+                        dst,
+                        target,
+                        src,
+                    )
 
             if etype == "contains":
                 # Root-sourced contains edges attach to the network chunk (the
@@ -812,7 +827,7 @@ class TDNetworkChunker:
                     },
                 )
 
-        return by_source, unresolved_script_refs
+        return by_source, unresolved_script_refs, len(phantom_dst_seen)
 
     # ------------------------------------------------------------------
     # Individual chunk builders
@@ -1028,6 +1043,7 @@ class TDNetworkChunker:
         relative_path: str,
         folder_structure: list[str],
         unresolved_script_refs: int,
+        phantom_dst_count: int,
         relationships: list[RelationshipEdge] | None,
     ) -> CodeChunk:
         target = graph.get("target", "")
@@ -1086,6 +1102,12 @@ class TDNetworkChunker:
 
         if unresolved_script_refs:
             lines.append(f"{unresolved_script_refs} unresolved script reference(s)")
+
+        if phantom_dst_count:
+            lines.append(
+                f"{phantom_dst_count} unique unresolved edge target(s) "
+                "synthesized as phantom node(s)"
+            )
 
         content = "\n".join(lines)
 

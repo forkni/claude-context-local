@@ -163,7 +163,9 @@ plan doc above):
    `SCRIPTED_BY` edge per node carrying `script.file`, from the DAT operator chunk to the file's
    module-summary id `<rel>:0-0:module:<stem>`, with metadata
    `{td_edge_type: scripted_by, via: file, file, synced, resolver_source: td_live}` and
-   confidence 0.98. Paths are normalised to `/`; absolute paths and any `..` segment are
+   confidence 1.0 (corrected 2026-09-15 — see ADR-0073, which deleted the invented
+   `_RESOLVED_CONFIDENCE = 0.98` this line originally documented). Paths are normalised to `/`;
+   absolute paths and any `..` segment are
    rejected with a DEBUG log. The path is resolved against the index root twice — re-rooted
    under the snapshot's grandparent (`Graph/x.tdgraph.json` next to `Scripts/`) first, then
    as written — the first existing candidate wins, else the path is used as written so the

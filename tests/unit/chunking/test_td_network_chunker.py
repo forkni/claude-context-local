@@ -406,6 +406,37 @@ class TestEdgeTypeMapping:
         assert "does_not_exist" in caplog.text
         assert "not a node" in caplog.text
 
+    def test_unresolvable_dst_warns_once_per_unique_target_not_per_edge(
+        self, tmp_path, caplog
+    ):
+        """Two distinct edges reaching the same missing dst must log the
+        phantom-target warning once, not twice -- the network chunk's
+        summary line still reports the unique count (ADR-0073 correction:
+        a per-edge warning would flood the log on a fan-in target)."""
+        import json
+        import logging
+
+        graph = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+        edge = next(
+            e
+            for e in graph["edges"]
+            if e["type"] == "script_ref" and e.get("dst") is not None
+        )
+        missing = "/project1/Test_network/does_not_exist"
+        edge["dst"] = missing
+        duplicate = dict(edge)
+        duplicate["src"] = "/project1/Test_network/master1"
+        graph["edges"].append(duplicate)
+        out = tmp_path / "Mutated.tdgraph.json"
+        out.write_text(json.dumps(graph), encoding="utf-8")
+        chunker = TDNetworkChunker(root_path=str(tmp_path))
+        with caplog.at_level(logging.WARNING, logger="chunking.td_network_chunker"):
+            chunks = chunker.chunk_file(str(out), "Mutated.tdgraph.json")
+        warnings = [r for r in caplog.records if "does_not_exist" in r.message]
+        assert len(warnings) == 1
+        network_chunk = next(c for c in chunks if c.chunk_type == "network")
+        assert "1 unique unresolved edge target(s)" in network_chunk.content
+
     def test_stub_and_root_dst_do_not_trigger_unresolvable_warning(self, caplog):
         """A stub node (out-of-scope operator) and the network root are both
         real entries in the snapshot's own node list -- neither is

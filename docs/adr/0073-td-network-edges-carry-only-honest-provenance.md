@@ -36,6 +36,21 @@ invented or mis-reported facts the producer never asserted.**
    `edge_types` at all (+8, +14). No single consumer-computed total could be attributed correctly
    without recomputing all five divergences, and that computation would silently rot as the chunker
    evolves.
+
+   **Correction (2026-09-15, against this repo's bundled fixture only — do not generalize from
+   it):** the "−3" line above attributes part of the divergence to `script_ref` null-`dst` drop
+   specifically. That is a fixture artifact, not the general mechanism, and the producer side
+   disproved reading it as general: across all four of `TD_Glossary_tox`'s live networks,
+   `par_ref` carries **zero** null-`dst` edges yet still collapses down to a smaller consumer
+   count. The actual general mechanism, verified against those live networks and written up in
+   `docs/architecture/network-graph.md`'s "Contract" section (producer repo): `par_ref`,
+   `script_ref`, and `shortcut_ref` all merge onto one consumer relationship, `references_op`,
+   keyed `(src, dst, relationship)` — parallel edges between the same pair collapse across **all
+   three** producer types, after null-`dst` edges are dropped first. Null-`dst` drop is one step
+   in that pipeline, not a standalone per-type cause; no single reference type "drops" on its own.
+   The producer doc also confirms `inherits`/`instance_of` synthesis as the largest inflating term
+   in general (matching this ADR's own +8/+14), and that the divergence ratio is network-specific
+   (1.38x–1.80x measured), not the fixture's fixed 70/40.
 3. **Misdirected warning.** A `script_ref` edge with a null `dst` is contract-conformant — it means
    the exporter itself could not resolve a DAT's callback to a project file, and the count was
    already surfaced on the network chunk's own body — yet it logged at `logger.warning`. Meanwhile
@@ -132,7 +147,12 @@ never read by `edge_confidence()` unless it happens to match a string tag in
   (`test_unresolved_script_ref_logs_at_debug_not_warning`); the new phantom-`dst` detection is
   proven to fire on a mutated fixture and stay silent on stub/root targets in the unmodified one
   (`test_unresolvable_non_null_dst_warns_before_phantom_synthesis`,
-  `test_stub_and_root_dst_do_not_trigger_unresolvable_warning`); and the six pre-existing
+  `test_stub_and_root_dst_do_not_trigger_unresolvable_warning`); a follow-up fix
+  (2026-09-15) de-dups that warning to once per unique `(etype, dst)` pair instead of once per
+  edge, since a fan-in target (many edges naming the same missing dst) would otherwise flood the
+  log with identical lines — pinned by
+  `test_unresolvable_dst_warns_once_per_unique_target_not_per_edge`, and the network chunk's
+  summary line now also reports the unique phantom-target count; and the six pre-existing
   assertions of `confidence == 0.98` on TD `scripted_by` edges (`test_td_network_chunker.py`,
   `test_graph_storage.py`, `test_graph_integration.py`) are updated to `1.0`.
 - `grep -rn "0\.98"` across the tree shows no remaining TD-path hit — every surviving 0.98 is the
