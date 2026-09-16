@@ -33,6 +33,7 @@ from chunking.relationships.lsp_call_graph import (
     _read_response,
     _uri_to_path,
     lsp_available,
+    lsp_unavailable_reason,
 )
 
 
@@ -111,6 +112,55 @@ class TestLSPUnavailableFallback:
 
         monkeypatch.setattr(lcg, "_LSP_AVAILABLE", False)
         assert LSPResolver().available() is False
+
+    def test_resolve_logs_unavailable_reason_when_binary_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+    ) -> None:
+        """The dispatch-time guard must surface *why* -- not just that it's
+        unavailable -- via the same reason lsp_unavailable_reason() exposes."""
+        import chunking.relationships.lsp_call_graph as lcg
+
+        monkeypatch.setattr(lcg, "_LSP_AVAILABLE", False)
+        monkeypatch.setattr(lcg, "_LSP_BINARY", None)
+        monkeypatch.setattr(
+            lcg, "_LSP_UNAVAILABLE_REASON", "basedpyright-langserver not found (test)"
+        )
+
+        with caplog.at_level(logging.INFO, logger=_LOG.name):
+            edges = LSPResolver().resolve(tmp_path, {}, _LOG)
+
+        assert edges == []
+        assert any(
+            "basedpyright-langserver not found (test)" in r.message
+            for r in caplog.records
+        )
+
+
+class TestLSPUnavailableReasonAccessor:
+    def test_reason_empty_string_when_available(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import chunking.relationships.lsp_call_graph as lcg
+
+        monkeypatch.setattr(lcg, "_LSP_AVAILABLE", True)
+        monkeypatch.setattr(lcg, "_LSP_UNAVAILABLE_REASON", "")
+        assert lsp_unavailable_reason() == ""
+
+    def test_reason_nonempty_when_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import chunking.relationships.lsp_call_graph as lcg
+
+        monkeypatch.setattr(lcg, "_LSP_AVAILABLE", False)
+        monkeypatch.setattr(
+            lcg, "_LSP_UNAVAILABLE_REASON", "basedpyright-langserver not found"
+        )
+        assert lsp_unavailable_reason() != ""
+
+    def test_reason_is_str(self) -> None:
+        """Whatever the actual probe found on this machine, the accessor's
+        contract (str, not None) must hold without any monkeypatching."""
+        assert isinstance(lsp_unavailable_reason(), str)
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +422,80 @@ class TestLSPTickUnitProperty:
         n_probes = int(probes_line.split("probes=")[1].split()[0])
         assert n_probes == 1
         assert n_probes < len(calls)
+
+
+# ---------------------------------------------------------------------------
+# _session() capability check -- a server that responds to `initialize` but
+# doesn't advertise callHierarchyProvider must produce a named diagnostic,
+# not a silent fall-through to zero edges indistinguishable from "no calls
+# found". Diagnostics only: must not change control flow / edges produced.
+# ---------------------------------------------------------------------------
+
+
+class TestSessionCapabilityCheck:
+    class _FakeLspClient:
+        """Stand-in for _LspClient whose `initialize` response is
+        configurable per test -- enough surface for _session() to drive:
+        deadline_exceeded, request(), notify()."""
+
+        def __init__(self, init_result: dict | None) -> None:
+            self.deadline_exceeded = False
+            self.stderr_tail: list[str] = []
+            self._init_result = init_result
+
+        def request(self, method, params, req_id=None):
+            if method == "initialize":
+                if self._init_result is None:
+                    return None
+                return {"jsonrpc": "2.0", "id": req_id, "result": self._init_result}
+            return {"result": None}
+
+        def notify(self, method, params) -> None:
+            return None
+
+    def _run_session(
+        self, tmp_path: Path, init_result: dict | None, caplog: pytest.LogCaptureFixture
+    ) -> list:
+        mod_path = tmp_path / "mod.py"
+        mod_path.write_text("def foo():\n    pass\n", encoding="utf-8")
+        raw_line_map = {"mod.py": [(1, 2, "mod.py:1-2:function:foo")]}
+
+        resolver = LSPResolver()
+        client = self._FakeLspClient(init_result)
+
+        with caplog.at_level(logging.WARNING, logger=_LOG.name):
+            edges = resolver._session(
+                client, [str(mod_path)], tmp_path, raw_line_map, _LOG, 100.0, 1
+            )
+        return edges, caplog.records
+
+    def test_missing_call_hierarchy_provider_logs_named_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """capabilities present but callHierarchyProvider absent -> named
+        failure, not silent zero."""
+        edges, records = self._run_session(tmp_path, {"capabilities": {}}, caplog)
+        assert edges == []
+        assert any("callHierarchyProvider" in r.message for r in records)
+
+    def test_none_response_logs_named_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """request() returning None (timeout/EOF) must not raise AttributeError
+        and must still be named, not silently swallowed."""
+        edges, records = self._run_session(tmp_path, None, caplog)
+        assert edges == []
+        assert any("callHierarchyProvider" in r.message for r in records)
+
+    def test_call_hierarchy_provider_true_logs_no_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A healthy install (capability advertised) must not emit the
+        diagnostic -- diagnostics only, no behavior change on success."""
+        _edges, records = self._run_session(
+            tmp_path, {"capabilities": {"callHierarchyProvider": True}}, caplog
+        )
+        assert not any("callHierarchyProvider" in r.message for r in records)
 
 
 # ---------------------------------------------------------------------------

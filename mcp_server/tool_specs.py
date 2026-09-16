@@ -737,7 +737,7 @@ WHEN TO USE:
 
 RETURNS (direct_callers / indirect_callers / direct_callees are `calls`-edge
 lists only; every other inbound/outbound relationship type — inherits, imports,
-uses_type, contains, docked_to, shares_tag, ... — appears solely in its typed
+uses_type, contains, docked_to, shares_tag, clones, ... — appears solely in its typed
 `relationships` section):
 - direct_callers: list of chunks that call this symbol, each with
     - chunk_id, file, start/end lines, symbol info
@@ -786,7 +786,7 @@ extras to see `resolver_source: "lsp"` edges.""",
                 "relationship_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager, wires_to, docked_to, contains, references_op, binds_to, exports_to, scripted_by, shares_tag. Note: uses_global and asserts_type require entity tracking (enable_entity_tracking, default True) and a reindex to populate on an existing index. contains is a class -> method/function containment edge (from the chunk metadata field parent_chunk_id) and, for TouchDesigner, network/COMP -> operator. The other TouchDesigner network types (wires_to, docked_to, references_op, binds_to, exports_to, scripted_by, shares_tag) only populate when enable_td_network_indexing is on (ADR-0062, default off) and the index contains .tdgraph.json files.',
+                    "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, assigns_to, reads_from, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager, wires_to, docked_to, contains, references_op, binds_to, exports_to, scripted_by, shares_tag, clones. Note: uses_global and asserts_type require entity tracking (enable_entity_tracking, default True) and a reindex to populate on an existing index. contains is a class -> method/function containment edge (from the chunk metadata field parent_chunk_id) and, for TouchDesigner, network/COMP -> operator. The other TouchDesigner network types (wires_to, docked_to, references_op, binds_to, exports_to, scripted_by, shares_tag, clones) only populate when enable_td_network_indexing is on (ADR-0062, default off) and the index contains .tdgraph.json files. clones is COMP -> Clone Master (ADR-0072), only when the source .tox has cloning enabled.',
                 },
                 "hide_ambiguous": {
                     **CONFIG_BACKED["find_connections.hide_ambiguous"],

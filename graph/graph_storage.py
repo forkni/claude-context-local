@@ -167,6 +167,8 @@ DEFAULT_EDGE_WEIGHTS: dict[str, float] = {
     "binds_to": 0.7,
     "exports_to": 0.7,
     "shares_tag": 0.3,
+    "clones": 0.8,  # A clone master is the operator's definition -- same tier
+    # as docked_to/scripted_by, above the 0.7 parameter-reference tier.
 }
 
 

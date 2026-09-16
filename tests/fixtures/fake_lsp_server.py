@@ -107,7 +107,11 @@ def main() -> None:
         if method == "initialize":
             _write(
                 stdout,
-                {"jsonrpc": "2.0", "id": req_id, "result": {"capabilities": {}}},
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {"capabilities": {"callHierarchyProvider": True}},
+                },
             )
         elif method == "shutdown":
             _write(stdout, {"jsonrpc": "2.0", "id": req_id, "result": None})

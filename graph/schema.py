@@ -23,10 +23,10 @@ that every enum value is present, so adding a new ``RelationshipType`` will
 fail CI until a corresponding entry is added here.
 """
 
-# NOTE: REVERSE_RELATIONS currently has 29 entries (21 core + 8 TouchDesigner
-# network types added by ADR-0062, Part C). Adding another RelationshipType
-# member bumps this count again -- see TestReverseRelationsCompleteness in
-# tests/unit/graph/test_schema.py.
+# NOTE: REVERSE_RELATIONS currently has 30 entries (21 core + 9 TouchDesigner
+# network types: 8 added by ADR-0062 Part C, plus "clones" added by ADR-0072).
+# Adding another RelationshipType member bumps this count again -- see
+# TestReverseRelationsCompleteness in tests/unit/graph/test_schema.py.
 
 # ---------------------------------------------------------------------------
 # Node attribute keys
@@ -101,6 +101,8 @@ REVERSE_RELATIONS: dict[str, str] = {
     # Symmetric relation: reverse of "shares_tag" is itself, not "shares_tag_by"
     # -- there is no forward/reverse asymmetry to a tag two operators both carry.
     "shares_tag": "shares_tag",
+    # Clone COMP -> Clone Master (ADR-0072).
+    "clones": "cloned_by",
 }
 
 

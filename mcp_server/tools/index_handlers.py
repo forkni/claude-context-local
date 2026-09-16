@@ -26,6 +26,7 @@ from mcp_server.storage_manager import (
     get_project_storage_dir,
     get_storage_dir,
     set_current_project,
+    stamp_filter_semantics_version,
     update_project_filters,
 )
 from mcp_server.tools import responses
@@ -749,6 +750,42 @@ def _includes_touch_dependency_tree(
     return False
 
 
+def _is_filter_semantics_stale(
+    stored_filter_semantics_version: int | None,
+    include_exclusive: bool,
+    include_dirs: list[str] | None,
+    root_path: Path,
+) -> bool:
+    """Whether a stored project's filters need one forced full reindex to
+    pick up the FILTER_SEMANTICS_VERSION 3 (additive dependency-tree
+    includes) migration.
+
+    ``stored_filter_semantics_version`` reads back as ``None`` both for a
+    project stored before this field ever existed and for a project that
+    doesn't exist yet — treat it as version 0 rather than excluding it. The
+    caller must independently gate on the project actually existing
+    (``project_info_file.exists()``): a genuinely new project has no prior
+    index to migrate, so a stale-looking None here must not, by itself,
+    force anything.
+
+    Previously this required ``stored_filter_semantics_version is not None``,
+    which meant a legacy project (created before the field existed) could
+    never trip the forced-reindex path meant to migrate it — it would
+    instead just keep re-warning via ``check_filter_semantics_migration`` on
+    every incremental run, forever, with the warning never clearing.
+    """
+    effective_stored = (
+        stored_filter_semantics_version
+        if stored_filter_semantics_version is not None
+        else 0
+    )
+    return (
+        effective_stored < FILTER_SEMANTICS_VERSION
+        and not include_exclusive
+        and _includes_touch_dependency_tree(include_dirs, root_path)
+    )
+
+
 async def _run_index_directory(arguments: dict[str, Any]) -> dict:
     """Do the actual indexing work (the body formerly inline in the handler).
 
@@ -854,11 +891,16 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
         # other stored project — the overwhelming majority — isn't forced
         # through a needless full reindex just for a version bump that changes
         # nothing for them.
-        semantics_stale = (
-            stored_filter_semantics_version is not None
-            and stored_filter_semantics_version < FILTER_SEMANTICS_VERSION
-            and not effective_include_exclusive
-            and _includes_touch_dependency_tree(effective_include, directory_path)
+        # Harmless for a truly new project even though _is_filter_semantics_stale
+        # treats a missing version as 0 (see its docstring): filters_changed
+        # below is independently gated on project_info_file.exists(), so this
+        # can't force a reindex before any project_info.json exists to
+        # compare against.
+        semantics_stale = _is_filter_semantics_stale(
+            stored_filter_semantics_version,
+            effective_include_exclusive,
+            effective_include,
+            directory_path,
         )
 
         # Check for filter change
@@ -904,11 +946,20 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
                 include_exclusive=include_exclusive,
             )
 
+            # stamp_semantics_version=False: this fires at the *request* to
+            # reindex, before _run_indexing below has actually run. Stamping
+            # here would let a failed run — or a request that stays
+            # incremental — permanently suppress
+            # check_filter_semantics_migration's warning for an index that
+            # was never rebuilt under the new semantics. The real stamp
+            # happens after a successful full reindex, near
+            # stamp_filter_semantics_version below.
             update_project_filters(
                 str(directory_path),
                 include_dirs,
                 exclude_dirs,
                 include_exclusive=include_exclusive,
+                stamp_semantics_version=False,
             )
 
         # Set as current project (using setter for proper cross-module sync)
@@ -991,6 +1042,17 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
                 )
 
             result = await asyncio.to_thread(_setup_and_run)
+
+            # Stamp filter_semantics_version only now that a full reindex has
+            # actually succeeded — not at the :912 request-time gate above,
+            # and never for an incremental run (which may not have touched
+            # every file affected by a semantics change). See
+            # stamp_filter_semantics_version's docstring for why this must
+            # come after, not before, _run_indexing.
+            if not incremental and result.get("indexing_succeeded"):
+                await asyncio.to_thread(
+                    stamp_filter_semantics_version, str(directory_path)
+                )
 
             # Auto-tuning probe pass 2 (ADR-0014): append report-only
             # observations derived from the just-persisted stats.json.

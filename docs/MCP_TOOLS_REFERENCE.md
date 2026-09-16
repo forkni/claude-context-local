@@ -157,7 +157,8 @@ it (derived from the chunker's `parent_chunk_id`, confidence 1.0, `via: parent_c
 
 **TouchDesigner network types** (only when `enable_td_network_indexing` is on and the index
 holds `.tdgraph.json` files, ADR-0062): `wires_to`, `contains`, `docked_to`, `scripted_by`,
-`references_op`, `binds_to`, `exports_to`, `shares_tag`. `scripted_by` edges carry a `via`
+`references_op`, `binds_to`, `exports_to`, `shares_tag`, `clones` (Clone COMP → its Clone
+Master, ADR-0072). `scripted_by` edges carry a `via`
 metadata value of `callbacks` / `execute` (host operator → its callbacks/execute DAT, in-network)
 or `file` (DAT operator → the external script it is synced to via the DAT's `file` par). `via:
 file` edges also carry `file` (project-relative path), `synced` (the DAT's `syncfile` toggle)
@@ -925,7 +926,7 @@ Server startup:              0 MB VRAM (lazy loading)
 - **Direct callees**: Functions this symbol calls (outbound `calls` edges only, v0.14.0+)
 - **Indirect callers**: Multi-hop call chains (depth 1-N, `calls` edges only)
 - **Typed relationships**: Every other edge type (`inherits`, `imports`, `uses_type`, `contains`,
-  `docked_to`, `shares_tag`, …) appears only in its own `relationships` section, never in the
+  `docked_to`, `shares_tag`, `clones`, …) appears only in its own `relationships` section, never in the
   caller/callee lists or in `total_impacted`
 - **Similar code**: Semantically related implementations
 - **Impact severity**: Low/Medium/High based on caller count

@@ -118,10 +118,26 @@ except Exception:  # noqa: BLE001 - dep-probe: module-level probe for basedpyrig
     _LSP_AVAILABLE = False
     _LSP_BINARY = None
 
+_LSP_UNAVAILABLE_REASON = (
+    ""
+    if _LSP_AVAILABLE
+    else (
+        "basedpyright-langserver not found on PATH or the active venv's "
+        "bin/Scripts dir — lsp_enabled is already true; install the "
+        "'[lsp]' extra (pip install -e \".[lsp]\") to activate this "
+        "resolver for the highest-confidence call edges."
+    )
+)
+
 
 def lsp_available() -> bool:
     """Return True if ``basedpyright-langserver`` is on PATH or venv bin dir."""
     return _LSP_AVAILABLE
+
+
+def lsp_unavailable_reason() -> str:
+    """Return why :func:`lsp_available` is False, or ``""`` if it is True."""
+    return _LSP_UNAVAILABLE_REASON
 
 
 # ---------------------------------------------------------------------------
@@ -627,11 +643,7 @@ class LSPResolver:
             and ``confidence=0.98``.  Returns ``[]`` on any failure.
         """
         if not _LSP_AVAILABLE:
-            logger.info(
-                "[LSP] basedpyright-langserver not found — skipping LSP call edges. "
-                "lsp_enabled is already true; install the '[lsp]' extra "
-                '(pip install -e ".[lsp]") to activate this resolver.'
-            )
+            logger.info("[LSP] Skipping LSP call edges: %s", _LSP_UNAVAILABLE_REASON)
             return []
 
         # Gather, scope to indexed files, and validate — single preamble owner
@@ -752,7 +764,7 @@ class LSPResolver:
         """Drive the LSP session: initialize → didOpen + callHierarchy → results."""
 
         # 1. initialize
-        client.request(
+        init_response = client.request(
             "initialize",
             {
                 "processId": os.getpid(),
@@ -764,6 +776,24 @@ class LSPResolver:
             },
             req_id=_LSP_INIT_ID,
         )
+
+        # `request()` returns None on timeout/EOF/broken pipe -- that failure
+        # is already surfaced via client.deadline_exceeded/stderr_tail in
+        # _run_lsp above. What it can't catch: a server that responds fine
+        # but doesn't advertise callHierarchyProvider (wrong basedpyright
+        # version, misconfigured server) -- the didOpen/callHierarchy calls
+        # below would then silently produce zero edges with no diagnostic
+        # distinguishing "no calls found" from "server can't do this at
+        # all". Name that failure instead of letting it stay silent.
+        server_capabilities = (init_response or {}).get("result") or {}
+        server_capabilities = server_capabilities.get("capabilities") or {}
+        if not server_capabilities.get("callHierarchyProvider"):
+            logger.warning(
+                "[LSP] basedpyright-langserver initialized but did not "
+                "advertise callHierarchyProvider — this resolver's "
+                "prepareCallHierarchy/outgoingCalls queries will yield no "
+                "edges. Check the basedpyright-langserver install/version."
+            )
 
         # initialized notification
         client.notify("initialized", {})

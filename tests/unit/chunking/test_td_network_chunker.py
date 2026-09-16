@@ -4,8 +4,9 @@ Exercises the chunker directly against the hand-built fixture
 ``tests/fixtures/td_network/Test_network.tdgraph.json`` -- see the ADR and
 ``docs/adr/0062-td-network-indexing.md`` for the schema this fixture stands in for
 (shape cross-checked against a real Part B export, ``D:\\dev\\SDTD_040``,
-2026-09-04). The fixture covers every one of the 11 edge types once, plus the
-``dock``/``replicator`` direction-inversion cases documented in
+2026-09-04). The fixture covers every one of the 13 edge types (ADR-0072 added
+``clone``; see ``test_td_network_edge_vocabulary.py`` for the vocabulary drift
+guard), plus the ``dock``/``replicator`` direction-inversion cases documented in
 ``_build_relationship_edges``, and -- like every real export -- carries the
 target COMP itself as a depth-0 node (the "root"), which must never become an
 operator chunk.
@@ -118,6 +119,19 @@ class TestChunkCounts:
         assert "root operator: containerCOMP (COMP)" in network.content
         assert "class containerCOMP < PanelCOMP < COMP < OP" in network.content
         assert "params: w=1280, h=720" in network.content
+
+    def test_network_chunk_reports_exporter_counts_not_its_own(self):
+        """The counts line is the exporter's own tallies (stats.node_count /
+        stats.edge_count), attributed as such -- not the chunker's actual
+        operator-chunk count or emitted-edge count, which diverge (ADR-0073):
+        shared_tag is emitted twice, script_ref nulls are dropped, and
+        scripted_by/inherits/instance_of edges are synthesized with no entry
+        in edge_types at all."""
+        chunks = _chunk_fixture()
+        network = next(c for c in chunks if c.chunk_type == "network")
+        assert "16 operators, 40 relationships reported by exporter" in network.content
+        total_emitted = sum(len(c.relationships or []) for c in chunks)
+        assert total_emitted != 40
 
     def test_stub_node_gets_no_operator_chunk(self):
         chunks = _chunk_fixture()
@@ -353,6 +367,86 @@ class TestEdgeTypeMapping:
         # 3 of the fixture's 4 info1 script_ref rows have dst: null.
         assert "3 unresolved script reference(s)" in network.content
 
+    def test_unresolved_script_ref_logs_at_debug_not_warning(self, caplog):
+        """A null-dst script_ref is contract-conformant (ADR-0073) -- the
+        count already surfaces on the network chunk, so nothing here is
+        actionable at WARNING."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="chunking.td_network_chunker"):
+            _chunk_fixture()
+        assert "unresolved script reference" not in caplog.text
+
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG, logger="chunking.td_network_chunker"):
+            _chunk_fixture()
+        assert "3 unresolved script reference(s)" in caplog.text
+
+    def test_unresolvable_non_null_dst_warns_before_phantom_synthesis(
+        self, tmp_path, caplog
+    ):
+        """A non-null dst that names no node in the snapshot is contract
+        drift -- unlike a null dst, chunk_id_for() would otherwise turn it
+        into a phantom node silently (ADR-0073)."""
+        import json
+        import logging
+
+        graph = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+        edge = next(
+            e
+            for e in graph["edges"]
+            if e["type"] == "script_ref" and e.get("dst") is not None
+        )
+        edge["dst"] = "/project1/Test_network/does_not_exist"
+        out = tmp_path / "Mutated.tdgraph.json"
+        out.write_text(json.dumps(graph), encoding="utf-8")
+        chunker = TDNetworkChunker(root_path=str(tmp_path))
+        with caplog.at_level(logging.WARNING, logger="chunking.td_network_chunker"):
+            chunker.chunk_file(str(out), "Mutated.tdgraph.json")
+        assert "does_not_exist" in caplog.text
+        assert "not a node" in caplog.text
+
+    def test_unresolvable_dst_warns_once_per_unique_target_not_per_edge(
+        self, tmp_path, caplog
+    ):
+        """Two distinct edges reaching the same missing dst must log the
+        phantom-target warning once, not twice -- the network chunk's
+        summary line still reports the unique count (ADR-0073 correction:
+        a per-edge warning would flood the log on a fan-in target)."""
+        import json
+        import logging
+
+        graph = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+        edge = next(
+            e
+            for e in graph["edges"]
+            if e["type"] == "script_ref" and e.get("dst") is not None
+        )
+        missing = "/project1/Test_network/does_not_exist"
+        edge["dst"] = missing
+        duplicate = dict(edge)
+        duplicate["src"] = "/project1/Test_network/master1"
+        graph["edges"].append(duplicate)
+        out = tmp_path / "Mutated.tdgraph.json"
+        out.write_text(json.dumps(graph), encoding="utf-8")
+        chunker = TDNetworkChunker(root_path=str(tmp_path))
+        with caplog.at_level(logging.WARNING, logger="chunking.td_network_chunker"):
+            chunks = chunker.chunk_file(str(out), "Mutated.tdgraph.json")
+        warnings = [r for r in caplog.records if "does_not_exist" in r.message]
+        assert len(warnings) == 1
+        network_chunk = next(c for c in chunks if c.chunk_type == "network")
+        assert "1 unique unresolved edge target(s)" in network_chunk.content
+
+    def test_stub_and_root_dst_do_not_trigger_unresolvable_warning(self, caplog):
+        """A stub node (out-of-scope operator) and the network root are both
+        real entries in the snapshot's own node list -- neither is
+        contract drift and neither should warn."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="chunking.td_network_chunker"):
+            _chunk_fixture()
+        assert "not a node" not in caplog.text
+
     def test_shortcut_ref_edges_map_to_references_op(self):
         chunks = _chunk_fixture()
         info1 = _by_name(chunks, "info1")
@@ -515,7 +609,7 @@ class TestScriptFileJoin:
         assert edge.source_id == info1.chunk_id
         assert edge.target_name == self.INFO1_TARGET
         assert edge.line_number == 0
-        assert edge.confidence == 0.98
+        assert edge.confidence == 1.0
         assert edge.metadata == {
             "td_edge_type": "scripted_by",
             "via": "file",

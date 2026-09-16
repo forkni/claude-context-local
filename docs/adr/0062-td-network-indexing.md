@@ -163,7 +163,9 @@ plan doc above):
    `SCRIPTED_BY` edge per node carrying `script.file`, from the DAT operator chunk to the file's
    module-summary id `<rel>:0-0:module:<stem>`, with metadata
    `{td_edge_type: scripted_by, via: file, file, synced, resolver_source: td_live}` and
-   confidence 0.98. Paths are normalised to `/`; absolute paths and any `..` segment are
+   confidence 1.0 (corrected 2026-09-15 — see ADR-0073, which deleted the invented
+   `_RESOLVED_CONFIDENCE = 0.98` this line originally documented). Paths are normalised to `/`;
+   absolute paths and any `..` segment are
    rejected with a DEBUG log. The path is resolved against the index root twice — re-rooted
    under the snapshot's grandparent (`Graph/x.tdgraph.json` next to `Scripts/`) first, then
    as written — the first existing candidate wins, else the path is used as written so the
@@ -348,3 +350,13 @@ project's storage dir (the repo's own `search_config.json` stays off; see `docs/
   per scripted node, 0 python→td_network `calls` edges, `find_path` operator → function) is
   pending a fresh `Synctextdats` → `Exportgraph` run on the TD side; the committed fixture
   covers both paths in unit tests.
+
+---
+
+**Forward pointer (ADR-0072, 2026-09-15):** the producer's edge vocabulary is 13 types, not
+the 11 this ADR's Context section describes (`clone` and `scripted_by` were both undercounted
+here) — the corrected count, the producer's own drift-guard test, and this repo's mirroring
+`TD_GRAPH_EDGE_TYPES` declaration all live in ADR-0072, which also notes the exporter's
+`Scripts/dat_NetworkGraphExt.py` path in this ADR's Context section moved to
+`Extensions/OperatorGlossary/` in 2026-09. This ADR's own history and measurements above are
+left as originally recorded.

@@ -1573,7 +1573,7 @@ class CallGraphConfig:
     in the ``chunking/relationships/`` package; only resolvers that are also
     *available* (i.e. their optional dependency is installed) are executed::
 
-        "pyan"   → PyanResolver   (pyan3>=2.6.0, optional extra [callgraph])
+        "pyan"   → PyanResolver   (pyan3>=2.8.0, optional extra [callgraph])
         "libcst" → LibCSTResolver (libcst>=1.8.6, optional extra [callgraph])
 
     Stage 3 (LSP/basedpyright) is governed **solely** by ``lsp_enabled``
@@ -1607,7 +1607,16 @@ class CallGraphConfig:
 
     lsp_enabled: bool = field(
         default=True,
-        metadata=spec(reader="search/call_edge_injection.py"),
+        metadata=spec(
+            reader="search/call_edge_injection.py",
+            benchmark_locked=(
+                "[retrieval-neutral] CANON_20260914B_LSP_REBASELINE.md: clean "
+                "same-corpus leg A/B gate PASSED on all three views "
+                "(|dMRR|<=0.02, drecall@20>=-0.02 or CI-indistinguishable from "
+                "it) -- 113 new call edges + 1847 confidence upgrades, no "
+                "measurable ranking harm; turning this off is a human decision"
+            ),
+        ),
     )
     """Enable the basedpyright LSP resolver (Stage 3).
 

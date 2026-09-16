@@ -465,7 +465,7 @@ The Mixed approach demonstrates that **MCP semantic search is production-ready**
 
 ## SSCG Retrieval Benchmark
 
-**Added**: v0.9.0 | **Last run**: 2026-08-06 (see provenance below)
+**Added**: v0.9.0 | **Last run**: 2026-09-14 (see provenance below)
 
 Measures end-to-end retrieval quality for `search_code` queries: how well the ranked results cover the labeled relevant chunks for each query.
 
@@ -502,6 +502,24 @@ Provenance: `evaluation/CANON_20260906_REBASELINE.md` (base arms of `evaluation/
 
 Deltas vs the 2026-09-05b pin (0.8164/0.6286/0.8671) are −0.0013 / +0.0038 / −0.0014, all inside the pre-registered ±0.02 drift band (recall@20 deltas −0.0059 / −0.0009 / −0.0059, all ≥ the −0.02 floor) — gate PASSED. The `contains`-edge PageRank channel that the two 09-05 pins left entangled with pool composition is now isolated on this exact index: excluding all 1,095 `contains` edges from centrality at query time moves MRR by −0.0004 on both sets and no recall metric by more than ±0.005, and no paired CI excludes zero — the channel is inert and `graph_enhanced.centrality_exclude_containment` stays default-off (`evaluation/CONTAINS_CENTRALITY_ISOLATION_20260906.md`).
 
+### Results (2026-09-14B, hybrid-only, k=10, deterministic, `BAAI/bge-m3` lineage, LSP Stage-3 gate)
+
+Provenance: `evaluation/CANON_20260914B_LSP_REBASELINE.md`. This machine (≤8.6 GB VRAM) runs the
+packaged `[DEFAULT]` embedder, `BAAI/bge-m3` — a separate, non-comparable lineage from the
+`codefuse-ai/F2LLM-v2-0.6B` table above (see the 2026-09-14 comparability-breaks bullet below).
+Full force reindex, 238 files / 2,998 chunks, three resolver tiers (`pyan`, `libcst`, `lsp`,
+`lsp_enabled=true`, the shipped default).
+
+| Dataset | Queries | MRR | Recall@20 Δ vs LSP-off control | pool_hit_rate |
+|---|---|---|---|---|
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.688** | −0.0115 | — |
+| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.511** | −0.0205\* | — |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.712** | −0.0093 | — |
+
+\* Not statistically significant (95% CI touches zero) and attributable almost entirely to a
+single-query benchmark-harness artifact unrelated to the LSP tier — see the canon doc's Q56
+investigation. LSP gate: **PASS on all three views**, `lsp_enabled` stays on.
+
 **Superseded pin (2026-09-01→09-03)**: the 2026-09-01 P0 re-baseline (63q 0.8419 / 133q 0.6378 / F-via-similar 0.8843, 219 files / 2,642 chunks) was itself superseded by an undocumented 2026-09-03 re-pin (`evaluation/CANON_20260903_REBASELINE.md`: 63q **0.8429**, 133q **0.6332**, F-via-similar **0.8856**, 233 files / 2,832 chunks, resolver mix `lsp 1875 / ast 3707 / libcst 720 / pyan 552`) after a call-graph-recall commit burst — that re-pin was never picked up in this doc until now. The expanded-set hard-miss cohort is substrate-dependent — re-derive the miss list from the current baseline before targeting it.
 
 **Comparability breaks** — do not read the numbers above as a trend against the historical table below:
@@ -524,6 +542,32 @@ Deltas vs the 2026-09-05b pin (0.8164/0.6286/0.8671) are −0.0013 / +0.0038 / �
 - The 2026-09-05 re-pin (`evaluation/CANON_20260905_REBASELINE.md`) followed the `contains`-edge commit burst (`5d50708`…`abeef6f`, 16 commits): 63q **0.8234**, 133q **0.6223**, F-via-similar **0.8697** on 234 files / 2,871 chunks (29,664 edges incl. 894 `contains`; resolver mix on `calls` edges `lsp 1911 / libcst 745 / pyan 558`). Deltas vs 09-03 (−0.0195 / −0.0109 / −0.0159) inside the ±0.02 drift band; recall@20 deltas ≥ −0.02 on both sets. Not an isolated `contains` measurement — see the canon doc's Scope note. Superseded by the 2026-09-05b re-pin below.
 - The 2026-09-05b re-pin (`evaluation/CANON_20260905B_ADR0063_REBASELINE.md`) picked up `721ccde` + `135007c`/ADR-0063 (decorated Python classes become container nodes, so their methods are chunked and gain `parent_chunk_id`/`contains` edges — previously an unmeasured IOU against the 09-05 pin): 63q **0.8164**, 133q **0.6286**, F-via-similar **0.8671** on 234 files / 2,945 chunks (+74 chunks, 30,286 edges incl. 1,095 `contains`, +201; resolver mix on `calls` edges `lsp 1925 / libcst 752 / pyan 551`). Deltas vs 09-05 (−0.0070 / +0.0063 / −0.0026) inside the ±0.02 drift band; recall@20 deltas ≥ −0.02 on both sets. Superseded by the 2026-09-06 re-pin below.
 - The 2026-09-06 re-pin (`evaluation/CANON_20260906_REBASELINE.md`, base arms of `evaluation/CONTAINS_CENTRALITY_ISOLATION_20260906.md`) followed `8e3522d` (opt-in `centrality_exclude_containment` knob): 63q **0.8151**, 133q **0.6324**, F-via-similar **0.8657** on 235 files / 2,956 chunks (30,449 edges incl. 1,095 `contains`). Deltas vs 09-05b (−0.0013 / +0.0038 / −0.0014) inside the ±0.02 drift band; recall@20 deltas ≥ −0.02 on both sets. A paired A/B on the identical index isolated the `contains` PageRank channel: treatment − base MRR −0.0004 on both sets, 133q recall@10 −0.0048 / recall@20 +0.0015, no CI excludes 0 → channel inert, knob REJECTED for default-on; the 09-05→09-05b movement is pool composition, not graph topology. This is the published baseline above.
+- The 2026-09-08 re-pin (`evaluation/CANON_20260908_REBASELINE.md`, ADR-0069 phantom-edge-shadowing fix): 63q **0.8241**, 133q **0.6469**, F-via-similar **0.8671** on 235 files / 2,978 chunks. Deltas vs 09-06 (+0.0090 / +0.0145 / +0.0014) inside the drift band. **This is the last pin in the `codefuse-ai/F2LLM-v2-0.6B` lineage** — every pin from `evaluation/EMBEDDER_F2LLM_AB_20260726.md` (F2LLM adopted as the deployed model over bge-m3, ≥12 GB VRAM machines) through this one used F2LLM-v2-0.6B, even though the 09-06/09-08 docs stopped restating it. No re-pin has run against it since.
+- **Embedding-model split, 2026-09-14** (`evaluation/CANON_20260914_REBASELINE.md`) — first canon measured on `BAAI/bge-m3` (the packaged `[DEFAULT]`, for <12 GB VRAM machines; `F2LLM-v2-0.6B` remains `[RECOMMENDED 12GB+]`, `CHANGELOG.md`). A stale-venv fix (pyan3 2.6.2 → 2.8.1, resolving `cull_subsumed` ImportError that had silently zeroed the pyan resolver tier since 2026-09-02) surfaced an apparent ~0.12–0.14 MRR "regression" against the 09-08 pin; sentence-transformers/transformers/tokenizers version counterfactuals were bit-identical and config defaults diffed clean, so the gap was **not** the venv sync — it was comparing across embedding models for the first time. This machine has never had F2LLM-v2-0.6B downloaded; the 09-08 pin is not reproducible here. **The bge-m3 and F2LLM-v2-0.6B lineages are two separate, non-comparable baselines going forward** — the pyan fix itself was validated with a same-model Leg A (pyan off, 63q 0.696) / Leg B (pyan on, 63q **0.702**) control: +0.006 MRR, no regression. bge-m3 canon-of-record: 63q **0.702**, 133q **0.514**, F-via-similar **0.728**.
+- **LSP Stage-3 gate, 2026-09-14B** (`evaluation/CANON_20260914B_LSP_REBASELINE.md`) — a same-day
+  attempt to gate the LSP resolver tier against the 09-14 (first) pin was confounded by corpus
+  drift (control captured 5 hours before treatment, a commit landing in between) and its
+  "retrieval-neutral" conclusion was reverted as unsupportable. The valid gate re-ran as a
+  freshly-captured same-corpus leg A (LSP off, 238 files / 2,998 chunks) / leg B (LSP on, same
+  chunk count) — **PASS on all three views** (`|ΔMRR| ≤ 0.02` and `Δrecall@20 ≥ −0.02`, or not
+  statistically distinguishable from that band): 63q ΔMRR −0.0116 / Δrecall@20 −0.0115, 133q ΔMRR
+  −0.0058 / Δrecall@20 −0.0205 (CI touches zero; a single-query harness artifact, not a real
+  regression — see the canon doc), F-via-similar ΔMRR −0.0136 / Δrecall@20 −0.0093. `lsp_enabled`
+  stays on as the shipped default. bge-m3 canon-of-record with LSP live: 63q **0.688**, 133q
+  **0.511**, F-via-similar **0.712** — not a regression against the 09-14 two-tier pin above; a
+  different (larger) corpus generation, non-comparable per that pin's own note. Superseded by the
+  gold-dataset correction re-pin immediately below.
+- **Gold-dataset correction re-pin, 2026-09-14 (Phase 5, same day)** — three gold defects found
+  during the LSP gate's Q56 investigation were corrected (`evaluation/golden_dataset.json` /
+  `_expanded.json`, 2026-09-14 changelog): Q56's `decorated_definition:CodeIndexManager.index`
+  demoted grade 3→2 (a 4-line `@property` pass-through, not co-primary); Q70 gained
+  `CSharpChunker.__init__` / `GLSLChunker.__init__` at grade 3 (concrete chunker initializers
+  identical in shape to the already-graded-3 ones, previously penalizing correct hits); Q94 gained
+  `CodeGraphStorage.add_node` at grade 3 (closer chunk-insertion analogue to the anchor than the
+  graded-2 edge-adders). Re-scored on the **same, unchanged** leg-B index (no reindex) — this is a
+  declared comparability break against the corrected answer key, **not** a second LSP A/B gate:
+  63q **0.6885**, 133q **0.5111**, F-via-similar **0.7276** (`evaluation/CANON_20260914B_LSP_REBASELINE.md`'s
+  "Gold-dataset correction re-pin" section). This is the current bge-m3 canon-of-record.
 - The 2026-07-28 golden-dataset repair (`6df36db`) changed scoring for 3-part `split_block` chunks; nothing measured before that commit is comparable to what's measured after.
 - The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D); the 2026-08-04 top-up grew it further to 147 (133 non-D). H queries are harder by construction (single-file, ≤2 golds), so treat each generation's figure as a separate measurement, not a before/after comparison.
 - `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, the SDK v2 migration, and every re-pin since; kept only for continuity.

@@ -11,9 +11,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TD network edges carry only honest provenance** (ADR-0073) — `TDNetworkChunker` stamped a
+  fabricated `confidence=0.98` on every edge it emits, borrowed from the LSP call-resolver's own
+  confidence tier and justified by a comment describing a two-tier resolution scheme that does not
+  exist for TD edges; edges are now stamped `confidence=1.0` (the honest value — there is no
+  resolution step to grade), while `resolver_source: td_live` and every other metadata stamp are
+  unchanged. The network chunk's summary line reported the exporter's own `stats.node_count`/
+  `edge_count` as if they were the chunker's own — they diverge by a wide margin (40 reported vs.
+  70 actually emitted for the fixture, from five separate causes including `shared_tag`'s
+  intentional double-emission) — and now reads `"N operators, M relationships reported by
+  exporter"`. A null-`dst` `script_ref` (contract-conformant, already counted on the network
+  chunk) now logs at `logger.debug` instead of `logger.warning`; a new check instead warns when
+  any edge's non-null `dst` names no node in the snapshot at all, before `chunk_id_for()` would
+  otherwise synthesize a phantom node for it silently.
+- **`RelationshipType.CLONES` + TD edge-vocabulary drift detection** (ADR-0072) —
+  `TDNetworkChunker` silently dropped the producer's `clone` edge (clone COMP → its Clone
+  Master) at DEBUG level; it is now `RelationshipType.CLONES` (`"clones"`/`"cloned_by"`,
+  weight 0.8 — same tier as `docked_to`/`scripted_by`), reachable via
+  `find_connections(relationship_types=["clones"])` like every other TD type. The producer's
+  13-entry edge vocabulary (`tdgraph_contract.GRAPH_EDGE_TYPES` in `TD_Glossary_tox`) is now
+  declared here too — `TD_GRAPH_EDGE_TYPES` / `TD_GRAPH_EDGE_TYPE_SET` in
+  `td_network_chunker.py` — with a CI test asserting the handled set (derived from
+  `_SIMPLE_EDGE_MAP` and the explicit dispatch branches, not a hand-written second list)
+  matches it exactly, mirroring the drift guard the producer already ships
+  (`test_tdgraph_edge_types_contract.py`) and had been waiting on. The unrecognized-edge-type
+  fallback is now `logger.warning` instead of `logger.debug` — the log level that let `clone`
+  sit unhandled for a full release. `tests/fixtures/td_network/Test_network.tdgraph.json`'s
+  `edge_types` histogram is rebuilt to the full, faithful 13-entry shape (zeros included,
+  matching what a real export always writes) and gained two `clone` edges, one to an in-scope
+  master and one to a new stub node (the built-in `annotateCOMP` utility-node case). Also
+  closes three small silent-ingestion gaps found while auditing the path: a null-`dst` on any
+  edge type other than `script_ref` is now skipped with a warning instead of propagating an
+  `AttributeError` that a broad `except Exception` upstream would otherwise turn into a
+  silently-dropped file; `schema_version` mismatches against the producer's contract now log a
+  warning instead of being ignored; and `script.file_matches_dat` (Sync Manifest join) and a
+  non-zero `unresolved_script_refs` count are now read/logged instead of being invisible
+  outside the network chunk's own body text.
 - **Cross-file `SCRIPTED_BY` join for synced TouchDesigner DATs** (ADR-0062 C6) —
   `TDNetworkChunker` now reads the exporter's `script.file` / `script.synced` fields and emits
-  a `scripted_by` edge (`via: file`, confidence 0.98, `resolver_source: td_live`) from each
+  a `scripted_by` edge (`via: file`, confidence 1.0, `resolver_source: td_live`) from each
   scripted DAT operator chunk to the synced `.py`/`.glsl` file's module id. Paths are
   normalised, re-rooted against the snapshot's grandparent when that file exists, and rejected
   (DEBUG log) when absolute or escaping the index root. A storage-wide, idempotent post-pass
@@ -112,6 +148,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pyan tier silently zeroed on every index since 2026-09-02** — `f5acd585` migrated
+  `chunking/relationships/external_call_graph.py`'s `_TrackedVisitor.postprocess()` to pyan3
+  2.8's postprocessor pipeline (`cull_inherited` dropped, `cull_subsumed` added), but the venv
+  was never re-synced to `uv.lock` and stayed on pyan3 2.6.2. The `cull_subsumed` import lived
+  *inside* `postprocess()` (a method body), not at module scope, so the module-level
+  `try/except ImportError` guard around `pyan.analyzer.CallGraphVisitor` still succeeded and
+  `pyan_available()` kept reporting the tier as usable; the real `ImportError` only fired deep
+  inside a resolver subprocess the first time `postprocess()` actually ran
+  (`chunking/relationships/call_edge_resolver.py:_resolve_in_subprocess`), where it was
+  swallowed as "non-fatal" — every index silently lost the pyan cross-module edge tier (libcst
+  only) for 12 days / 94 commits / six canon re-baselines (09-03 → 09-08), none of which
+  detected it because the venv drift had also broken `pytest-timeout` and made the local test
+  suite uncollectable since 2026-08-20. Fixed on two levels: (1) `uv sync --extra callgraph
+  --extra test --extra otel` to bring the venv back to `uv.lock` (pyan3 2.8.1); (2) the
+  `pyan.postprocessor` import moved to module scope so a *future* API mismatch (any pyan3
+  version whose postprocessor doesn't match what this module needs) flips `pyan_available()` to
+  False at import time with an actionable `pyan_unavailable_reason()` message (names the
+  installed version, the required floor, and the `uv sync` fix) instead of failing lazily and
+  silently inside a subprocess. `pyproject.toml`'s `pyan3` floor raised `>=2.6.0` → `>=2.8.0`
+  to match. A same-model (bge-m3) Leg A (pyan off) / Leg B (pyan on) A/B on this fix showed
+  +0.006 MRR, no regression — see `evaluation/CANON_20260914_REBASELINE.md`, which also
+  documents an unrelated finding surfaced during the same investigation: the prior canon
+  lineage back to 2026-07-26 was measured on `codefuse-ai/F2LLM-v2-0.6B`, not the `BAAI/bge-m3`
+  this (VRAM-constrained) machine runs, making the two canon lineages non-comparable.
+- **Stage-3 LSP resolver tier brought online (install + verify).** Every index had been logging
+  `[RESOLVERS] lsp resolver unavailable (optional dep missing)` — the `[lsp]` extra
+  (`basedpyright>=1.21`) was never installed on this machine, so the highest-confidence resolver
+  tier (`ResolverConfidence.LSP = 0.98`, above libcst 0.90 and pyan 0.75) never dispatched.
+  `uv sync --extra callgraph --extra test --extra otel --extra lsp` installed
+  `basedpyright==1.39.10` (2 packages, `uv.lock` unchanged — already pinned). `lsp_enabled` was
+  already `true` in `search_config.json`; Stage 3 is gated solely on that flag, not on the
+  `resolvers` list (ADR-0032 §D3), so no config edit was needed. A force reindex confirmed
+  `Dispatching 3 resolver(s)`, `[RESOLVERS] lsp: 1960 edges → added=113, upgraded=1847`, no
+  silent-zero-edge path (the `[LSP] No edges produced` warning stayed absent) and no budget
+  truncation (51.5s resolve vs the 180s floor). Resulting `resolver_source` mix: lsp 1960 @0.98,
+  libcst 759 @0.90, pyan 556 @0.75 — libcst/pyan counts fell as expected, since LSP merges last
+  and upgrades edges the lower tiers already found rather than losing coverage. Scoped to install
+  - verify only; the retrieval A/B gate and canon re-pin on this three-tier substrate are
+  deferred — see the note appended to `evaluation/CANON_20260914_REBASELINE.md`.
 - **Methods of a decorated class were never chunked at all** (ADR-0063). `decorated_definition`
   was splittable but not a container (`chunking/languages/base.py`), so `@dataclass class Foo: def
   bar(self): ...` chunked the whole decorated class as one opaque blob — `bar` never surfaced as
@@ -324,6 +399,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   condition (raise the floor once nltk publishes >3.10.3); Dependabot alert #33 dismissed
   `not_used`. The predecessor deferral for CVE-2026-12243 no longer flags on 3.10.3 and was
   folded into the same ledger entry.
+
 ### Fixed
 
 - **Flaky HF Hub model-existence check** (`embeddings/model_loader.py`) — `ModelLoader.load()`

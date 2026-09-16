@@ -37,6 +37,7 @@ import argparse
 import asyncio
 import json
 import logging
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -395,6 +396,79 @@ def _build_config_metadata(
     if ego_per_request:
         metadata["ego_per_request"] = True
     return metadata
+
+
+def _build_substrate_fingerprint(searcher: Any, cfg: "SearchConfig") -> dict[str, Any]:
+    """Capture what corpus/model/resolver-mix a run actually measured.
+
+    Genesis: a 2026-09-14 LSP-tier gate paired two result files that silently
+    differed in corpus size (2991 vs 2992 chunks, captured 5 hours apart) --
+    nothing in ``config_metadata`` (``project_path``/``k``/``category_filter``/
+    ``split_filter`` only) could catch it, and the false "retrieval-neutral"
+    verdict nearly got pinned as canon. This fingerprint plus the
+    ``[CONFOUND]`` check in ``compare_runs`` are the fix: every run now
+    records enough about its substrate to catch a cross-substrate
+    ``--compare`` before its delta is trusted.
+
+    Best-effort: each field is independently guarded so a missing attribute
+    on an unusual searcher (e.g. a test double) drops that one field rather
+    than failing the whole benchmark run.
+    """
+    fingerprint: dict[str, Any] = {}
+
+    try:
+        stats = searcher.dense_index.get_stats()
+        fingerprint["total_chunks"] = stats.get("total_chunks")
+        fingerprint["files_indexed"] = stats.get("files_indexed")
+    except Exception:
+        pass
+
+    try:
+        fingerprint["embedding_model"] = cfg.embedding.model_name
+        fingerprint["embedding_dimension"] = cfg.embedding.dimension
+    except Exception:
+        pass
+
+    try:
+        fingerprint["lsp_enabled"] = cfg.call_graph.lsp_enabled
+        fingerprint["resolvers"] = list(cfg.call_graph.resolvers or [])
+    except Exception:
+        pass
+
+    try:
+        graph = searcher.dense_index.graph_integration.storage.graph
+        resolver_counts: Counter[str] = Counter()
+        for _, _, edge_data in graph.edges(data=True):
+            source = edge_data.get("resolver_source")
+            if source:
+                resolver_counts[source] += 1
+        fingerprint["resolver_edge_counts"] = dict(resolver_counts)
+    except Exception:
+        pass
+
+    try:
+        sha_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=_PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if sha_result.returncode == 0:
+            fingerprint["git_sha"] = sha_result.stdout.strip()
+        dirty_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=_PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if dirty_result.returncode == 0:
+            fingerprint["git_dirty"] = bool(dirty_result.stdout.strip())
+    except Exception:
+        pass
+
+    return fingerprint
 
 
 def _print_overrides(
@@ -1527,6 +1601,49 @@ def _paired_delta_summary(
     return mean_delta, se, ci95, n_moved, n
 
 
+_SUBSTRATE_CONFOUND_FIELDS: tuple[str, ...] = (
+    "total_chunks",
+    "files_indexed",
+    "embedding_model",
+    "git_sha",
+)
+
+
+def _check_substrate_confound(r1: dict[str, Any], r2: dict[str, Any]) -> None:
+    """Warn loudly when two compared runs measured different substrates.
+
+    Compares the ``substrate`` fingerprint (``_build_substrate_fingerprint``)
+    recorded in each run's ``config_metadata``. This is the direct fix for
+    the 2026-09-14 LSP gate, which paired two result files that silently
+    differed in corpus size (2991 vs 2992 chunks, captured 5 hours apart) --
+    the resulting deltas were not attributable to the config difference under
+    test, and a false "retrieval-neutral" verdict nearly got pinned as canon.
+
+    Result files predating this fingerprint (no ``substrate`` key) are
+    skipped silently -- there is nothing to compare against, not a confound
+    signal in itself.
+    """
+    sub1 = r1.get("config_metadata", {}).get("substrate")
+    sub2 = r2.get("config_metadata", {}).get("substrate")
+    if not sub1 or not sub2:
+        return
+    mismatches = [
+        (field_name, sub1.get(field_name), sub2.get(field_name))
+        for field_name in _SUBSTRATE_CONFOUND_FIELDS
+        if sub1.get(field_name) is not None
+        and sub2.get(field_name) is not None
+        and sub1.get(field_name) != sub2.get(field_name)
+    ]
+    if mismatches:
+        print(
+            f"\n[CONFOUND] '{r1.get('config_name')}' and '{r2.get('config_name')}' "
+            "measured DIFFERENT substrates -- deltas below are not attributable "
+            "to the config under test:"
+        )
+        for field_name, v1, v2 in mismatches:
+            print(f"    {field_name}: {v1!r} != {v2!r}")
+
+
 def compare_runs(result_files: list[str], split: str | None = None) -> None:
     """Load saved benchmark JSONs and print a comparison leaderboard.
 
@@ -1552,6 +1669,7 @@ def compare_runs(result_files: list[str], split: str | None = None) -> None:
     # Per-query delta for first two runs
     if len(runs) >= 2:
         r1, r2 = runs[0], runs[1]
+        _check_substrate_confound(r1, r2)
         q1 = {q["id"]: q for q in r1.get("per_query", [])}
         q2 = {q["id"]: q for q in r2.get("per_query", [])}
         if split is not None:
@@ -2134,6 +2252,7 @@ async def run_single(
         config_metadata["peak_vram_reserved_gb"] = round(
             torch_module.cuda.max_memory_reserved() / 1e9, 2
         )
+    config_metadata["substrate"] = _build_substrate_fingerprint(searcher, cfg)
 
     return {
         "config_name": config_name,

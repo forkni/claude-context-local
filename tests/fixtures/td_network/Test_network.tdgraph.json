@@ -210,6 +210,12 @@
       "stub": true,
       "name": "mix1",
       "family": "CHOP"
+    },
+    {
+      "id": "/project1/external/annotate1",
+      "stub": true,
+      "name": "annotate1",
+      "family": "COMP"
     }
   ],
   "edges": [
@@ -234,6 +240,8 @@
     {"type": "par_ref", "src": "/project1/Test_network/glsl1", "dst": "/project1/Test_network/glslpixel1", "par": "pixeldat"},
     {"type": "bind", "src": "/project1/Test_network/slave1", "dst": "/project1/Test_network/master1", "par": "value1"},
     {"type": "export", "src": "/project1/Test_network/exportsrc1", "dst": "/project1/external/mix1", "par": "value1"},
+    {"type": "clone", "src": "/project1/Test_network/noise1", "dst": "/project1/Test_network/master1"},
+    {"type": "clone", "src": "/project1/Test_network/exportsrc1", "dst": "/project1/external/annotate1"},
     {"type": "script_ref", "src": "/project1/Test_network/info1", "dst": null, "target": "Ctrl", "kind": "parent_shortcut", "line": 5, "col": 4},
     {"type": "script_ref", "src": "/project1/Test_network/info1", "dst": null, "target": "/project1/Test_network/missing1", "kind": "op_call", "line": 7, "col": 4},
     {"type": "script_ref", "src": "/project1/Test_network/info1", "dst": null, "target": "GLSL1", "kind": "op_shortcut", "line": 9, "col": 4},
@@ -299,19 +307,21 @@
     {"type": "wire", "count": 2},
     {"type": "comp_wire", "count": 1},
     {"type": "dock", "count": 2},
+    {"type": "scripted_by", "count": 1},
     {"type": "par_ref", "count": 1},
     {"type": "bind", "count": 1},
     {"type": "export", "count": 1},
+    {"type": "clone", "count": 2},
     {"type": "script_ref", "count": 4},
     {"type": "shortcut_ref", "count": 2},
     {"type": "replicator", "count": 1},
     {"type": "shared_tag", "count": 9}
   ],
   "stats": {
-    "node_count": 15,
-    "edge_count": 38,
+    "node_count": 16,
+    "edge_count": 40,
     "class_count": 8,
-    "family_counts": {"CHOP": 4, "COMP": 5, "DAT": 2, "SOP": 2, "TOP": 2},
+    "family_counts": {"CHOP": 4, "COMP": 6, "DAT": 2, "SOP": 2, "TOP": 2},
     "isolated_nodes": []
   }
 }
