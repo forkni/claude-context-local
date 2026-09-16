@@ -171,7 +171,7 @@ $env:HF_TOKEN = "hf_your_token_here"
 
 ```powershell
 # Check HuggingFace authentication status
-verify-hf-auth.bat
+verify-hf-auth.cmd
 
 # Or run the Python script directly
 .venv\Scripts\python.exe scripts\verify_hf_auth.py
@@ -227,6 +227,23 @@ Test your authentication with these commands:
 # Full verification
 verify-installation.cmd
 ```
+
+### Model Verification and Connectivity Failures
+
+When a model is not already cached, the system checks that it exists on the
+Hugging Face Hub before downloading it. Transient failures in that check are
+retried up to three times with a short backoff.
+
+- **`Model '<name>' not found on HuggingFace Hub!`**: Check the model ID for
+  typos, confirm that the repository exists, and verify that your account has
+  access to it.
+- **`Could not verify model '<name>' on HuggingFace Hub after 3 attempts!`**:
+  The Hub check failed repeatedly with a non-404 error. Check your internet
+  connection, check for a Hugging Face service outage, and try again later.
+  This message alone does not prove that the model is absent.
+
+These retries apply to the Hub existence check; they do not retry the model
+download itself.
 
 ### Security Notes
 
