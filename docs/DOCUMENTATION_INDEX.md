@@ -79,7 +79,7 @@ Design decisions and their rationale — accepted, rejected, and superseded — 
 
 | Document | Description |
 | ---------- | ------------- |
-| **[docs/adr/README.md](adr/README.md)** | Index of all 20 ADRs (number, title, status, date) |
+| **[docs/adr/README.md](adr/README.md)** | Index of all ADRs (number, title, status, date) |
 
 Notable recent decisions: ADR-0014 (per-project search config overrides), ADR-0015 (community subsystem removed), ADR-0016 (DSPy eval subsystem removed), ADR-0017 (MCP SDK v2 adoption), ADR-0018 (`RetrievalRequest` carries effective config), ADR-0019 (intent-adaptive fusion weights rejected), ADR-0020 (config field liveness audit).
 
