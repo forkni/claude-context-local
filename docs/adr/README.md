@@ -79,6 +79,7 @@ for avoiding re-litigating settled questions.
 | [0071](0071-lsp-stage3-goes-live-bge-m3.md) | LSP Stage-3 resolver tier goes live on the bge-m3 lineage | accepted | 2026-09-14 |
 | [0072](0072-td-edge-type-vocabulary-is-declared-and-drift-tested.md) | TD edge-type vocabulary is declared and drift-tested (`clones`) | accepted | 2026-09-15 |
 | [0073](0073-td-network-edges-carry-only-honest-provenance.md) | TD network edges carry only honest provenance | accepted | 2026-09-15 |
+| [0074](0074-procedural-graphs-are-stored-in-seed-format-outside-codegraphstorage.md) | Procedural graphs are stored in seed format outside CodeGraphStorage | accepted | 2026-09-16 |
 
 ## Adding a new ADR
 

@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Procedural Graph store and two advanced tools** (ADR-0074) — a new file-backed
+  `ProceduralGraphStore` (`graph/procedural_graph.py`) holds producer-authored procedural graphs
+  (arXiv 2609.09153: action nodes, text-attributed transitions) outside `CodeGraphStorage`, under
+  `<storage_dir>/procedural_graphs/`. Two new `advanced=True` MCP tools serve them:
+  `get_procedural_guidance` locates an agent's last action and extracts its h-hop out-neighbourhood
+  as Φ guidance text (`condition`/`guidance`/`pitfalls`), and `edit_procedural_graph` applies a
+  typed, validated edit with a `dry_run` safety gate. Neither makes an LLM call or a network call —
+  guidance text is returned verbatim for the calling agent to reason over. Bundled with a
+  `network_layout` seed fixture and `scripts/import_procedural_graph.py`, an operator-only import
+  entry point that deliberately avoids the ~10.4s PyTorch import cost of
+  `mcp_server.storage_manager`. Tool count: 18 → 20 (10 core + 10 advanced).
 - **TD network edges carry only honest provenance** (ADR-0073) — `TDNetworkChunker` stamped a
   fabricated `confidence=0.98` on every edge it emits, borrowed from the LSP call-resolver's own
   confidence tier and justified by a comment describing a two-tier resolution scheme that does not
