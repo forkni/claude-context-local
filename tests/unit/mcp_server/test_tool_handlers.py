@@ -1263,6 +1263,113 @@ async def test_handle_find_connections_zero_callers_survives_formatting():
             assert formatted["direct_callees"] == [], fmt
 
 
+def _patch_find_path_deps():
+    """Common patch stack for handle_find_path tests."""
+    return (
+        patch("mcp_server.tools.search_handlers.get_searcher"),
+        patch("mcp_server.tools.decorators.get_state"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_find_path_unresolvable_chunk_id_returns_structured_error():
+    """H5 regression: a source_chunk_id that is not a graph node and has no
+    derivable symbol (last segment is a line range -- genuinely nameless)
+    must return a structured error naming the expected format, not
+    ``path_found: false``. A "does not exist" answer and a "no path between
+    these" answer must not be reported identically -- the pre-fix handler
+    handed an unresolved chunk_id straight to find_path and silently
+    reported "No path exists" for it.
+    """
+    p_searcher, p_dec_state = _patch_find_path_deps()
+    with p_searcher as mock_get_searcher, p_dec_state as mock_dec_state:
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_dec_state.return_value = mock_state
+
+        mock_gs = MagicMock()
+        mock_gs.graph.__contains__.return_value = False
+
+        mock_searcher = Mock()
+        mock_searcher.graph_storage = mock_gs
+        mock_get_searcher.return_value = mock_searcher
+
+        result = await tool_specs.handle_find_path(
+            {
+                "source_chunk_id": "src/auth.py:10-20",  # line-range-only: unrecoverable
+                "target_chunk_id": "src/other.py:1-5:function:helper",
+            }
+        )
+
+        assert "error" in result
+        assert "Chunk not found" in result["error"]
+        assert "path_found" not in result
+
+
+@pytest.mark.asyncio
+async def test_handle_find_path_recovers_shorthand_source_chunk_id():
+    """H5 fix: a 'file.py:symbol' shorthand source_chunk_id that is not a
+    graph node gets recovered via the symbol cascade -- the same recovery
+    search_code/find_connections already get -- instead of silently
+    reporting 'no path exists' for a pair that IS connected.
+    """
+    current_id = "tools/td_layout.py:498-535:function:score_layout"
+    target_id = "tools/pg_actions.py:10-20:function:caller"
+
+    p_searcher, p_dec_state = _patch_find_path_deps()
+    with (
+        p_searcher as mock_get_searcher,
+        p_dec_state as mock_dec_state,
+        patch("graph.graph_queries.GraphQueryEngine") as mock_engine_cls,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_dec_state.return_value = mock_state
+
+        mock_gs = MagicMock()
+        # Only the recovered canonical id and the target are real graph members;
+        # the shorthand itself is not.
+        mock_gs.graph.__contains__.side_effect = lambda cid: (
+            cid
+            in {
+                current_id,
+                target_id,
+            }
+        )
+        mock_gs.get_nodes_by_name.return_value = [current_id]
+
+        mock_searcher = Mock()
+        mock_searcher.graph_storage = mock_gs
+        mock_get_searcher.return_value = mock_searcher
+
+        mock_engine = Mock()
+        mock_engine.find_path.return_value = {
+            "path_found": True,
+            "path_length": 1,
+            "path": [
+                {"node": {"chunk_id": current_id, "name": "score_layout"}},
+                {"node": {"chunk_id": target_id, "name": "caller"}},
+            ],
+            "edge_types_traversed": ["calls"],
+        }
+        mock_engine_cls.return_value = mock_engine
+
+        result = await tool_specs.handle_find_path(
+            {
+                "source_chunk_id": "tools/td_layout.py:score_layout",  # shorthand
+                "target_chunk_id": target_id,
+            }
+        )
+
+        assert result["path_found"] is True
+        assert result["path_length"] == 1
+        # find_path must run against the *recovered* canonical id, not the
+        # unresolvable shorthand.
+        mock_engine.find_path.assert_called_once()
+        _, call_kwargs = mock_engine.find_path.call_args
+        assert call_kwargs["source_id"] == current_id
+
+
 # ============================================================================
 # COMPLEX TOOLS TESTS (Simplified - full integration testing elsewhere)
 # ============================================================================

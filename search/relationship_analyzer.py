@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from chunking.language_registry import PSEUDO_LANGUAGES
 from graph.graph_queries import GraphQueryEngine, RelationshipEntry
+from search.chunk_id import derive_symbol_hint
 from search.exceptions import SearchError
 from search.filters import (
     matches_directory_filter,
@@ -660,6 +661,7 @@ class RelationshipAnalyzer:
         symbol_name: str,
         exclude_dirs: list[str] | None,
         strict_name_match: bool = False,
+        path_hint: str | None = None,
     ) -> tuple[Any, str] | None:
         """Resolve a symbol name to (result, chunk_id) via the Tier 1→2 cascade.
 
@@ -681,6 +683,13 @@ class RelationshipAnalyzer:
                 top semantic hit. _resolve_target (user symbol queries) keeps the
                 lenient default so ambiguous/fuzzy lookups still return a best
                 guess.
+            path_hint: File path recovered alongside symbol_name (from a stale or
+                shorthand chunk_id) — a same-file *preference*, not a filter. Many
+                symbol names are defined in multiple files (e.g. ``onValueChange``
+                across TouchDesigner extensions), so without this a stale ID for a
+                common name can silently re-resolve to an unrelated file. Both
+                tiers stable-sort matches so a same-file candidate wins ties;
+                candidates outside path_hint remain reachable, just ranked after.
         """
         # Tier 1: graph exact-name lookup + suffix scan
         graph_storage = None
@@ -716,6 +725,14 @@ class RelationshipAnalyzer:
                     ]
             if not strict_name_match:
                 matches = prefer_real_language_nodes(graph_storage, matches)
+            if path_hint:
+                # Stable sort: same-file candidates win ties without disturbing
+                # the pseudo-language ordering just established above.
+                hint = normalize_path_lower(path_hint)
+                matches = sorted(
+                    matches,
+                    key=lambda cid: normalize_path_lower(cid.split(":")[0]) != hint,
+                )
             for cid in matches:
                 result = self.searcher.get_by_chunk_id(cid)
                 if result:
@@ -760,7 +777,9 @@ class RelationshipAnalyzer:
             "type_definition": 8,
         }
 
-        def _priority(r: Any) -> int:
+        hint = normalize_path_lower(path_hint) if path_hint else None
+
+        def _priority(r: Any) -> tuple[int, int]:
             if hasattr(r, "metadata"):
                 chunk_type = r.metadata.get("chunk_type", "unknown")
                 file_path = r.metadata.get("file", r.metadata.get("file_path", ""))
@@ -771,7 +790,10 @@ class RelationshipAnalyzer:
             fp = normalize_path_lower(file_path)
             if "/tests/" in fp or "/test_" in fp or fp.startswith("tests/"):
                 base += 100
-            return base
+            # path_mismatch is the primary sort key: a same-file candidate always
+            # outranks a cross-file one, regardless of type/test-path penalties.
+            path_mismatch = int(hint is not None and fp != hint)
+            return path_mismatch, base
 
         candidates = sorted(candidates, key=_priority)
         best = candidates[0]
@@ -788,32 +810,48 @@ class RelationshipAnalyzer:
         symbol_name: str | None,
         exclude_dirs: list[str] | None,
     ) -> tuple[Any, str]:
+        path_hint: str | None = None
         if chunk_id:
             result = self.searcher.get_by_chunk_id(chunk_id)
             if result:
                 return result, chunk_id
-            # Chunk not found — the index was likely incrementally reindexed and the
-            # line range embedded in the chunk_id has drifted (e.g. after editing a
-            # file, `path:339-342:method:Cls.m` becomes `path:350-353:method:Cls.m`
-            # but the old node survives in the call graph). Derive the symbol name
-            # from the last colon-segment and fall through to the Tier 1→2 symbol-
-            # resolution block below so we can locate the *current* chunk.
-            parts = chunk_id.split(":")
-            if len(parts) >= 3:
-                symbol_name = parts[-1]
+            # Chunk not found. Two cases share this path:
+            #   1. Stale ID — the index was incrementally reindexed and the line
+            #      range has drifted (e.g. after editing a file, `path:339-342:
+            #      method:Cls.m` becomes `path:350-353:method:Cls.m` but the old
+            #      node survives in the call graph).
+            #   2. Shorthand — an agent passed `"file.py:symbol"` instead of the
+            #      full canonical form documented in the tool schema.
+            # Both cases carry a derivable (file_path, symbol_name); fall through
+            # to the Tier 1→2 symbol-resolution block below, using the recovered
+            # path as a same-file preference so a common symbol name (e.g. a
+            # TouchDesigner callback defined in 100+ files) doesn't silently
+            # re-resolve to the wrong file.
+            hint = derive_symbol_hint(chunk_id)
+            if hint is not None:
+                path_hint, derived_symbol = hint
+                # An explicit symbol_name argument is more trustworthy than one
+                # derived from a malformed chunk_id — don't overwrite it.
+                symbol_name = symbol_name or derived_symbol
                 logger.warning(
                     f"[RESOLVE] chunk_id '{chunk_id}' not in index; "
-                    f"retrying by symbol '{symbol_name}'"
+                    f"retrying by symbol '{symbol_name}' in '{path_hint}'"
                 )
             else:
-                raise SearchError(f"Chunk not found: {chunk_id}")
+                raise SearchError(
+                    f"Chunk not found: {chunk_id}. Expected "
+                    f"'path:start-end:type:name' from search_code results, "
+                    f"or pass symbol_name= instead."
+                )
 
         # Delegate Tier 1→2 cascade to shared helper; raise on failure.
         if symbol_name is None:
             raise SearchError(
                 "No chunk_id or symbol_name provided for target resolution"
             )
-        resolved = self._resolve_by_symbol(symbol_name, exclude_dirs)
+        resolved = self._resolve_by_symbol(
+            symbol_name, exclude_dirs, path_hint=path_hint
+        )
         if resolved is not None:
             return resolved
         raise SearchError(f"Symbol not found: {symbol_name}")

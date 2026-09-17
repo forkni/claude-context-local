@@ -91,6 +91,8 @@ async def test_path_found_attaches_endpoints_and_system_message(
 
     mock_gs = Mock()
     mock_gs.get_node_data.return_value = None
+    # Both supplied chunk_ids are already graph members — skip H5 recovery.
+    mock_gs.graph.__contains__ = Mock(return_value=True)
     mock_searcher = Mock()
     mock_searcher.graph_storage = mock_gs
 
@@ -123,10 +125,25 @@ async def test_path_found_attaches_endpoints_and_system_message(
 async def test_no_path_returns_path_found_false_and_hint(
     dec_state, passthrough_metadata
 ):
-    """When find_path returns None, handler returns path_found=False with a hint message."""
+    """When find_path returns None for two endpoints that DO exist in the
+    graph, handler returns path_found=False with a hint message and
+    exists_in_graph=True for both -- a genuine "not connected" answer.
+
+    Post-H5-fix, a chunk_id that is *not* a graph member never reaches this
+    branch: it is either recovered via derive_symbol_hint() beforehand or
+    the handler returns a structured error, so exists_in_graph is always
+    True by the time find_path has actually run. See
+    test_handle_find_path_unresolvable_chunk_id_returns_structured_error in
+    test_tool_handlers.py for the "doesn't exist" case this replaces.
+    """
+    source_id = "file.py:1-10:function:source_fn"
+    target_id = "file.py:20-30:function:target_fn"
+
     mock_gs = Mock()
     mock_gs.get_node_data.return_value = None
-    mock_gs.graph.__contains__ = Mock(return_value=False)
+    mock_gs.graph.__contains__ = Mock(
+        side_effect=lambda cid: cid in {source_id, target_id}
+    )
     mock_searcher = Mock()
     mock_searcher.graph_storage = mock_gs
 
@@ -143,15 +160,15 @@ async def test_no_path_returns_path_found_false_and_hint(
     ):
         result = await handle_find_path(
             {
-                "source_chunk_id": "file.py:1-10:function:source_fn",
-                "target_chunk_id": "file.py:20-30:function:target_fn",
+                "source_chunk_id": source_id,
+                "target_chunk_id": target_id,
             }
         )
 
     assert result["path_found"] is False
     assert "No path found" in result["system_message"]
-    assert result["source"]["exists_in_graph"] is False
-    assert result["target"]["exists_in_graph"] is False
+    assert result["source"]["exists_in_graph"] is True
+    assert result["target"]["exists_in_graph"] is True
 
 
 @pytest.mark.asyncio
@@ -193,6 +210,9 @@ async def test_target_symbol_unresolved_returns_error(dec_state, passthrough_met
     mock_gs = Mock()
     mock_gs.get_nodes_by_name.return_value = []
     mock_gs.graph.nodes.return_value = []
+    # source_chunk_id is already a graph member — skip H5 recovery so the
+    # target-symbol failure below is what's under test.
+    mock_gs.graph.__contains__ = Mock(return_value=True)
 
     mock_searcher = Mock()
     mock_searcher.graph_storage = mock_gs
