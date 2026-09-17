@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "name": "network_layout",
+  "nodes": [
+    {
+      "id": "Start"
+    },
+    {
+      "id": "Read_Layout"
+    },
+    {
+      "id": "Identify_Group"
+    },
+    {
+      "id": "Compute_Positions"
+    },
+    {
+      "id": "Create_Op"
+    },
+    {
+      "id": "Set_Position"
+    },
+    {
+      "id": "Connect_Ops"
+    },
+    {
+      "id": "Query_Docked"
+    },
+    {
+      "id": "Reposition_Docked"
+    },
+    {
+      "id": "Update_Annotation"
+    },
+    {
+      "id": "Verify_Layout"
+    },
+    {
+      "id": "End"
+    }
+  ],
+  "edges": [
+    {
+      "src": "Compute_Positions",
+      "dst": "Create_Op",
+      "relation": "LEADS_TO",
+      "condition": "Target positions computed.",
+      "guidance": "Create the operator that will occupy the first computed position.",
+      "pitfalls": "Creating operators before positions are computed forces a second move pass."
+    },
+    {
+      "src": "Compute_Positions",
+      "dst": "Update_Annotation",
+      "relation": "PROVIDES_INPUT_FOR",
+      "condition": "Target positions computed.",
+      "guidance": "Computed positions also drive the layout annotation shown to the user.",
+      "pitfalls": ""
+    },
+    {
+      "src": "Connect_Ops",
+      "dst": "Update_Annotation",
+      "relation": "PROVIDES_INPUT_FOR",
+      "condition": "Operators connected.",
+      "guidance": "The new connections feed the annotation describing the network.",
+      "pitfalls": ""
+    },
+    {
+      "src": "Create_Op",
+      "dst": "Set_Position",
+      "relation": "LEADS_TO",
+      "condition": "Operator created.",
+      "guidance": "Set the operator's position to its computed target.",
+      "pitfalls": "Leaving a new operator at its default position hides layout intent."
+    },
+    {
+      "src": "Create_Op",
+      "dst": "Connect_Ops",
+      "relation": "TRIGGERS",
+      "condition": "Operator created.",
+      "guidance": "Creation triggers connecting the operator into the existing network.",
+      "pitfalls": "Connecting before position is set makes the resulting wires hard to read."
+    },
+    {
+      "src": "Identify_Group",
+      "dst": "Compute_Positions",
+      "relation": "LEADS_TO",
+      "condition": "Target group identified.",
+      "guidance": "Compute target positions for every operator in the group.",
+      "pitfalls": "Ignoring existing spacing conventions produces cluttered layouts."
+    },
+    {
+      "src": "Identify_Group",
+      "dst": "Query_Docked",
+      "relation": "PROVIDES_INPUT_FOR",
+      "condition": "Group membership is known.",
+      "guidance": "Group membership narrows which operators need a dock-state query.",
+      "pitfalls": "Stale membership data yields a query against the wrong operators."
+    },
+    {
+      "src": "Query_Docked",
+      "dst": "Verify_Layout",
+      "relation": "CONVERGES_TO",
+      "condition": "Operator is not docked.",
+      "guidance": "With no docked operator to reposition, proceed straight to verification.",
+      "pitfalls": "Verifying too early misses a dock relationship formed later in the pass."
+    },
+    {
+      "src": "Query_Docked",
+      "dst": "Update_Annotation",
+      "relation": "PROVIDES_INPUT_FOR",
+      "condition": "Dock state queried.",
+      "guidance": "Dock state is recorded in the annotation regardless of the query result.",
+      "pitfalls": "Omitting a negative dock result makes the annotation look incomplete."
+    },
+    {
+      "src": "Read_Layout",
+      "dst": "Identify_Group",
+      "relation": "LEADS_TO",
+      "condition": "Existing layout has been read.",
+      "guidance": "Identify the operator group that needs repositioning.",
+      "pitfalls": "Do not assume a single group; a selection may span several."
+    },
+    {
+      "src": "Reposition_Docked",
+      "dst": "Verify_Layout",
+      "relation": "CONVERGES_TO",
+      "condition": "Docked operator repositioned.",
+      "guidance": "Both the docked and moved operators are now placed; verify the pair.",
+      "pitfalls": "Verifying only the moved operator misses drift in its docked partner."
+    },
+    {
+      "src": "Set_Position",
+      "dst": "Reposition_Docked",
+      "relation": "PROVIDES_INPUT_FOR",
+      "condition": "Position set.",
+      "guidance": "The new position is the input for repositioning any docked operator.",
+      "pitfalls": "Using the pre-move position here reintroduces the overlap being fixed."
+    },
+    {
+      "src": "Set_Position",
+      "dst": "Query_Docked",
+      "relation": "TRIGGERS",
+      "condition": "Position set.",
+      "guidance": "Query whether the moved operator is docked to another.",
+      "pitfalls": "Skipping the dock query can silently detach a docked pair."
+    },
+    {
+      "src": "Start",
+      "dst": "Read_Layout",
+      "relation": "LEADS_TO",
+      "condition": "Layout pass begins.",
+      "guidance": "Read the existing network layout before making changes.",
+      "pitfalls": ""
+    },
+    {
+      "src": "Update_Annotation",
+      "dst": "Verify_Layout",
+      "relation": "CONVERGES_TO",
+      "condition": "Annotation updated.",
+      "guidance": "With the annotation current, verify the layout it describes.",
+      "pitfalls": "An unverified layout can drift out of sync with its own annotation."
+    },
+    {
+      "src": "Update_Annotation",
+      "dst": "End",
+      "relation": "LEADS_TO",
+      "condition": "Annotation updated and layout already verified.",
+      "guidance": "Close out the layout pass.",
+      "pitfalls": "Ending without a verification step leaves silent misplacements uncaught."
+    },
+    {
+      "src": "Verify_Layout",
+      "dst": "Set_Position",
+      "relation": "LEADS_TO",
+      "condition": "Verification finds a position still out of tolerance.",
+      "guidance": "Return to Set_Position and correct the flagged operator.",
+      "pitfalls": "Repeating verification without changing tolerance can loop indefinitely; cap retries."
+    }
+  ]
+}
