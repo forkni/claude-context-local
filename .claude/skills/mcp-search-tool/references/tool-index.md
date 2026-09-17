@@ -1,10 +1,10 @@
-# MCP Tool Index (18 tools: 10 core + 8 advanced)
+# MCP Tool Index (20 tools: 10 core + 10 advanced)
 
 All tools use the `code-search:` server prefix. Always use fully qualified names.
 
 **Tiering:** by default the server's `list_tools` advertises only the **10 core** tools (tool-count budget, MCP Architecture-Patterns §VI-C). Set
-`MCP_EXPOSE_ADVANCED_TOOLS` to `1`/`true`/`yes` (case-insensitive) on the server process **and reconnect** (`/mcp` → Reconnect) to also *list* the 8
-**advanced** tools (marked below). This flag only controls what `list_tools` advertises — `TOOL_DISPATCH` internally registers all 18 tools
+`MCP_EXPOSE_ADVANCED_TOOLS` to `1`/`true`/`yes` (case-insensitive) on the server process **and reconnect** (`/mcp` → Reconnect) to also *list* the 10
+**advanced** tools (marked below). This flag only controls what `list_tools` advertises — `TOOL_DISPATCH` internally registers all 20 tools
 regardless, so an advanced tool called by exact name while unlisted still fails at the client/protocol level (the client won't offer it), not because
 the server can't route it. **An unlisted tool cannot be called — it is not dispatchable in this session, and calling it speculatively will fail.**
 Check the "In-band alternative" column below before asking the user to enable the flag; only `configure_search_mode` has one. See `SKILL.md` → "Tool
@@ -18,6 +18,7 @@ Tiers" for the full decision procedure.
 - Advanced Search (3 tools)
 - Model Management (2 tools)
 - Memory Management (2 tools)
+- Procedural Graph Guidance (2 tools)
 
 ---
 
@@ -113,3 +114,14 @@ despite the section title.)*
 |------|------|---------|----------------------|
 | `code-search:get_memory_status` | Core | Check RAM/VRAM usage | — |
 | `code-search:cleanup_resources` | Core | Free indexes, models, and GPU memory | — |
+
+## Procedural Graph Guidance
+
+*(ADR-0074. These are unrelated to the code graph — they read/write a separately stored*
+*Procedural Graph, a producer-authored directed multigraph of actions and text-attributed*
+*transitions, and make no LLM or network call of their own.)*
+
+| Tool | Tier | Purpose | In-band alternative |
+|------|------|---------|----------------------|
+| `code-search:get_procedural_guidance` | Advanced | Locate a procedural graph at an agent's last action and extract its h-hop out-neighbourhood as guidance text (`condition`/`guidance`/`pitfalls` per transition). **Key options:** `graph` (required), `last_action` (required), `hops` (default 2, clamped 1-4). A miss (`last_action` names no node) is not an error — it returns `located: false` plus the full graph | None |
+| `code-search:edit_procedural_graph` | Advanced | Apply a typed edit (`add_nodes`/`delete_nodes`/`add_edges`/`delete_edges`) to a procedural graph. **Key options:** `graph` (required), `edit` (required), `dry_run` (default true — an invalid edit never writes regardless of this flag) | None |

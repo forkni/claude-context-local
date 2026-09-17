@@ -176,14 +176,14 @@ CONFIG_BACKED: dict[str, dict[str, Any]] = _build(
             ChunkingConfig,
             "enable_td_network_indexing",
         ),
-        # Shared across all 18 tools — output_format is popped centrally in
+        # Shared across all 20 tools — output_format is popped centrally in
         # mcp_server/server.py's handle_call_tool before any handler runs, so
         # a single (OutputConfig, "format") mapping backs every occurrence.
         "*.output_format": (OutputConfig, "format"),
     }
 )
 
-# One shared property definition for the ×18 output_format occurrences —
+# One shared property definition for the ×20 output_format occurrences —
 # description is identical at every call site, so it lives here rather than
 # being restated per tool.
 OUTPUT_FORMAT_PROPERTY: dict[str, Any] = {

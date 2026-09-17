@@ -52,7 +52,7 @@ Fundamental documentation for daily use.
 
 | Document | Description |
 | ---------- | ------------- |
-| **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | Complete API reference for all 18 MCP tools |
+| **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | Complete API reference for all 20 MCP tools |
 | **[HYBRID_SEARCH_CONFIGURATION_GUIDE.md](HYBRID_SEARCH_CONFIGURATION_GUIDE.md)** | Search modes configuration (hybrid/semantic/BM25/auto) |
 | **[BENCHMARKS.md](BENCHMARKS.md)** | Performance benchmarks: SSCG retrieval (MRR/Recall/NDCG/line-overlap), token efficiency, caller recall |
 
@@ -91,7 +91,7 @@ MCP server implementation and transport options.
 
 | Document | Description |
 |----------|-------------|
-| **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | All 18 tools with parameters, examples, output formats |
+| **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | All 20 tools with parameters, examples, output formats |
 | **[CLAUDE_DESKTOP_SETUP.md](CLAUDE_DESKTOP_SETUP.md)** | Connect the Claude Desktop app to the running HTTP server via the `mcp-remote` stdio→HTTP bridge |
 
 ### Transport Options
@@ -202,7 +202,7 @@ Detailed technical documentation.
 - `chunking/relationships/` - Call graph extraction and relationship tracking
   - `resolvers/` - Type, import, and assignment resolvers
 - `graph/` - Graph storage & queries
-- `mcp_server/` - MCP tool implementations (18 tools)
+- `mcp_server/` - MCP tool implementations (20 tools)
 - `merkle/` - Incremental indexing (snapshot management)
 - `search/` - FAISS + BM25 hybrid search
 - `utils/` - Performance monitoring and utilities (v0.8.6+)

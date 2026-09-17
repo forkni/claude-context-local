@@ -2983,7 +2983,7 @@ echo.
 echo This server enables hybrid semantic code search in Claude Code.
 echo.
 echo Key Features:
-echo   - 18 MCP Tools: Index, search, configure, manage projects
+echo   - 20 MCP Tools: Index, search, configure, manage projects
 echo   - Low-Level MCP SDK: Official Anthropic implementation
 echo   - Single-Model: selectable from 4 models ^(BGE-M3, EmbeddingGemma, Qwen3-0.6B, F2LLM-v2-0.6B^)
 echo   - Neural Reranking: Cross-encoder model ^(15-25%% quality boost^)

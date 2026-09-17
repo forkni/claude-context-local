@@ -1,7 +1,7 @@
 # Claude Desktop Setup Guide
 
 Connect the **code-search** MCP server to the **Claude Desktop** app so Desktop chats can use
-all 18 semantic search tools — pointing at the **same running HTTP server** that Claude Code uses.
+all 20 semantic search tools — pointing at the **same running HTTP server** that Claude Code uses.
 
 ## Table of Contents
 
@@ -157,4 +157,4 @@ path for a local, no-auth HTTP server).
 
 - **[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md)** — full install; Claude **Code** MCP
   configuration and the StreamableHTTP transport rationale.
-- **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** — all 18 tools, parameters, and examples.
+- **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** — all 20 tools, parameters, and examples.

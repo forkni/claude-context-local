@@ -26,12 +26,12 @@ whole tools.
 Tool-count budget (§VI-C, "MCP Server Architecture Patterns for LLM-Integrated
 Applications", Rodrigues & Vas, arXiv:2606.30317): LLM tool-selection accuracy
 falls below 90% once a context holds ~10-15 tools (Haiku-class models) / ~20-30
-(Sonnet-class). Listing all 18 tools unconditionally risks that budget once this
+(Sonnet-class). Listing all 20 tools unconditionally risks that budget once this
 server is loaded alongside other MCP servers in the same client session.
 
 Tools are tagged CORE or ADVANCED (see ``advanced=`` on each row). By default
 build_tool_list() returns CORE tools only (10). Set the environment variable
-MCP_EXPOSE_ADVANCED_TOOLS=1 to list all 18. This only affects what list_tools
+MCP_EXPOSE_ADVANCED_TOOLS=1 to list all 20. This only affects what list_tools
 advertises to the LLM — TOOL_DISPATCH still dispatches every tool by name
 regardless of this flag, so advanced tools remain callable by any client that
 already knows their name/schema (tests, scripts, power users).
@@ -1094,7 +1094,7 @@ RETURNS:
         advanced=True,
     ),
 )
-"""All 18 tool specs, in published-schema order (matches the former
+"""All 20 tool specs, in published-schema order (matches the former
 TOOL_REGISTRY key order)."""
 
 
