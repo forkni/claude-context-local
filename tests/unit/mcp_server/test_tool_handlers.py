@@ -1501,11 +1501,18 @@ async def test_all_handlers_have_error_handling():
     from mcp_server.tools import (
         config_handlers,
         index_handlers,
+        procedural_handlers,
         search_handlers,
         status_handlers,
     )
 
-    modules = [status_handlers, config_handlers, search_handlers, index_handlers]
+    modules = [
+        status_handlers,
+        config_handlers,
+        search_handlers,
+        index_handlers,
+        procedural_handlers,
+    ]
     all_handlers_checked = []
 
     for module in modules:

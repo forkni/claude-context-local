@@ -367,4 +367,18 @@ HAND_TYPED: dict[str, HandTyped] = {
             "comment); enum stays derived from SearchMode via SEARCH_MODE_ENUM"
         ),
     ),
+    "get_procedural_guidance.hops": HandTyped(
+        default=2,
+        rationale=(
+            "literal 2 fallback, clamped to 1..4 (procedural_handlers.py) — "
+            "per-call extraction radius, not a config field"
+        ),
+    ),
+    "edit_procedural_graph.dry_run": HandTyped(
+        default=True,
+        rationale=(
+            "literal True fallback (procedural_handlers.py) — per-call safety "
+            "confirmation, mirrors delete_project.force; not a config field"
+        ),
+    ),
 }
