@@ -6,7 +6,7 @@
 self-loop the consumer validator rejects`), run through
 `ProceduralGraph.from_document(...).to_document("network_layout")` for
 `graph.procedural_graph` (ADR-0074): 12 nodes, 4 relations, 24 transitions,
-cyclic via `Verify_Layout -TRIGGERS-> Set_Position` and
+with several cycles, such as `Verify_Layout -TRIGGERS-> Set_Position` and
 `Update_Annotation -LEADS_TO-> Identify_Group`. The producer's top-level
 `notes` string is preserved. All `condition`/`guidance`/`pitfalls` text is
 owned by the producer repo; drift between the two in node ids, relations, or
