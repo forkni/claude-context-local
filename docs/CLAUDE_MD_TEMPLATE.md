@@ -46,7 +46,7 @@ Create a `CLAUDE.md` file in your project root with this content:
 
 ---
 
-## Available MCP Tools (18)
+## Available MCP Tools (20)
 
 | Tool | Priority | Purpose |
 |------|----------|---------|

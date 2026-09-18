@@ -941,16 +941,137 @@ class TestResolveTarget:
         # assert_called_once() redundant.
         assert cid == "src/auth.py:15-25:method:AuthManager.validate"
 
-    def test_stale_chunk_id_with_too_few_parts_still_raises(self, mock_searcher):
-        """A chunk_id with < 4 colon-parts that misses the store raises immediately."""
+    def test_chunk_id_ending_in_line_range_still_raises(self, mock_searcher):
+        """A chunk_id whose last segment is a line range has no symbol to derive.
+
+        Discriminator is "does the last segment look like a line range", not
+        colon-part count — this id is genuinely nameless (path + range only),
+        so no fallback is possible and the miss must raise immediately.
+        """
         from search.exceptions import SearchError
 
-        short_id = "src/auth.py:10-20"  # only 2 parts — no symbol derivable
+        short_id = "src/auth.py:10-20"  # last segment is a line range
         mock_searcher.get_by_chunk_id.return_value = None
 
         analyzer = self._make_analyzer_with_caches(mock_searcher)
         with pytest.raises(SearchError, match="Chunk not found"):
             analyzer._resolve_target(short_id, None, None)
+
+    def test_bare_symbol_as_chunk_id_raises_with_actionable_message(
+        self, mock_searcher
+    ):
+        """A bare symbol name (no colon at all) passed as chunk_id gets a clear,
+        actionable error naming the expected format and the symbol_name= escape hatch.
+        """
+        from search.exceptions import SearchError
+
+        mock_searcher.get_by_chunk_id.return_value = None
+
+        analyzer = self._make_analyzer_with_caches(mock_searcher)
+        with pytest.raises(SearchError, match=r"Expected 'path:start-end:type:name'"):
+            analyzer._resolve_target("score_layout", None, None)
+
+    # ------------------------------------------------------------------
+    # H1/H2 fix: shorthand "file.py:symbol" chunk_ids resolve, and a path
+    # hint recovered alongside the symbol prefers same-file candidates.
+    # ------------------------------------------------------------------
+
+    def test_shorthand_file_symbol_chunk_id_resolves_via_symbol(self, mock_searcher):
+        """The reported bug: 'file.py:symbol' shorthand resolves via the symbol cascade.
+
+        Reproduces find_connections(chunk_id="tools/td_layout.py:score_layout").
+        """
+        shorthand_id = "tools/td_layout.py:score_layout"
+        current_id = "tools/td_layout.py:498-535:function:score_layout"
+
+        mock_gs = Mock()
+        mock_gs.get_nodes_by_name.return_value = [current_id]
+
+        current_result = _make_mock_result(current_id, "function")
+        mock_searcher.get_by_chunk_id.side_effect = lambda cid: (
+            current_result if cid == current_id else None
+        )
+
+        analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
+        result, cid = analyzer._resolve_target(shorthand_id, None, None)
+
+        assert cid == current_id
+        assert result is current_result
+
+    def test_shorthand_prefers_same_file_candidate(self, mock_searcher):
+        """H2: a shorthand's recovered path hint picks the same-file candidate
+        among multiple graph name-index matches (e.g. a symbol defined in many
+        files, like a TouchDesigner ``onValueChange`` callback).
+        """
+        shorthand_id = "extensions/Foo.py:onValueChange"
+        other_file_id = "extensions/Bar.py:12-20:function:onValueChange"
+        same_file_id = "extensions/Foo.py:30-45:function:onValueChange"
+
+        mock_gs = Mock()
+        # Same-file match is NOT first in the raw graph-index order.
+        mock_gs.get_nodes_by_name.return_value = [other_file_id, same_file_id]
+
+        same_file_result = _make_mock_result(same_file_id, "function")
+        other_file_result = _make_mock_result(other_file_id, "function")
+        mock_searcher.get_by_chunk_id.side_effect = lambda cid: {
+            other_file_id: other_file_result,
+            same_file_id: same_file_result,
+        }.get(cid)
+
+        analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
+        result, cid = analyzer._resolve_target(shorthand_id, None, None)
+
+        assert cid == same_file_id
+
+    def test_stale_chunk_id_prefers_same_file_candidate(self, mock_searcher):
+        """H2 on the 4-part stale-ID path: same-file candidate wins the Tier-2
+        semantic fallback even when the cross-file match ranks higher in
+        raw search order.
+        """
+        stale_id = "extensions/Foo.py:10-20:function:onValueChange"
+
+        mock_gs = Mock()
+        mock_gs.get_nodes_by_name.return_value = []
+        mock_gs.graph.nodes.return_value = []
+
+        same_file_result = _make_mock_result(
+            "extensions/Foo.py:30-45:function:onValueChange", "function"
+        )
+        other_file_result = _make_mock_result(
+            "extensions/Bar.py:12-20:function:onValueChange", "function"
+        )
+        mock_searcher.get_by_chunk_id.return_value = None
+        # Semantic search ranks the cross-file match first — would win without path_hint.
+        mock_searcher.search.return_value = [other_file_result, same_file_result]
+
+        analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
+        result, cid = analyzer._resolve_target(stale_id, None, None)
+
+        assert cid == "extensions/Foo.py:30-45:function:onValueChange"
+
+    def test_explicit_symbol_name_survives_chunk_id_miss(self, mock_searcher):
+        """An explicit symbol_name argument wins over one derived from a
+        mismatched chunk_id, rather than being silently overwritten.
+        """
+        shorthand_id = "tools/td_layout.py:wrong_symbol"
+        explicit_symbol = "score_layout"
+        current_id = "tools/td_layout.py:498-535:function:score_layout"
+
+        mock_gs = Mock()
+        mock_gs.get_nodes_by_name.return_value = [current_id]
+
+        current_result = _make_mock_result(current_id, "function")
+        mock_searcher.get_by_chunk_id.side_effect = lambda cid: (
+            current_result if cid == current_id else None
+        )
+
+        analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
+        result, cid = analyzer._resolve_target(shorthand_id, explicit_symbol, None)
+
+        assert cid == current_id
+        # Queried by the caller's explicit symbol, not "wrong_symbol" derived
+        # from the shorthand.
+        mock_gs.get_nodes_by_name.assert_called_once_with(explicit_symbol)
 
 
 # ============================================================================

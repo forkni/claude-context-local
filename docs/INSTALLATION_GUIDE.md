@@ -941,7 +941,7 @@ scripts\batch\start_mcp_http.bat
 - Runs on `http://localhost:8765/mcp`
 - Automatic port conflict detection
 - Auto-kill for processes on port 8765
-- All 18 MCP tools available
+- All 20 MCP tools available
 - Identical functionality to stdio
 - <10ms latency overhead
 - Single bidirectional endpoint (no separate POST back-channel)

@@ -185,7 +185,7 @@ class TestConfigToolSchemaMatchesFieldSpec:
     Nothing enforced agreement between the two until this test.
 
     Widened (C4) from a 4-tool parity check into a whole-registry hygiene
-    ratchet: every property across all 18 tools that carries minimum/maximum/
+    ratchet: every property across all 20 tools that carries minimum/maximum/
     enum/default must be accounted for in mcp_server/config_schema.py, either
     as CONFIG_BACKED (derived from spec(), never carries a default) or
     HAND_TYPED (documented rationale for why no config field backs it). The

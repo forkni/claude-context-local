@@ -24,8 +24,10 @@ from mcp_server.tools.decorators import error_handler, require_indexed_project
 from mcp_server.tools.result_view import _format_search_results
 from mcp_server.tools.search_orchestrator import SearchOrchestrator
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
+from search.chunk_id import derive_symbol_hint
 from search.config import get_search_config
 from search.exceptions import DimensionMismatchError
+from search.filters import normalize_path_lower
 from search.graph_integration import prefer_real_language_nodes
 from search.incremental_indexer import IncrementalIndexer
 from search.metadata import MetadataStore
@@ -201,9 +203,26 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
     return reindexed, None
 
 
+def _chunk_id_path_for_hint(chunk_id: str) -> str:
+    """Drive-letter-safe file-path prefix of *chunk_id*, for same-file
+    preference comparison against a ``path_hint``.
+
+    A naive ``chunk_id.split(":")[0]`` truncates a Windows absolute path at
+    its drive-letter colon (``"F:/proj/a.py:10-20:function:foo"`` -> ``"F"``),
+    so the same-file preference below never matches on Windows. Falls back to
+    that naive split only when ``derive_symbol_hint`` can't parse *chunk_id*
+    (e.g. a nameless module chunk) -- narrower than the preference this
+    feeds, so the fallback never widens what counts as a match. Mirrors
+    ``search.relationship_analyzer._chunk_id_path_for_hint``.
+    """
+    hint = derive_symbol_hint(chunk_id)
+    return hint[0] if hint is not None else chunk_id.split(":")[0]
+
+
 async def _resolve_symbol_to_chunk_id(
     symbol_name: str,
     searcher: Any,
+    path_hint: str | None = None,
 ) -> tuple[str | None, dict[str, str] | None]:
     """Resolve a symbol name to a chunk_id via a 2-tier cascade.
 
@@ -214,6 +233,13 @@ async def _resolve_symbol_to_chunk_id(
     Tier 1: graph node name index + suffix scan (both ``:name`` and ``.name`` so
             class-qualified names like ``ClassName.method_name`` are handled)
     Tier 2: semantic search with name-preference filter
+
+    Args:
+        path_hint: File path recovered alongside symbol_name (e.g. from
+            ``derive_symbol_hint`` on an unresolvable chunk_id) — a same-file
+            *preference*, not a filter. Without it, a common symbol name (a
+            TouchDesigner callback defined in 100+ files, say) can resolve to
+            an unrelated file. Mirrors ``RelationshipAnalyzer._resolve_by_symbol``.
     """
     # Tier 1 — graph node name index + suffix scan
     from mcp_server.tools.searcher_view import SearcherView
@@ -236,6 +262,14 @@ async def _resolve_symbol_to_chunk_id(
             # User-facing lookup: keep pseudo-language (TD operator) nodes
             # reachable, but prefer real code when both share the name.
             matches = prefer_real_language_nodes(gs, matches)
+            if path_hint:
+                hint = normalize_path_lower(path_hint)
+                matches = sorted(
+                    matches,
+                    key=lambda cid: (
+                        normalize_path_lower(_chunk_id_path_for_hint(cid)) != hint
+                    ),
+                )
             return matches[0], {
                 "resolved_from": symbol_name,
                 "chunk_id": matches[0],
@@ -244,22 +278,49 @@ async def _resolve_symbol_to_chunk_id(
 
     # Tier 2 — semantic search with name-preference filter
     results = await asyncio.to_thread(searcher.search, symbol_name, k=5)
-    for r in results:
-        meta = r.metadata if hasattr(r, "metadata") else {}
-        if meta.get("name") == symbol_name:
-            return r.chunk_id, {
-                "resolved_from": symbol_name,
-                "chunk_id": r.chunk_id,
-                "resolution_method": "semantic_search",
-            }
-    if results:
-        return results[0].chunk_id, {
+    matching = [
+        r
+        for r in results
+        if (r.metadata if hasattr(r, "metadata") else {}).get("name") == symbol_name
+    ]
+    candidates = matching or results
+    if path_hint and candidates:
+        hint = normalize_path_lower(path_hint)
+        candidates = sorted(
+            candidates,
+            key=lambda r: (
+                normalize_path_lower(_chunk_id_path_for_hint(r.chunk_id)) != hint
+            ),
+        )
+    if candidates:
+        best = candidates[0]
+        return best.chunk_id, {
             "resolved_from": symbol_name,
-            "chunk_id": results[0].chunk_id,
+            "chunk_id": best.chunk_id,
             "resolution_method": "semantic_search",
         }
 
     return None, None
+
+
+async def _recover_unindexed_chunk_id(
+    chunk_id: str,
+    searcher: Any,
+) -> tuple[str | None, dict[str, str] | None]:
+    """Recover a chunk_id that is not a graph node (stale ID or agent-invented
+    shorthand like ``file.py:symbol``).
+
+    Derives a ``(path, symbol_name)`` hint from the malformed ID and re-runs
+    the symbol resolution cascade with that path as a same-file preference —
+    the same recovery ``RelationshipAnalyzer._resolve_target`` performs for
+    ``search_code``/``find_connections``. Returns ``(None, None)`` when no
+    symbol is derivable (e.g. the ID's last segment is a line range).
+    """
+    hint = derive_symbol_hint(chunk_id)
+    if hint is None:
+        return None, None
+    path_hint, symbol_name = hint
+    return await _resolve_symbol_to_chunk_id(symbol_name, searcher, path_hint=path_hint)
 
 
 # ----------------------------------------------------------------------------
@@ -413,6 +474,18 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
     # Offload get_searcher off the event loop (can construct HybridSearcher on miss).
     searcher = await asyncio.to_thread(get_searcher)
 
+    # Get graph query engine up front — chunk_id recovery below needs graph
+    # membership (not just a non-empty string) to detect a bad ID (H5).
+    from mcp_server.tools.searcher_view import SearcherView
+
+    graph_storage = SearcherView(searcher).graph_storage
+
+    if not graph_storage:
+        return responses.error(
+            "Graph not available",
+            message="Call graph not initialized. Re-index the project.",
+        )
+
     # Resolve symbol names to chunk_ids if needed
     resolved_source = source_chunk_id
     resolved_target = target_chunk_id
@@ -427,6 +500,24 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
             return responses.error(
                 f"Could not resolve source symbol: {source}", path_found=False
             )
+    elif resolved_source and resolved_source not in graph_storage.graph:
+        # A supplied source_chunk_id that isn't a graph node used to be handed
+        # straight to find_path, which silently reported "no path" instead of
+        # "this ID doesn't exist" (H5 — worse than a loud error, since the
+        # answer looks like a real "not connected" result). Recover the same
+        # way search_code / find_connections do: derive a symbol+path hint
+        # from the bad ID and re-resolve through the symbol cascade.
+        recovered, recovered_info = await _recover_unindexed_chunk_id(
+            resolved_source, searcher
+        )
+        if recovered:
+            resolved_source, source_info = recovered, recovered_info
+        else:
+            return responses.error(
+                f"Chunk not found: {source_chunk_id}. Expected "
+                f"'path:start-end:type:name' from search_code results, "
+                f"or pass source= instead."
+            )
 
     if not resolved_target and target:
         resolved_target, target_info = await _resolve_symbol_to_chunk_id(
@@ -436,17 +527,18 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
             return responses.error(
                 f"Could not resolve target symbol: {target}", path_found=False
             )
-
-    # Get graph query engine
-    from mcp_server.tools.searcher_view import SearcherView
-
-    graph_storage = SearcherView(searcher).graph_storage
-
-    if not graph_storage:
-        return responses.error(
-            "Graph not available",
-            message="Call graph not initialized. Re-index the project.",
+    elif resolved_target and resolved_target not in graph_storage.graph:
+        recovered, recovered_info = await _recover_unindexed_chunk_id(
+            resolved_target, searcher
         )
+        if recovered:
+            resolved_target, target_info = recovered, recovered_info
+        else:
+            return responses.error(
+                f"Chunk not found: {target_chunk_id}. Expected "
+                f"'path:start-end:type:name' from search_code results, "
+                f"or pass target= instead."
+            )
 
     # Create query engine and find path
     from graph.graph_queries import GraphQueryEngine

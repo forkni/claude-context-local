@@ -37,12 +37,12 @@
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **Persistent Chunk Embedding Cache**: content-hash-keyed cache of chunk embedding vectors cuts a full reindex's embedding phase from ~34s to well under 1s once the codebase is unchanged; invalidates automatically on model or precision/backend changes - [configuration](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md#chunk-embedding-cache-configuration)
 - **29 File Extensions**: Python, JS, TS, Go, Rust, C/C++ (incl. CUDA `.cu`/`.cuh`), C#, GLSL with AST/tree-sitter chunking
-- **18 MCP Tools** (10 core + 8 advanced, gated behind `MCP_EXPOSE_ADVANCED_TOOLS`): Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
+- **20 MCP Tools** (10 core + 10 advanced, gated behind `MCP_EXPOSE_ADVANCED_TOOLS`): Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 - **Source-Position Reranking** (opt-in, `source_order_output=true`): Groups results by file, sorted by line number instead of relevance — LLMs read code in logical order (+5.3% accuracy, DOS RAG); relevance order is the default since v0.18.0
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 4,351 unit tests passing (+102 fast_integration, +20 integration, +108 slow_integration) | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
+**Status**: ✅ Production-ready | 4,351 unit tests passing (+102 fast_integration, +20 integration, +108 slow_integration) | All 20 MCP tools operational | Concurrency-safe | Windows 10/11
 
 *Last reviewed: 2026-09-02*
 
@@ -132,7 +132,7 @@ After the server starts, connect in Claude Code:
 
 This command loads the [mcp-search-tool](.claude/skills/mcp-search-tool/SKILL.md) skill, which provides Claude with:
 
-- Complete MCP tool reference (all 18 tools)
+- Complete MCP tool reference (all 20 tools)
 - Search-first protocol enforcement
 - 2-step workflow for relationship queries (search → find_connections)
 - Project context validation before searches
@@ -160,7 +160,7 @@ Claude Code will automatically use the MCP tools internally to find relevant cod
 
 > **Note**: This is an MCP server designed exclusively for Claude Code integration. It is not a standalone search tool - it requires connection via Claude Code's `/mcp` command.
 
-When connected via `/mcp` → Reconnect, Claude Code gains access to 18 semantic search tools exposed as `mcp__code-search__*` functions.
+When connected via `/mcp` → Reconnect, Claude Code gains access to 20 semantic search tools exposed as `mcp__code-search__*` functions.
 
 A [**SKILL.md**](.claude/skills/mcp-search-tool/SKILL.md) file in the repository provides Claude with workflow guidance for optimal tool usage, including project context validation and search mode selection.
 
@@ -424,7 +424,7 @@ claude-context-local/
 ├── search/            # FAISS + BM25 hybrid search, graph-scoring stage
 ├── merkle/            # Incremental indexing with change detection
 ├── graph/             # Graph storage & queries
-├── mcp_server/        # MCP server implementation (18 tools)
+├── mcp_server/        # MCP server implementation (20 tools)
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
