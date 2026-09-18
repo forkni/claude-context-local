@@ -18,6 +18,5 @@ writes (`schema_version, name, notes, nodes, edges` top-level;
 `(src, relation, dst)`) -- see the byte-stability note in
 `graph/procedural_graph.py`'s module docstring before hand-editing it.
 
-Regenerate with `ProceduralGraph.from_document(...).to_document('network_layout')`
-
-+ `json.dumps(indent=2)` + a trailing newline; never hand-edit.
+Regenerate with `ProceduralGraph.from_document(...).to_document('network_layout')`,
+then `json.dumps(indent=2)`, plus a trailing newline; never hand-edit.
