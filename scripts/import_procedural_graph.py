@@ -5,10 +5,17 @@ a seed document (produced by ``TD_Glossary_tox``) into
 ``<storage_dir>/procedural_graphs/``. Deliberately does **not** import
 ``mcp_server.storage_manager.get_storage_dir`` -- that import pulls in
 PyTorch and measured 10.4s on this machine, which is unacceptable for a
-one-shot CLI script. Instead this script re-implements the same
-``CODE_SEARCH_STORAGE`` / ``~/.claude_code_search`` lookup standalone
-(matching ``scripts/list_projects_parseable.py``), overridable with
-``--storage-dir``.
+one-shot CLI script. Instead this script re-implements the *lookup* half of
+``get_storage_dir`` standalone (matching ``scripts/list_projects_parseable.py``
+and ``scripts/list_projects_display.py``, both read-only) plus a
+dependency-free subset of ``validate_storage_path``'s safety checks --
+refusing the home directory, a filesystem root, or a path under a
+project-root marker. This is not full replication: it skips nothing the
+server itself checks at those three cases, but unlike the server (which
+falls back silently to the default on an unsafe path) this script exits
+with an error pointing at ``--storage-dir``, since a bad write destination
+deserves a loud failure. ``--storage-dir`` is an explicit operator choice
+and is used as-is, unguarded.
 
 Usage:
     .venv/Scripts/python.exe scripts/import_procedural_graph.py \
@@ -32,14 +39,63 @@ from graph.procedural_graph import (  # noqa: E402
 )
 
 
+# Mirrors mcp_server/storage_manager.py::_PROJECT_MARKERS -- that module is
+# the source of truth; keep this tuple in sync with it by hand.
+_PROJECT_MARKERS = (
+    ".git",
+    "pyproject.toml",
+    "package.json",
+    "Cargo.toml",
+    "go.mod",
+    "pom.xml",
+)
+
+
+def _validate_storage_path(path: Path) -> tuple[bool, str]:
+    """Dependency-free subset of
+    ``mcp_server.storage_manager.py::validate_storage_path`` -- that
+    function is the source of truth; this re-implements its two checks
+    without the module's PyTorch-heavy import chain (see module docstring).
+    """
+    p = path.resolve()
+    home = Path.home()
+
+    if p == home or p == Path(p.anchor):
+        return False, f"refusing home dir or filesystem root: {p}"
+
+    for ancestor in (p, *p.parents):
+        if ancestor == home or ancestor == ancestor.parent:
+            break
+        for marker in _PROJECT_MARKERS:
+            if (ancestor / marker).exists():
+                return (
+                    False,
+                    f"path is inside a project tree ({marker} found at {ancestor})",
+                )
+
+    return True, "ok"
+
+
 def _default_storage_dir() -> Path:
-    """Replicates ``mcp_server.storage_manager.get_storage_dir()`` without
-    importing it (see module docstring for why).
+    """Re-implements the lookup half of
+    ``mcp_server.storage_manager.get_storage_dir()`` plus a subset of its
+    safety checks, without importing it (see module docstring for why).
+    Unlike the server, which falls back silently to the default on an
+    unsafe path, this exits loudly -- a write landing somewhere unexpected
+    is worse than a script that refuses to run.
     """
     storage_path = os.getenv(
         "CODE_SEARCH_STORAGE", str(Path.home() / ".claude_code_search")
     )
-    return Path(storage_path)
+    candidate = Path(storage_path).expanduser()
+    ok, reason = _validate_storage_path(candidate)
+    if not ok:
+        print(
+            f"CODE_SEARCH_STORAGE={storage_path!r} is unsafe: {reason}", file=sys.stderr
+        )
+        print("Pass --storage-dir to choose an explicit location.", file=sys.stderr)
+        sys.exit(1)
+    return candidate
 
 
 def main() -> None:
@@ -85,6 +141,8 @@ def main() -> None:
 
     graph = store.load(stored_name)
     dest = store.path_for(stored_name)
+    # hops=1 is a no-op here: extract(None, ...) always returns every
+    # transition regardless of hops (see ProceduralGraph.extract).
     edge_count = len(graph.extract(None, 1))
     print(f"imported {stored_name!r} -> {dest}")
     print(f"{len(graph.node_ids)} nodes, {edge_count} edges")
