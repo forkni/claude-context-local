@@ -29,10 +29,10 @@ The cross-repo contract is a single JSON document shape:
 
 Relations are a closed set of four: `LEADS_TO`, `TRIGGERS`, `PROVIDES_INPUT_FOR`, `CONVERGES_TO`.
 The bundled `tests/fixtures/pg/network_layout_seed.json` seed is the canonical dump of the
-producer's own `tools/pg_seed_network_layout.json`: 12 nodes and 24 transitions, including two
-intentional cycles (`Verify_Layout` back to `Set_Position` via `TRIGGERS`, and `Update_Annotation`
-back to `Identify_Group` via `LEADS_TO`) — procedural graphs are cyclic by design, not a defect to
-validate away.
+producer's own `tools/pg_seed_network_layout.json`: 12 nodes and 24 transitions. The middle of the
+graph is one strongly connected component with several cycles, such as `Verify_Layout` back to
+`Set_Position` via `TRIGGERS` and `Update_Annotation` back to `Identify_Group` via `LEADS_TO` —
+procedural graphs are cyclic by design, not a defect to validate away.
 
 Nothing in CCL today can hold this shape. `CodeGraphStorage` (`graph/graph_storage.py`) is
 enum-typed (`RelationshipType`), auto-creates placeholder endpoints for edges naming an unknown
