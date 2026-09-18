@@ -176,14 +176,14 @@ CONFIG_BACKED: dict[str, dict[str, Any]] = _build(
             ChunkingConfig,
             "enable_td_network_indexing",
         ),
-        # Shared across all 18 tools — output_format is popped centrally in
+        # Shared across all 20 tools — output_format is popped centrally in
         # mcp_server/server.py's handle_call_tool before any handler runs, so
         # a single (OutputConfig, "format") mapping backs every occurrence.
         "*.output_format": (OutputConfig, "format"),
     }
 )
 
-# One shared property definition for the ×18 output_format occurrences —
+# One shared property definition for the ×20 output_format occurrences —
 # description is identical at every call site, so it lives here rather than
 # being restated per tool.
 OUTPUT_FORMAT_PROPERTY: dict[str, Any] = {
@@ -365,6 +365,20 @@ HAND_TYPED: dict[str, HandTyped] = {
             "default_mode value — default_mode is deliberately excluded from "
             "_SEARCH_MODE_FIELDS' skip-if-absent patch (see that file's own "
             "comment); enum stays derived from SearchMode via SEARCH_MODE_ENUM"
+        ),
+    ),
+    "get_procedural_guidance.hops": HandTyped(
+        default=2,
+        rationale=(
+            "literal 2 fallback, clamped to 1..4 (procedural_handlers.py) — "
+            "per-call extraction radius, not a config field"
+        ),
+    ),
+    "edit_procedural_graph.dry_run": HandTyped(
+        default=True,
+        rationale=(
+            "literal True fallback (procedural_handlers.py) — per-call safety "
+            "confirmation, mirrors delete_project.force; not a config field"
         ),
     ),
 }

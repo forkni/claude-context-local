@@ -7,6 +7,7 @@ the tests are independent of the metadata store and FAISS index.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import MagicMock
@@ -1471,3 +1472,88 @@ def test_resolver_tolerates_visitor_without_call_position_map(
         None,  # type: ignore[arg-type]
     )
     assert callee not in seen
+
+
+# ---------------------------------------------------------------------------
+# Module-level pyan3 API-mismatch guard (2026-09-14 incident regression)
+# ---------------------------------------------------------------------------
+#
+# Root cause of the original bug: `from pyan.postprocessor import cull_subsumed`
+# lived *inside* _TrackedVisitor.postprocess(), a method body, not at module
+# scope. So a stale pyan3 (<2.8, no cull_subsumed) still let the module-level
+# `try/except ImportError` around `from pyan.analyzer import CallGraphVisitor`
+# succeed, `_PYAN_AVAILABLE` stayed True, and `pyan_available()` reported the
+# tier as usable -- the ImportError only fired deep inside a resolver
+# subprocess the first time postprocess() actually ran, where it was swallowed
+# as "non-fatal" and silently zeroed the whole pyan tier on every index.
+#
+# The fix moves the postprocessor import to module scope so this exact
+# scenario is caught by the same guard that already handles "pyan3 not
+# installed at all" -- these tests simulate a <2.8 pyan3 (cull_subsumed
+# missing from pyan.postprocessor) and assert the guard now catches it.
+
+
+@pytest.mark.skipif(
+    not pyan_available(),
+    reason="requires a real pyan3 install to simulate a stale sub-API against",
+)
+class TestPostprocessorApiMismatchGuard:
+    """A pyan3 install whose postprocessor API predates 2.8 must flip
+    ``pyan_available()`` to False at import time, not fail lazily inside
+    ``postprocess()`` during a resolver subprocess."""
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _reload_with_missing_cull_subsumed():
+        """Reload external_call_graph with pyan.postprocessor.cull_subsumed
+        hidden, simulating pyan3 < 2.8. Yields the reloaded module.
+
+        Deliberately does NOT use pytest's ``monkeypatch`` fixture for the
+        delattr/restore: monkeypatch's own teardown runs *after* this
+        function (including any caller's ``finally:``) returns, so a
+        caller-side ``finally: importlib.reload(ecg)`` would reload while
+        cull_subsumed is still missing -- re-confirming the broken state
+        instead of restoring it, and leaking a permanently-broken `ecg`
+        module into every later test in the (randomly-ordered) session.
+        Restoring the attribute manually, before the reload, avoids that
+        ordering trap entirely.
+        """
+        import importlib
+
+        import pyan.postprocessor as _pp
+
+        import chunking.relationships.external_call_graph as ecg
+
+        original = _pp.cull_subsumed
+        del _pp.cull_subsumed
+        try:
+            yield importlib.reload(ecg)
+        finally:
+            _pp.cull_subsumed = original
+            importlib.reload(ecg)
+
+    def test_missing_cull_subsumed_flips_pyan_available_false(self) -> None:
+        with self._reload_with_missing_cull_subsumed() as reloaded:
+            assert reloaded.pyan_available() is False
+
+    def test_reason_names_the_version_mismatch_and_the_fix(self) -> None:
+        with self._reload_with_missing_cull_subsumed() as reloaded:
+            reason = reloaded.pyan_unavailable_reason()
+            assert "is installed but" in reason
+            assert "pyan3>=2.8" in reason
+            assert "uv sync --extra callgraph" in reason
+
+    def test_resolve_returns_empty_and_logs_warning_not_info(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The version-mismatch case is a recall regression on an installed
+        extra, not an intentional absence -- it must log at WARNING, not the
+        quiet INFO used when [callgraph] was simply never installed."""
+        with self._reload_with_missing_cull_subsumed() as reloaded:
+            with caplog.at_level(_logging.WARNING, logger=_LOG_ECG.name):
+                edges = reloaded.PyanResolver().resolve(Path("."), {}, _LOG_ECG)
+            assert edges == []
+            assert any(
+                "postprocessor" in rec.message and rec.levelno == _logging.WARNING
+                for rec in caplog.records
+            )

@@ -8,6 +8,14 @@ recall (the denominator counts them but no retrieved chunk can ever match), so
 this audit should be re-run after any refactor or chunker change that reshapes
 the index — it exists to keep the dataset from drifting silently again.
 
+CLEAN (every gold ID resolves) says nothing about whether a gold's *content*
+is still accurate — a gold can resolve to a real symbol whose file has since
+been rewritten around it (new co-equal siblings added, body changed) without
+the ID itself going stale. As a second, non-blocking signal, the audit also
+warns when a gold's source file has changed since the dataset's own last
+commit — a hint that the gold list for that file may deserve a re-read, not
+proof that it's wrong.
+
 Note on ``split_block`` golds: ``dedup_key`` rewrites ``split_block`` → the
 parent-kind (``method``/``function``) only for 4-part IDs carrying a line
 range. Live index IDs always carry line ranges, golden IDs never do — so a
@@ -18,13 +26,15 @@ Usage:
     .venv/Scripts/python.exe scripts/benchmark/audit_golden_dataset.py \
         [--dataset evaluation/golden_dataset.json ...] [--metadata-db PATH]
 
-Exit code 0 when every gold resolves in every dataset, 1 otherwise.
+Exit code 0 when every gold resolves in every dataset, 1 otherwise. The
+churned-file warning never affects the exit code.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -76,16 +86,58 @@ def gold_ids(query: dict) -> set[str]:
     return ids
 
 
-def audit_dataset(dataset_path: Path, index_ids: set[str], raw_ids: list[str]) -> int:
+def dataset_last_commit(dataset_path: Path, project_root: Path) -> str | None:
+    """SHA of the dataset file's own last commit, or None (not tracked / no git)."""
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%H", "--", str(dataset_path)],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    sha = result.stdout.strip()
+    return sha or None
+
+
+def churned_files_since(
+    commit: str, file_paths: set[str], project_root: Path
+) -> set[str]:
+    """Subset of *file_paths* with commits after *commit* (working tree included)."""
+    if not file_paths:
+        return set()
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", commit, "--", *sorted(file_paths)],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return set()
+    changed = {line.strip().replace("\\", "/") for line in result.stdout.splitlines()}
+    return {fp for fp in file_paths if fp.replace("\\", "/") in changed}
+
+
+def audit_dataset(
+    dataset_path: Path, index_ids: set[str], raw_ids: list[str], project_root: Path
+) -> int:
     """Report unresolvable golds for one dataset file; return their count."""
     data = json.loads(dataset_path.read_text(encoding="utf-8"))
     queries = data["queries"]
     stale_total = 0
     stale_queries = 0
+    gold_files_by_query: dict[str, set[str]] = {}
     for query in queries:
         missing = sorted(
             gid for gid in gold_ids(query) if normalize_chunk_id(gid) not in index_ids
         )
+        gold_files_by_query[query["id"]] = {
+            gid.split(":")[0] for gid in gold_ids(query)
+        }
         if not missing:
             continue
         stale_queries += 1
@@ -104,6 +156,24 @@ def audit_dataset(dataset_path: Path, index_ids: set[str], raw_ids: list[str]) -
         else f"{stale_total} stale golds in {stale_queries} queries"
     )
     print(f"{dataset_path}: {len(queries)} queries — {status}")
+
+    last_commit = dataset_last_commit(dataset_path, project_root)
+    if last_commit is not None:
+        all_gold_files = set().union(*gold_files_by_query.values())
+        churned = churned_files_since(last_commit, all_gold_files, project_root)
+        if churned:
+            affected = sorted(
+                qid for qid, files in gold_files_by_query.items() if files & churned
+            )
+            print(
+                f"  WARN: {len(churned)} gold-referenced file(s) changed since "
+                f"this dataset's last commit ({last_commit[:8]}) — "
+                f"{len(affected)} quer(y/ies) may need a re-read: "
+                f"{', '.join(affected)}"
+            )
+            for path in sorted(churned):
+                print(f"    -> {path}")
+
     return stale_total
 
 
@@ -160,7 +230,7 @@ def main() -> int:
         if not dataset_path.exists():
             print(f"ERROR: dataset not found: {dataset_path}")
             return 2
-        total_stale += audit_dataset(dataset_path, index_ids, raw_ids)
+        total_stale += audit_dataset(dataset_path, index_ids, raw_ids, project_root)
         print()
 
     return 0 if total_stale == 0 else 1

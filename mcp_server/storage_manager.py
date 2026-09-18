@@ -467,6 +467,7 @@ def update_project_filters(
     exclude_dirs: list | None = None,
     *,
     include_exclusive: bool | None = None,
+    stamp_semantics_version: bool = True,
 ) -> None:
     """Update filters in project_info.json after filter change with full reindex.
 
@@ -478,6 +479,15 @@ def update_project_filters(
             didn't specify" — the stored value is kept, mirroring the
             include_dirs/exclude_dirs None-means-unspecified convention below.
             Pass True/False explicitly to change it.
+        stamp_semantics_version: When True (default), records
+            ``filter_semantics_version`` as current in the same write. Pass
+            False when the caller is about to *request* a reindex rather than
+            confirm one already succeeded — stamping at request time lets a
+            failed or still-incremental run permanently suppress
+            ``check_filter_semantics_migration``'s warning for an index that
+            was never actually rebuilt under the new semantics. Such callers
+            must stamp separately via ``stamp_filter_semantics_version`` once
+            a full reindex has actually completed.
     """
     project_storage = get_project_storage_dir(project_path)
     project_info_file = project_storage / "project_info.json"
@@ -498,7 +508,8 @@ def update_project_filters(
         project_info["default_excluded_dirs"] = sorted(
             MultiLanguageChunker.DEFAULT_IGNORED_DIRS
         )
-        project_info["filter_semantics_version"] = FILTER_SEMANTICS_VERSION
+        if stamp_semantics_version:
+            project_info["filter_semantics_version"] = FILTER_SEMANTICS_VERSION
 
         # Guard against silently clearing user-defined filters.
         # None means "caller didn't specify", not "user wants to clear".
@@ -542,3 +553,35 @@ def update_project_filters(
         )
     except Exception as e:  # noqa: BLE001 - parse-recovery: project_info.json read/update, skip on failure
         logger.warning(f"[PROJECT_INFO] Failed to update filters: {e}")
+
+
+def stamp_filter_semantics_version(project_path: str) -> None:
+    """Record that this project's on-disk index now reflects the current
+    filter-matching semantics — call only after a full reindex has actually
+    succeeded.
+
+    This is deliberately separate from ``update_project_filters``'s own
+    (now-optional) stamp: that one fires at the *request* to reindex, before
+    the reindex has run, which lets a failed run — or one that never became a
+    full reindex — permanently suppress ``check_filter_semantics_migration``'s
+    warning for an index that was never actually rebuilt under the new
+    semantics. Best-effort and silent on failure, mirroring
+    ``update_project_filters``: a project_info.json write hiccup here must
+    not turn a successful reindex into a reported failure.
+    """
+    project_storage = get_project_storage_dir(project_path)
+    project_info_file = project_storage / "project_info.json"
+
+    if not project_info_file.exists():
+        return
+
+    try:
+        with open(project_info_file) as f:
+            project_info = json.load(f)
+
+        project_info["filter_semantics_version"] = FILTER_SEMANTICS_VERSION
+
+        with open(project_info_file, "w") as f:
+            json.dump(project_info, f, indent=2)
+    except Exception as e:  # noqa: BLE001 - parse-recovery: project_info.json read/update, skip on failure
+        logger.warning(f"[PROJECT_INFO] Failed to stamp filter_semantics_version: {e}")

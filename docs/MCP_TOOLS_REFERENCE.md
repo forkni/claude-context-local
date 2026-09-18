@@ -6,16 +6,17 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 ---
 
-## Available MCP Tools (18)
+## Available MCP Tools (20)
 
-Tools are split into two tiers (`mcp_server/tool_registry.py`): **10 core tools** are
-always listed by `list_tools`; **8 advanced tools** — `configure_search_mode`,
+Tools are split into two tiers (`mcp_server/tool_specs.py`): **10 core tools** are
+always listed by `list_tools`; **10 advanced tools** — `configure_search_mode`,
 `configure_reranking`, `configure_chunking`, `switch_embedding_model`,
-`list_embedding_models`, `get_search_config_status`, `clear_index`, `delete_project`
+`list_embedding_models`, `get_search_config_status`, `clear_index`, `delete_project`,
+`get_procedural_guidance`, `edit_procedural_graph`
 (runtime-tuning / destructive / rarely-needed operations) — are hidden by default and
 only appear once the server env var `MCP_EXPOSE_ADVANCED_TOOLS=1` (or `true`/`yes`) is
 set. This keeps the advertised tool count small without removing the capability. All
-18 tools remain callable directly regardless of the `list_tools` filter.
+20 tools remain callable directly regardless of the `list_tools` filter.
 
 | Tool | Priority | Purpose | Parameters |
 | ------ | ---------- | --------- | ------------ |
@@ -37,6 +38,8 @@ set. This keeps the advertised tool count small without removing the capability.
 | cleanup_resources | Cleanup | Free memory/caches (GPU + index) | *(no parameters)* |
 | list_embedding_models | Model | View available embedding models | *(no parameters)* |
 | switch_embedding_model | Model | Switch embedding model (instant <150ms) | model_name (required) |
+| get_procedural_guidance | Guidance | Locate a procedural graph (ADR-0074) at an agent's last action and extract nearby Φ guidance text (condition/guidance/pitfalls); a miss returns the full graph with `located=false` | graph (required), last_action (required), hops=2 (clamped 1-4) |
+| edit_procedural_graph | Guidance | Apply a typed, validated edit (add/delete nodes, add/delete edges) to a procedural graph; invalid edits never write | graph (required), edit (required), dry_run=True |
 
 **One active project/model at a time:** `switch_project`, `switch_embedding_model`,
 `configure_search_mode`, `configure_reranking`, `configure_chunking`, `clear_index`, and
@@ -157,7 +160,8 @@ it (derived from the chunker's `parent_chunk_id`, confidence 1.0, `via: parent_c
 
 **TouchDesigner network types** (only when `enable_td_network_indexing` is on and the index
 holds `.tdgraph.json` files, ADR-0062): `wires_to`, `contains`, `docked_to`, `scripted_by`,
-`references_op`, `binds_to`, `exports_to`, `shares_tag`. `scripted_by` edges carry a `via`
+`references_op`, `binds_to`, `exports_to`, `shares_tag`, `clones` (Clone COMP → its Clone
+Master, ADR-0072). `scripted_by` edges carry a `via`
 metadata value of `callbacks` / `execute` (host operator → its callbacks/execute DAT, in-network)
 or `file` (DAT operator → the external script it is synced to via the DAT's `file` par). `via:
 file` edges also carry `file` (project-relative path), `synced` (the DAT's `syncfile` toggle)
@@ -426,7 +430,7 @@ The `search_code` tool returns results with the following fields:
 
 ## Output Format Options
 
-All 18 MCP tools support configurable output formatting via the `output_format` parameter. This allows you to optimize token usage while preserving 100% of data.
+All 20 MCP tools support configurable output formatting via the `output_format` parameter. This allows you to optimize token usage while preserving 100% of data.
 
 ### Available Formats
 
@@ -925,7 +929,7 @@ Server startup:              0 MB VRAM (lazy loading)
 - **Direct callees**: Functions this symbol calls (outbound `calls` edges only, v0.14.0+)
 - **Indirect callers**: Multi-hop call chains (depth 1-N, `calls` edges only)
 - **Typed relationships**: Every other edge type (`inherits`, `imports`, `uses_type`, `contains`,
-  `docked_to`, `shares_tag`, …) appears only in its own `relationships` section, never in the
+  `docked_to`, `shares_tag`, `clones`, …) appears only in its own `relationships` section, never in the
   caller/callee lists or in `total_impacted`
 - **Similar code**: Semantically related implementations
 - **Impact severity**: Low/Medium/High based on caller count

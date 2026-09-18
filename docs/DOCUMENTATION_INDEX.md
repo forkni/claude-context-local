@@ -52,7 +52,7 @@ Fundamental documentation for daily use.
 
 | Document | Description |
 | ---------- | ------------- |
-| **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | Complete API reference for all 18 MCP tools |
+| **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | Complete API reference for all 20 MCP tools |
 | **[HYBRID_SEARCH_CONFIGURATION_GUIDE.md](HYBRID_SEARCH_CONFIGURATION_GUIDE.md)** | Search modes configuration (hybrid/semantic/BM25/auto) |
 | **[BENCHMARKS.md](BENCHMARKS.md)** | Performance benchmarks: SSCG retrieval (MRR/Recall/NDCG/line-overlap), token efficiency, caller recall |
 
@@ -79,9 +79,9 @@ Design decisions and their rationale — accepted, rejected, and superseded — 
 
 | Document | Description |
 | ---------- | ------------- |
-| **[docs/adr/README.md](adr/README.md)** | Index of all 20 ADRs (number, title, status, date) |
+| **[docs/adr/README.md](adr/README.md)** | Index of all ADRs (number, title, status, date) |
 
-Notable recent decisions: ADR-0014 (per-project search config overrides), ADR-0015 (community subsystem removed), ADR-0016 (DSPy eval subsystem removed), ADR-0017 (MCP SDK v2 adoption), ADR-0018 (`RetrievalRequest` carries effective config), ADR-0019 (intent-adaptive fusion weights rejected), ADR-0020 (config field liveness audit).
+Notable recent decisions: ADR-0062 (TouchDesigner network indexing), ADR-0067 (`find_similar_code` same-file exclusion widened on starved pools), ADR-0069 (phantom-node shadowing of resolved call edges fixed), ADR-0070 (Rust call-graph tier), ADR-0071 (LSP Stage-3 resolver goes live), ADR-0072 (`RelationshipType.CLONES` + TD edge-vocabulary drift detection), ADR-0073 (TD network edges carry only honest provenance).
 
 ---
 
@@ -91,7 +91,7 @@ MCP server implementation and transport options.
 
 | Document | Description |
 |----------|-------------|
-| **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | All 18 tools with parameters, examples, output formats |
+| **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | All 20 tools with parameters, examples, output formats |
 | **[CLAUDE_DESKTOP_SETUP.md](CLAUDE_DESKTOP_SETUP.md)** | Connect the Claude Desktop app to the running HTTP server via the `mcp-remote` stdio→HTTP bridge |
 
 ### Transport Options
@@ -202,7 +202,7 @@ Detailed technical documentation.
 - `chunking/relationships/` - Call graph extraction and relationship tracking
   - `resolvers/` - Type, import, and assignment resolvers
 - `graph/` - Graph storage & queries
-- `mcp_server/` - MCP tool implementations (18 tools)
+- `mcp_server/` - MCP tool implementations (20 tools)
 - `merkle/` - Incremental indexing (snapshot management)
 - `search/` - FAISS + BM25 hybrid search
 - `utils/` - Performance monitoring and utilities (v0.8.6+)
@@ -310,4 +310,4 @@ Detailed technical documentation.
 
 ---
 
-**Last Updated**: 2026-09-02 (v0.26.0 — retrieval campaigns closed, ADR-0039–0059 architecture wave, index-freshness verdict, test-suite hardening Phases 13–14; 4,351 unit tests)
+**Last Updated**: 2026-09-16 (development HEAD, unreleased — Rust call-graph tier (ADR-0070), LSP Stage-3 resolver goes live (ADR-0071), TD edge-vocabulary drift detection + honest edge provenance (ADR-0072/0073); 4,965 unit tests)

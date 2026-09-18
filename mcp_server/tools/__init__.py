@@ -18,6 +18,10 @@ from mcp_server.tools.index_handlers import (
     handle_delete_project,
     handle_index_directory,
 )
+from mcp_server.tools.procedural_handlers import (
+    handle_edit_procedural_graph,
+    handle_get_procedural_guidance,
+)
 from mcp_server.tools.search_handlers import (
     handle_find_connections,
     handle_find_path,
@@ -66,4 +70,7 @@ __all__ = [
     "handle_index_directory",
     "handle_clear_index",
     "handle_delete_project",
+    # Procedural handlers (2)
+    "handle_get_procedural_guidance",
+    "handle_edit_procedural_graph",
 ]

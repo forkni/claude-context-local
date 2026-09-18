@@ -3,14 +3,15 @@ name: mcp-search-tool
 description: "Guides semantic code search via the code-search MCP server. Use when searching for code definitions, callers, callees, dependencies, or tracing code flow in indexed projects — also when switching between indexed projects, verifying which project is active, or checking whether an index is stale before trusting results. Provides correct workflows for search_code, find_connections, find_path, find_similar_code, switch_project, index_directory. Invoke /mcp-search-tool status to run a health check."
 user-invocable: true
 argument-hint: "search query or 'status' for index health"
-# allowed-tools lists all 18 (10 core + 8 advanced: clear_index, delete_project,
+# allowed-tools lists all 20 (10 core + 10 advanced: clear_index, delete_project,
 # configure_search_mode, get_search_config_status, configure_reranking, configure_chunking,
-# list_embedding_models, switch_embedding_model). Granting permission here does NOT make the
-# 8 advanced tools dispatchable — they must also be listed by the server's list_tools, which
+# list_embedding_models, switch_embedding_model, get_procedural_guidance,
+# edit_procedural_graph). Granting permission here does NOT make the
+# 10 advanced tools dispatchable — they must also be listed by the server's list_tools, which
 # requires MCP_EXPOSE_ADVANCED_TOOLS=1 on the server process + reconnect. See "Tool Tiers" below.
-allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
+allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources, code-search:get_procedural_guidance, code-search:edit_procedural_graph"
 metadata:
-  version: 0.26.0
+  version: 0.27.0
   mcp-server: code-search
 ---
 
@@ -166,14 +167,14 @@ the useful signal.
 
 ---
 
-## Tool Tiers: 10 Core (Listed) + 8 Advanced (Hidden by Default)
+## Tool Tiers: 10 Core (Listed) + 10 Advanced (Hidden by Default)
 
 By default the server's `list_tools` advertises only the **10 core tools** below (tool-count budget, MCP Architecture-Patterns §VI-C). Set
-`MCP_EXPOSE_ADVANCED_TOOLS=1` on the server process and reconnect (`/mcp` → Reconnect) to also *list* the 8 advanced tools (`clear_index`,
+`MCP_EXPOSE_ADVANCED_TOOLS=1` on the server process and reconnect (`/mcp` → Reconnect) to also *list* the 10 advanced tools (`clear_index`,
 `delete_project`, `configure_search_mode`, `get_search_config_status`, `configure_reranking`, `configure_chunking`, `list_embedding_models`,
-`switch_embedding_model`).
+`switch_embedding_model`, `get_procedural_guidance`, `edit_procedural_graph`).
 
-**An unlisted tool cannot be called — do not assume otherwise.** If a task's "natural" tool is one of the 8 advanced tools and it is not currently
+**An unlisted tool cannot be called — do not assume otherwise.** If a task's "natural" tool is one of the 10 advanced tools and it is not currently
 listed:
 
 1. **Check for an in-band alternative first** — only `configure_search_mode` has one:
@@ -199,7 +200,7 @@ dispatchable in this session and the call will fail.
 | code-search:get_memory_status | Check RAM/VRAM usage |
 | code-search:cleanup_resources | Free memory/caches |
 
-Full purpose + in-band-alternative table for the 8 advanced tools (only `configure_search_mode` has one — see step 1 above):
+Full purpose + in-band-alternative table for the 10 advanced tools (only `configure_search_mode` has one — see step 1 above):
 [references/tool-index.md](references/tool-index.md) Full parameter reference for essential tools (search_code, find_connections, find_path):
 [references/parameters.md](references/parameters.md) Advanced features (multi-hop, intent routing, summaries):
 [references/advanced-features.md](references/advanced-features.md) Benchmark data & mode selection guide:

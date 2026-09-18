@@ -86,7 +86,7 @@ callgraph = [
     # chunking/relationships/external_call_graph.py's own dual-license header.
     # Provides whole-project cross-module call edges (recall booster on top of
     # the in-house AST extractor).
-    "pyan3>=2.6.0",
+    "pyan3>=2.8.0",
     # libcst: MIT; FullyQualifiedNameProvider cross-file resolution (Stage 2).
     "libcst>=1.8.6",
 ]
@@ -156,7 +156,41 @@ evaluation = ["*.json", "*.md"]
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-09-01 (`/deps-audit` — 180 packages. CVE set unchanged from 2026-08-20: same
+# Last audit: 2026-09-14 (Stage-3 LSP resolver tier brought online: `uv sync --extra callgraph
+#             --extra test --extra otel --extra lsp` installed `basedpyright==1.39.10` (2 packages,
+#             uv.lock unchanged — already pinned). `lsp_enabled` was already `true` in
+#             `search_config.json`; Stage 3 is gated solely on that flag, not on the `resolvers`
+#             list (ADR-0032 §D3), so no config edit was needed. Force reindex confirmed
+#             `Dispatching 3 resolver(s)`, `lsp: 1960 edges -> added=113, upgraded=1847`, no
+#             silent-zero-edge path (`[LSP] No edges produced` warning absent), no budget
+#             truncation (51.5s resolve vs 180s floor). resolver_source mix: lsp 1960 @0.98,
+#             libcst 759 @0.90, pyan 556 @0.75 (libcst/pyan counts fell as expected — LSP
+#             upgrades, not losses). Install + verify only per user scope; the retrieval A/B gate
+#             and canon re-pin on this three-tier substrate are deferred (see the note appended to
+#             `evaluation/CANON_20260914_REBASELINE.md`).
+# Previous audit: 2026-09-14 (`/diagnose` on a reported `pyan.postprocessor.cull_subsumed` ImportError
+#             — root cause: the venv was never synced after `f5acd585` (2026-09-02) bumped pyan3 to
+#             the 2.8 postprocessor API; `.venv` was still on pyan3 2.6.2 and 34 packages behind
+#             `uv.lock` overall (dist-infos dated 2026-07-30->08-12, `pytest-timeout` missing
+#             entirely — no local test run had been possible since 2026-08-20, across 164 commits).
+#             `uv sync --extra callgraph --extra test --extra otel` applied; pyan3 2.8.1 confirmed
+#             live, full suite green (4922 passed / 3 skipped), CUDA intact (2.11.0+cu128).
+#             Sync included the previously-deferred sentence-transformers 6.0.1, syrupy 6.0.0,
+#             pytest-randomly 5.0.0 (see the 2026-08-20/09-02 entries below) with zero test
+#             fallout. Retrieval A/B gate run post-sync surfaced an apparent ~0.12-0.14 MRR
+#             regression against `evaluation/CANON_20260908_REBASELINE.md` (63q 0.8241); dependency
+#             counterfactuals (ST 5.7.0, transformers 5.14.1/tokenizers 0.22.2) reproduced the
+#             post-sync number bit-for-bit, ruling out the version bumps. Root cause: the 09-08 pin
+#             (and every pin since 2026-07-26) was measured on `codefuse-ai/F2LLM-v2-0.6B`, not
+#             the `BAAI/bge-m3` this notebook (RTX 4060 Laptop, 8.6 GB VRAM, below the
+#             `F2LLM [RECOMMENDED 12GB+]` threshold) runs — a comparison across two different
+#             embedding models, not a regression. Same-model Leg A (pyan off, 63q 0.696) / Leg B
+#             (pyan on, 63q 0.702) control confirmed the pyan-fix itself is regression-free
+#             (+0.006 MRR, 3,184 real cross-module edges restored). New bge-m3-specific canon
+#             established: `evaluation/CANON_20260914_REBASELINE.md` (63q 0.702, 133q 0.514,
+#             F-via-similar 0.728) — not comparable to the 08-22/09-08 numbers cited below, which
+#             remain valid for the F2LLM-v2-0.6B lineage on ≥12 GB VRAM machines.
+# Previous audit: 2026-09-01 (`/deps-audit` — 180 packages. CVE set unchanged from 2026-08-20: same
 #             4 CVEs / 3 packages (setuptools, sqlitedict, torch). Both live reopening conditions
 #             re-tested and still NOT met: (1) setuptools 81.0.0/CVE-2026-59890 needs torch to
 #             relax `setuptools<82` — confirmed torch 2.12.0 *also* declares `<82`, only 2.13.0

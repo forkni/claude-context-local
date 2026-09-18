@@ -23,7 +23,7 @@ from chunking.relationships.relationship_types import (
 
 
 def test_relationship_type_enum_values():
-    """Test that all 29 relationship types are defined."""
+    """Test that all 30 relationship types are defined."""
     expected_types = {
         # Priority 1: Foundation
         "calls",
@@ -60,6 +60,7 @@ def test_relationship_type_enum_values():
         "exports_to",
         "scripted_by",
         "shares_tag",
+        "clones",
     }
 
     actual_types = {rt.value for rt in RelationshipType}
@@ -119,7 +120,7 @@ def test_relationship_type_priority_groups():
 
     # Check Priority 6 (8 types, ADR-0062 TouchDesigner network relationships)
     priority6 = groups[6]
-    assert len(priority6) == 8
+    assert len(priority6) == 9
     assert RelationshipType.WIRES_TO in priority6
     assert RelationshipType.DOCKED_TO in priority6
     assert RelationshipType.CONTAINS in priority6
@@ -128,6 +129,7 @@ def test_relationship_type_priority_groups():
     assert RelationshipType.EXPORTS_TO in priority6
     assert RelationshipType.SCRIPTED_BY in priority6
     assert RelationshipType.SHARES_TAG in priority6
+    assert RelationshipType.CLONES in priority6
 
 
 # ===== RelationshipEdge Dataclass Tests =====
@@ -356,7 +358,7 @@ def test_get_relationship_field_mapping():
 
     # Check structure
     assert isinstance(mapping, dict)
-    assert len(mapping) == 27
+    assert len(mapping) == 28
 
     # Check specific mappings
     assert mapping["inherits"] == ("parent_classes", "child_classes")
@@ -373,6 +375,7 @@ def test_get_relationship_field_mapping():
     assert mapping["exports_to"] == ("exports_to", "exported_by")
     assert mapping["scripted_by"] == ("scripted_by", "scripts")
     assert mapping["shares_tag"] == ("shares_tag_with", "shares_tag_with")
+    assert mapping["clones"] == ("clones", "cloned_by")
 
     # assigns_to/reads_from are deliberately unmapped: no extractor ever emits
     # them, and their mapping was directionally backwards. They remain

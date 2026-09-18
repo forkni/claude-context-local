@@ -8,6 +8,7 @@ from search.chunk_id import (
     build,
     dedup_key,
     dedupe_results,
+    derive_symbol_hint,
     extract_line_count,
     extract_name,
     is_chunk_id,
@@ -479,3 +480,53 @@ class TestDedupeResults:
         ]
         survivors = dedupe_results(results)
         assert len(survivors) == 1
+
+
+# ---------------------------------------------------------------------------
+# derive_symbol_hint
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveSymbolHint:
+    """derive_symbol_hint(): (path, symbol) recovery from a malformed chunk_id."""
+
+    def test_shorthand_file_and_symbol(self):
+        assert derive_symbol_hint("tools/td_layout.py:score_layout") == (
+            "tools/td_layout.py",
+            "score_layout",
+        )
+
+    def test_stale_canonical_id_recovers_path_and_name(self):
+        assert derive_symbol_hint(
+            "tools/td_layout.py:498-535:function:score_layout"
+        ) == ("tools/td_layout.py", "score_layout")
+
+    def test_drive_letter_path_is_safe(self):
+        assert derive_symbol_hint("F:/proj/a.py:10-20:function:foo") == (
+            "F:/proj/a.py",
+            "foo",
+        )
+
+    def test_trailing_line_range_yields_no_symbol(self):
+        # Last segment is a line range — nothing but a path, genuinely no
+        # symbol to recover (mirrors the existing pinning test's fixture).
+        assert derive_symbol_hint("src/auth.py:10-20") is None
+
+    def test_nameless_kind_only_chunk_yields_no_symbol(self):
+        # Trailing component after the line range is a kind ("merged"), not a name.
+        assert derive_symbol_hint("src/foo.py:1-5:merged") is None
+
+    def test_bare_symbol_no_colon_yields_none(self):
+        assert derive_symbol_hint("score_layout") is None
+
+    def test_class_qualified_shorthand_name_preserved(self):
+        # A dotted/qualified name after the last colon is kept whole, not split.
+        assert derive_symbol_hint("tools/td_layout.py:Layout.score") == (
+            "tools/td_layout.py",
+            "Layout.score",
+        )
+
+    def test_windows_backslash_path_normalized(self):
+        path, name = derive_symbol_hint("search\\reranker.py:36-137:method:rerank")
+        assert path == "search/reranker.py"
+        assert name == "rerank"

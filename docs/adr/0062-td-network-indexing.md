@@ -167,7 +167,9 @@ plan doc above):
    `SCRIPTED_BY` edge per node carrying `script.file`, from the DAT operator chunk to the file's
    module-summary id `<rel>:0-0:module:<stem>`, with metadata
    `{td_edge_type: scripted_by, via: file, file, synced, resolver_source: td_live}` and
-   confidence 0.98. Paths are normalised to `/`; absolute paths and any `..` segment are
+   confidence 1.0 (corrected 2026-09-15 — see ADR-0073, which deleted the invented
+   `_RESOLVED_CONFIDENCE = 0.98` this line originally documented). Paths are normalised to `/`;
+   absolute paths and any `..` segment are
    rejected with a DEBUG log. The path is resolved against the index root twice — re-rooted
    under the snapshot's grandparent (`Graph/x.tdgraph.json` next to `Scripts/`) first, then
    as written — the first existing candidate wins, else the path is used as written so the
@@ -220,26 +222,14 @@ The producer moved to 13 edge types and a `par_modes` block while the consumer s
 and read neither `edge_types[]` nor `schema_version`; `clone` edges (COMP-level, load-bearing —
 a cloned COMP's behaviour is defined elsewhere) fell into a debug log and vanished silently.
 
-- **`clone` reuses `REFERENCES_OP`**, not a new `RelationshipType.CLONES` member: one row in
-  `_SIMPLE_EDGE_MAP`, `td_edge_type: "clone"` preserved in edge metadata (already set
-  unconditionally for every simple-mapped edge). A dedicated type was rejected because the same
-  relationship ships as a plain `par_ref` when `enablecloning`/`evalexpressions` is off
-  (`TD_Glossary_tox/docs/architecture/network-graph.md:29`) — a dedicated type would make the
-  graph's edge type change under a parameter toggle the consumer has no visibility into. Reuse
-  also costs zero enumeration-site edits (no `get_relationship_field_mapping`,
-  `REVERSE_RELATIONS`, `DEFAULT_EDGE_WEIGHTS`, `get_priority_groups`, tool-schema, or
-  `test_extractor_registry.py` changes), unlike a new member. **Revisit trigger:** any snapshot
-  reporting `clone` count > 50 justifies promoting it to its own type.
-- **Unhandled edge types and schema drift are now loud.** A module-level
-  `_SUPPORTED_SCHEMA_VERSION` guard warns once per distinct observed version (never rejects —
-  additive producer fields don't bump the version, only removal/rename/type changes do).
-  `_build_relationship_edges` now also returns an `unhandled_edge_counts` dict (third tuple
-  element) so an invented/renamed edge type it has no branch for produces one summarising
-  `logger.warning` instead of a silent per-edge debug line. The network chunk cross-checks the
-  artifact's own `edge_types[]` histogram both ways — handled types missing a nonzero-count
-  declaration, and declared nonzero types the chunker doesn't handle — filtered to `count > 0`
-  (the histogram always lists all 13 types, zero-count included, so an unfiltered diff would
-  flag every type a given network happens not to use).
+- **`clone` edges and producer/consumer drift detection were redesigned and superseded by
+  ADR-0072 and ADR-0073** (2026-09-15): `clone` now maps to a dedicated `RelationshipType.CLONES`
+  member (not a `REFERENCES_OP` reuse — see ADR-0072 for why a dedicated type won the tradeoff
+  this ADR originally decided against), the vocabulary lives in `TD_GRAPH_EDGE_TYPES` sourced
+  from the producer's own `tdgraph_contract.py`, and unresolved edge targets are tracked as
+  `phantom_dst_count` (deduped per `(edge_type, dst)`, ADR-0073) rather than the
+  `unhandled_edge_counts` design first landed here. See those two ADRs for the current mechanism;
+  this ADR's own account of it is historical.
 - **`expressions:` content line** renders `par_modes` entries with `mode == "expression"` as
   `name=expr` pairs, inserted before `params:` (which holds only the evaluated value, not the TD
   source). Bind/export-mode pars are excluded — they already render in `references:`. Capped at
@@ -389,3 +379,13 @@ project's storage dir (the repo's own `search_config.json` stays off; see `docs/
   per scripted node, 0 python→td_network `calls` edges, `find_path` operator → function) is
   pending a fresh `Synctextdats` → `Exportgraph` run on the TD side; the committed fixture
   covers both paths in unit tests.
+
+---
+
+**Forward pointer (ADR-0072, 2026-09-15):** the producer's edge vocabulary is 13 types, not
+the 11 this ADR's Context section describes (`clone` and `scripted_by` were both undercounted
+here) — the corrected count, the producer's own drift-guard test, and this repo's mirroring
+`TD_GRAPH_EDGE_TYPES` declaration all live in ADR-0072, which also notes the exporter's
+`Scripts/dat_NetworkGraphExt.py` path in this ADR's Context section moved to
+`Extensions/OperatorGlossary/` in 2026-09. This ADR's own history and measurements above are
+left as originally recorded.

@@ -679,7 +679,7 @@ class TestCodeGraphStorage:
             target_name=target,
             relationship_type=RelationshipType.SCRIPTED_BY,
             line_number=0,
-            confidence=0.98,
+            confidence=1.0,
             metadata={
                 "td_edge_type": "scripted_by",
                 "via": "file",
@@ -722,7 +722,7 @@ class TestCodeGraphStorage:
         assert data["file"] == "Scripts/X__td.py"
         assert data["synced"] is True
         assert data["resolver_source"] == "td_live"
-        assert data["confidence"] == 0.98
+        assert data["confidence"] == 1.0
         assert "retargeted" not in data
         assert "original_target" not in data
 

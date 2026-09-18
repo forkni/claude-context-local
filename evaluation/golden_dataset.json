@@ -39,6 +39,15 @@
     "recommended_k": 7,
     "changelog": [
       {
+        "date": "2026-09-14",
+        "changes": [
+          "Q56: demoted search/indexer.py:decorated_definition:CodeIndexManager.index from grade 3 to grade 2 and removed from expected_primary -- it is a 4-line @property pass-through, not co-primary with the class overview itself; grading it 3 capped recall@5 at 0.25 for this query.",
+          "Q70: added chunking/languages/csharp.py:method:CSharpChunker.__init__ and chunking/languages/glsl.py:method:GLSLChunker.__init__ as grade 3 expected_primary -- both are concrete language chunker initializers with identical __init__ signatures to the already-graded-3 cpp/javascript/c chunkers; their omission penalized retrieval for correct hits.",
+          "Q94: added graph/graph_storage.py:method:CodeGraphStorage.add_node as grade 3 expected_primary -- the node-insertion routine is a closer analogue to the anchor query (GraphIntegration.add_chunk, a chunk-insertion routine) than the already-graded-2 edge-adders (add_relationship_edge/add_call_edge).",
+          "Found during the LSP Stage-3 retrieval gate investigation (evaluation/CANON_20260914B_LSP_REBASELINE.md); corrected as a separately-declared comparability break, not folded into that gate so its A/B stayed clean. See evaluation/CANON_20260914B_LSP_REBASELINE.md's gold-dataset correction re-pin section for the re-measured numbers."
+        ]
+      },
+      {
         "date": "2026-09-02",
         "changes": [
           "Q12: mcp_server/tools/status_handlers.py:method:handle_get_index_status kept as-is. It is the normalize_chunk_id form of the three split_block fragments the adaptive-sizing indexer (repo P75 threshold) stores for this 105-line decorated_definition; the static-threshold fresh chunker never splits it. tests/unit/evaluation/test_golden_set_guard.py now accepts the method: alias for split-eligible nodes (kind function/decorated_definition, longer than chunking.max_chunk_lines) instead of the gold being rewritten to a form the index does not hold."
@@ -898,12 +907,11 @@
         "search/indexer.py:method:CodeIndexManager.save_index"
       ],
       "expected_primary": [
-        "search/indexer.py:class:CodeIndexManager",
-        "search/indexer.py:decorated_definition:CodeIndexManager.index"
+        "search/indexer.py:class:CodeIndexManager"
       ],
       "relevance_grades": {
         "search/indexer.py:class:CodeIndexManager": 3,
-        "search/indexer.py:decorated_definition:CodeIndexManager.index": 3,
+        "search/indexer.py:decorated_definition:CodeIndexManager.index": 2,
         "search/indexer.py:method:CodeIndexManager.create_index": 2,
         "search/indexer.py:method:CodeIndexManager.save_index": 2,
         "search/faiss_index.py:class:FaissVectorIndex": 1,
@@ -1296,6 +1304,8 @@
         "chunking/languages/cpp.py:method:CppChunker.__init__",
         "chunking/languages/javascript.py:method:JavaScriptChunker.__init__",
         "chunking/languages/c.py:method:CChunker.__init__",
+        "chunking/languages/csharp.py:method:CSharpChunker.__init__",
+        "chunking/languages/glsl.py:method:GLSLChunker.__init__",
         "chunking/languages/go.py:method:GoChunker.__init__",
         "chunking/languages/rust.py:method:RustChunker.__init__",
         "chunking/languages/typescript.py:method:TypeScriptChunker.__init__",
@@ -1304,12 +1314,16 @@
       "expected_primary": [
         "chunking/languages/cpp.py:method:CppChunker.__init__",
         "chunking/languages/javascript.py:method:JavaScriptChunker.__init__",
-        "chunking/languages/c.py:method:CChunker.__init__"
+        "chunking/languages/c.py:method:CChunker.__init__",
+        "chunking/languages/csharp.py:method:CSharpChunker.__init__",
+        "chunking/languages/glsl.py:method:GLSLChunker.__init__"
       ],
       "relevance_grades": {
         "chunking/languages/cpp.py:method:CppChunker.__init__": 3,
         "chunking/languages/javascript.py:method:JavaScriptChunker.__init__": 3,
         "chunking/languages/c.py:method:CChunker.__init__": 3,
+        "chunking/languages/csharp.py:method:CSharpChunker.__init__": 3,
+        "chunking/languages/glsl.py:method:GLSLChunker.__init__": 3,
         "chunking/languages/go.py:method:GoChunker.__init__": 2,
         "chunking/languages/rust.py:method:RustChunker.__init__": 2,
         "chunking/languages/typescript.py:method:TypeScriptChunker.__init__": 2,
@@ -1831,14 +1845,17 @@
       "anchor_chunk_id": "search/graph_integration.py:method:GraphIntegration.add_chunk",
       "expected": [
         "search/indexer.py:method:CodeIndexManager._add_to_graph",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_node",
         "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge",
         "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge"
       ],
       "expected_primary": [
-        "search/indexer.py:method:CodeIndexManager._add_to_graph"
+        "search/indexer.py:method:CodeIndexManager._add_to_graph",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_node"
       ],
       "relevance_grades": {
         "search/indexer.py:method:CodeIndexManager._add_to_graph": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.add_node": 3,
         "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge": 2,
         "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge": 2,
         "search/graph_integration.py:method:GraphIntegration.build_graph_from_chunks": 1,

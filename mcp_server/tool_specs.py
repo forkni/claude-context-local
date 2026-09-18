@@ -26,12 +26,12 @@ whole tools.
 Tool-count budget (§VI-C, "MCP Server Architecture Patterns for LLM-Integrated
 Applications", Rodrigues & Vas, arXiv:2606.30317): LLM tool-selection accuracy
 falls below 90% once a context holds ~10-15 tools (Haiku-class models) / ~20-30
-(Sonnet-class). Listing all 18 tools unconditionally risks that budget once this
+(Sonnet-class). Listing all 20 tools unconditionally risks that budget once this
 server is loaded alongside other MCP servers in the same client session.
 
 Tools are tagged CORE or ADVANCED (see ``advanced=`` on each row). By default
 build_tool_list() returns CORE tools only (10). Set the environment variable
-MCP_EXPOSE_ADVANCED_TOOLS=1 to list all 18. This only affects what list_tools
+MCP_EXPOSE_ADVANCED_TOOLS=1 to list all 20. This only affects what list_tools
 advertises to the LLM — TOOL_DISPATCH still dispatches every tool by name
 regardless of this flag, so advanced tools remain callable by any client that
 already knows their name/schema (tests, scripts, power users).
@@ -50,6 +50,7 @@ from typing import Any, Literal
 
 from mcp.types import Tool
 
+from graph.procedural_graph import NODE_ID_PATTERN, PG_RELATIONS
 from mcp_server.config_schema import (
     CONFIG_BACKED,
     HAND_TYPED,
@@ -68,6 +69,10 @@ from mcp_server.tools.index_handlers import (
     handle_clear_index,
     handle_delete_project,
     handle_index_directory,
+)
+from mcp_server.tools.procedural_handlers import (
+    handle_edit_procedural_graph,
+    handle_get_procedural_guidance,
 )
 from mcp_server.tools.search_handlers import (
     handle_find_connections,
@@ -737,7 +742,7 @@ WHEN TO USE:
 
 RETURNS (direct_callers / indirect_callers / direct_callees are `calls`-edge
 lists only; every other inbound/outbound relationship type — inherits, imports,
-uses_type, contains, docked_to, shares_tag, ... — appears solely in its typed
+uses_type, contains, docked_to, shares_tag, clones, ... — appears solely in its typed
 `relationships` section):
 - direct_callers: list of chunks that call this symbol, each with
     - chunk_id, file, start/end lines, symbol info
@@ -786,7 +791,7 @@ extras to see `resolver_source: "lsp"` edges.""",
                 "relationship_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager, wires_to, docked_to, contains, references_op, binds_to, exports_to, scripted_by, shares_tag. Note: uses_global and asserts_type require entity tracking (enable_entity_tracking, default True) and a reindex to populate on an existing index. contains is a class -> method/function containment edge (from the chunk metadata field parent_chunk_id) and, for TouchDesigner, network/COMP -> operator. The other TouchDesigner network types (wires_to, docked_to, references_op, binds_to, exports_to, scripted_by, shares_tag) only populate when enable_td_network_indexing is on (ADR-0062, default off) and the index contains .tdgraph.json files.',
+                    "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, assigns_to, reads_from, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager, wires_to, docked_to, contains, references_op, binds_to, exports_to, scripted_by, shares_tag, clones. Note: uses_global and asserts_type require entity tracking (enable_entity_tracking, default True) and a reindex to populate on an existing index. contains is a class -> method/function containment edge (from the chunk metadata field parent_chunk_id) and, for TouchDesigner, network/COMP -> operator. The other TouchDesigner network types (wires_to, docked_to, references_op, binds_to, exports_to, scripted_by, shares_tag, clones) only populate when enable_td_network_indexing is on (ADR-0062, default off) and the index contains .tdgraph.json files. clones is COMP -> Clone Master (ADR-0072), only when the source .tox has cloning enabled.',
                 },
                 "hide_ambiguous": {
                     **CONFIG_BACKED["find_connections.hide_ambiguous"],
@@ -975,8 +980,167 @@ RETURNS:
         handler=handle_configure_chunking,
         advanced=True,
     ),
+    ToolSpec(
+        name="get_procedural_guidance",
+        description="""Look up a stored Procedural Graph (ADR-0074) at an agent's last action and return the nearby transitions as guidance text.
+
+A Procedural Graph is a directed multigraph of actions ("nodes") and transitions ("edges") built by a separate producer tool; each transition carries condition/guidance/pitfalls text. This tool locates the graph at last_action and extracts an h-hop out-neighbourhood -- it never calls an LLM, and the returned text is meant to be appended to the calling agent's own next prompt.
+
+WHEN TO USE:
+- After completing a step in a known procedure, to see what to do (or watch out for) next
+- Exploring a stored procedure's structure before starting it -- there is no whole-graph *parameter*, but a last_action that misses every node returns located: false plus every transition in the graph
+
+WHEN NOT TO USE:
+- last_action is not from the procedure's own closed vocabulary — a miss is reported (located: false) rather than guessed at; no fuzzy matching is attempted
+- Editing the graph itself (use edit_procedural_graph)
+
+RETURNS:
+- graph: the graph name echoed back
+- last_action, located (bool: whether last_action matched a node), hops (actual value used, clamped to 1-4)
+- node_count, edge_count (edges in this response)
+- guidance: plain-text block -- one header line, then one line per transition with its condition/guidance/pitfalls fields ("-" for an empty field)""",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "graph": {
+                    "type": "string",
+                    "description": "Stored procedural graph name (as imported by scripts/import_procedural_graph.py)",
+                },
+                "last_action": {
+                    "type": "string",
+                    "description": "The agent's last completed action, as an exact node id from the procedure's closed vocabulary",
+                },
+                "hops": {
+                    "type": "integer",
+                    **HAND_TYPED["get_procedural_guidance.hops"].schema,
+                    "minimum": 1,
+                    "maximum": 4,
+                    "description": "How many BFS levels of out-edges to extract from last_action (default: 2, clamped to 1-4)",
+                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
+            },
+            "required": ["graph", "last_action"],
+        },
+        handler=handle_get_procedural_guidance,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="edit_procedural_graph",
+        description="""Apply a typed, validated edit to a stored Procedural Graph (ADR-0074): add/delete nodes, add/delete transitions.
+
+Every phase (delete_edges, delete_nodes, add_nodes, add_edges) runs in full and the graph is re-validated as a whole afterward -- deleting an absent node/edge or adding an already-present one is reported as an error, not silently ignored. The edit is only ever written to disk when it is both valid and dry_run is false; an invalid edit is never written regardless of dry_run.
+
+WHEN TO USE:
+- Correcting or extending a stored procedure's transitions (e.g. updating guidance/pitfalls text -- delete then re-add the same transition)
+- Trying a candidate edit safely first (dry_run defaults to true)
+
+WHEN NOT TO USE:
+- Creating a new graph from scratch (use scripts/import_procedural_graph.py)
+- Renaming a transition's Phi text in place — there is no "modify" verb; delete the old (src, relation, dst) and add it back with new text
+
+RETURNS:
+- graph: the graph name echoed back
+- dry_run, valid, errors (list, empty on success), applied ({add_nodes, delete_nodes, add_edges, delete_edges} counts)
+- node_count, edge_count reflecting the edited graph when valid, the original graph when not
+- committed: true only when valid and dry_run is false""",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "graph": {
+                    "type": "string",
+                    "description": "Stored procedural graph name to edit",
+                },
+                "edit": {
+                    "type": "object",
+                    "description": (
+                        "All four keys are optional; unknown keys are an error. "
+                        "add_nodes: list of {id: string}. "
+                        "delete_nodes: list of node id strings (also drops their incident edges). "
+                        "add_edges: list of {src, dst, relation, condition, guidance, pitfalls} (all strings). "
+                        "delete_edges: list of {src, dst, relation} (identifies the transition to remove)."
+                    ),
+                    "properties": {
+                        "add_nodes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {
+                                        "type": "string",
+                                        "pattern": NODE_ID_PATTERN.pattern,
+                                    },
+                                },
+                                "required": ["id"],
+                                "additionalProperties": False,
+                            },
+                            "description": "Nodes to add: [{id: string}, ...]",
+                        },
+                        "delete_nodes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Node ids to delete (their incident edges are dropped too)",
+                        },
+                        "add_edges": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "src": {"type": "string"},
+                                    "dst": {"type": "string"},
+                                    "relation": {
+                                        "type": "string",
+                                        "enum": list(PG_RELATIONS),
+                                    },
+                                    "condition": {"type": "string"},
+                                    "guidance": {"type": "string"},
+                                    "pitfalls": {"type": "string"},
+                                },
+                                "required": [
+                                    "src",
+                                    "dst",
+                                    "relation",
+                                    "condition",
+                                    "guidance",
+                                    "pitfalls",
+                                ],
+                                "additionalProperties": False,
+                            },
+                            "description": "Transitions to add: [{src, dst, relation, condition, guidance, pitfalls}, ...] (all string fields)",
+                        },
+                        "delete_edges": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "src": {"type": "string"},
+                                    "dst": {"type": "string"},
+                                    "relation": {
+                                        "type": "string",
+                                        "enum": list(PG_RELATIONS),
+                                    },
+                                },
+                                "required": ["src", "dst", "relation"],
+                                "additionalProperties": False,
+                            },
+                            "description": "Transitions to delete: [{src, dst, relation}, ...]",
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    **HAND_TYPED["edit_procedural_graph.dry_run"].schema,
+                    "description": "When true (default), validate and report the edit without writing it to disk",
+                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
+            },
+            "required": ["graph", "edit"],
+        },
+        handler=handle_edit_procedural_graph,
+        advanced=True,
+    ),
 )
-"""All 18 tool specs, in published-schema order (matches the former
+"""All 20 tool specs, in published-schema order (matches the former
 TOOL_REGISTRY key order)."""
 
 

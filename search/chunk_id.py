@@ -264,6 +264,60 @@ def dedup_key(raw: str) -> str:
     return normalize(raw)
 
 
+def derive_symbol_hint(raw: str) -> tuple[str, str] | None:
+    """Best-effort recovery of (file_path, symbol_name) from a malformed chunk_id.
+
+    Used when an exact chunk_id lookup misses — either the line range has drifted
+    (incremental reindex moved the chunk) or the string is an agent-constructed
+    shorthand like ``"file.py:symbol"`` instead of the full canonical form. Callers
+    retry resolution by the derived symbol name, using the derived file path as a
+    same-file preference hint (not a hard filter — the symbol may have moved files).
+
+    Returns ``None`` when no symbol name can be derived: the last component is a
+    line range (nothing but a path — see :func:`_is_line_range`) or a bare chunk
+    kind with no trailing name (e.g. ``"merged"``), or the string has no colon at
+    all (a bare symbol name — pass it via ``symbol_name=`` instead).
+
+    Mirrors the drive-letter-aware line-range scan in :func:`dedup_key` so a path
+    like ``"F:/proj/a.py"`` is not mistaken for two components.
+
+    Examples:
+        >>> derive_symbol_hint("tools/td_layout.py:score_layout")
+        ('tools/td_layout.py', 'score_layout')
+        >>> derive_symbol_hint("tools/td_layout.py:498-535:function:score_layout")
+        ('tools/td_layout.py', 'score_layout')
+        >>> derive_symbol_hint("F:/proj/a.py:10-20:function:foo")
+        ('F:/proj/a.py', 'foo')
+        >>> derive_symbol_hint("src/auth.py:10-20")  # last segment is a line range
+        >>> derive_symbol_hint("src/foo.py:1-5:merged")  # nameless — kind, not a name
+        >>> derive_symbol_hint("score_layout")  # no colon — use symbol_name= instead
+    """
+    parts = raw.split(":")
+    if len(parts) < 2:
+        return None
+    last = parts[-1]
+    if _is_line_range(last):
+        # Nothing but a path + line range ("src/auth.py:10-20") — no symbol to derive.
+        return None
+
+    # Locate a line-range component, if present, so the path/kind/name split is
+    # correct even when the path itself contains a colon (drive letter).
+    for i in range(1, len(parts) - 1):
+        if _is_line_range(parts[i]):
+            file_path = _canonical_path_sep(":".join(parts[:i]))
+            if i + 2 >= len(parts):
+                # "path:range:kind" with nothing after — e.g. a nameless "merged"
+                # chunk. The trailing component is a kind, not a symbol name.
+                return None
+            name = ":".join(parts[i + 2 :])
+            return file_path, name
+
+    # No line-range component anywhere: treat as "path:symbol" shorthand — the
+    # last colon-segment is the name, everything before it is the path.
+    file_path = _canonical_path_sep(":".join(parts[:-1]))
+    return file_path, last
+
+
 def dedupe_results(results: list) -> list:
     """Collapse results sharing a :func:`dedup_key` to the first occurrence.
 

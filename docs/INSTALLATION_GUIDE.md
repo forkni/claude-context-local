@@ -171,7 +171,7 @@ $env:HF_TOKEN = "hf_your_token_here"
 
 ```powershell
 # Check HuggingFace authentication status
-verify-hf-auth.bat
+verify-hf-auth.cmd
 
 # Or run the Python script directly
 .venv\Scripts\python.exe scripts\verify_hf_auth.py
@@ -227,6 +227,23 @@ Test your authentication with these commands:
 # Full verification
 verify-installation.cmd
 ```
+
+### Model Verification and Connectivity Failures
+
+When a model is not already cached, the system checks that it exists on the
+Hugging Face Hub before downloading it. Transient failures in that check are
+retried up to three times with a short backoff.
+
+- **`Model '<name>' not found on HuggingFace Hub!`**: Check the model ID for
+  typos, confirm that the repository exists, and verify that your account has
+  access to it.
+- **`Could not verify model '<name>' on HuggingFace Hub after 3 attempts!`**:
+  The Hub check failed repeatedly with a non-404 error. Check your internet
+  connection, check for a Hugging Face service outage, and try again later.
+  This message alone does not prove that the model is absent.
+
+These retries apply to the Hub existence check; they do not retry the model
+download itself.
 
 ### Security Notes
 
@@ -433,7 +450,7 @@ The project uses a clean separation between runtime and development dependencies
 
 | Extra | Packages | Adds |
 |-------|----------|------|
-| `[callgraph]` | `pyan3>=2.6.0`, `libcst>=1.8.6` | pyan (0.75 confidence) + LibCST FQN resolver (0.90 confidence) |
+| `[callgraph]` | `pyan3>=2.8.0`, `libcst>=1.8.6` | pyan (0.75 confidence) + LibCST FQN resolver (0.90 confidence) |
 | `[lsp]` | `basedpyright>=1.21` | basedpyright LSP resolver (0.98 confidence; `lsp_enabled=true` by default, no-ops until this extra is installed) |
 
 The core install (no extras) uses only the in-house AST resolver (0.5/0.7 confidence).
@@ -460,8 +477,10 @@ whatever `--extra`/`--all-extras` flags were passed on that invocation, so re-ru
 "callgraph but not lsp" combination — `install-windows.cmd` option [4] (`--all-extras`) is the only
 documented path that installs `[lsp]`, and it pulls `test`, `dev`, `callgraph`, `otel`, and `gpu`
 alongside it. If you only want `[lsp]` added to an existing `uv`-managed environment without
-touching the others, use `uv sync --extra callgraph --extra lsp` explicitly rather than a bare
-`uv sync` or a plain `pip install`.
+touching the others, name **every** extra you currently have installed alongside `lsp` — check
+`uv pip list` first if unsure. For the common `test` + `callgraph` + `otel` environment, that's
+`uv sync --extra callgraph --extra test --extra otel --extra lsp`; omitting any of those from the
+command prunes it just the same as a bare `uv sync` would.
 
 To install with test dependencies:
 
@@ -922,7 +941,7 @@ scripts\batch\start_mcp_http.bat
 - Runs on `http://localhost:8765/mcp`
 - Automatic port conflict detection
 - Auto-kill for processes on port 8765
-- All 18 MCP tools available
+- All 20 MCP tools available
 - Identical functionality to stdio
 - <10ms latency overhead
 - Single bidirectional endpoint (no separate POST back-channel)

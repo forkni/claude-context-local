@@ -55,6 +55,7 @@ unmatched id silently degrades to "no edge added".
 from __future__ import annotations
 
 import ast
+import importlib.metadata
 import logging
 import time
 from collections.abc import Callable, Iterator
@@ -78,6 +79,22 @@ from .call_edge_resolver import (
 try:
     from pyan.analyzer import (
         CallGraphVisitor as _CallGraphVisitor,  # type: ignore[import-untyped]
+    )
+
+    # Imported at module scope (not lazily inside postprocess() below) so a
+    # pyan3 install whose postprocessor API doesn't match what this module's
+    # postprocess() override needs (e.g. pyan3 < 2.8, which has no
+    # cull_subsumed) fails the whole guard at import time -- flipping
+    # _PYAN_AVAILABLE to False with one actionable log line below -- instead
+    # of surfacing as an ImportError deep in a resolver subprocess the first
+    # time postprocess() actually runs (see docs/adr/... and the 2026-09-14
+    # pyan-tier incident this guards against).
+    from pyan.postprocessor import (  # type: ignore[import-untyped]
+        collapse_inner,
+        contract_nonexistents,
+        cull_subsumed,
+        expand_unknowns,
+        resolve_imports,
     )
 
     class _TrackedVisitor(_CallGraphVisitor):
@@ -284,15 +301,9 @@ try:
             # Mirrors pyan.postprocessor.postprocess() (pyan3 >= 2.8:
             # cull_inherited was dropped, cull_subsumed runs last behind
             # the ``cull_subsumed_edges`` constructor flag) so each stage
-            # can be timed and the pre-expansion snapshot taken.
-            from pyan.postprocessor import (  # type: ignore[import-untyped]
-                collapse_inner,
-                contract_nonexistents,
-                cull_subsumed,
-                expand_unknowns,
-                resolve_imports,
-            )
-
+            # can be timed and the pre-expansion snapshot taken. The five
+            # step functions are imported at module scope above (not here)
+            # so an API mismatch is caught by the module-level guard.
             if self._past_deadline():
                 return
 
@@ -326,8 +337,31 @@ try:
             self._collapse_call_position_names()
 
     _PYAN_AVAILABLE = True
-except ImportError:
+    _PYAN_UNAVAILABLE_REASON = ""
+    _PYAN_VERSION_MISMATCH = False
+except ImportError as _pyan_import_error:
     _PYAN_AVAILABLE = False
+    try:
+        _pyan_installed_version = importlib.metadata.version("pyan3")
+    except importlib.metadata.PackageNotFoundError:
+        _pyan_installed_version = None
+    _PYAN_VERSION_MISMATCH = _pyan_installed_version is not None
+    if _pyan_installed_version is None:
+        _PYAN_UNAVAILABLE_REASON = (
+            "pyan3 not installed — install the '[callgraph]' extra for "
+            "higher-recall cross-module call edges."
+        )
+    else:
+        _PYAN_UNAVAILABLE_REASON = (
+            f"pyan3 {_pyan_installed_version} is installed but its "
+            f"'pyan.postprocessor' API does not match what this module "
+            f"needs ({_pyan_import_error}). This module requires pyan3>=2.8 "
+            f"(the version this project's postprocess() pipeline was "
+            f"written and calibrated against — see "
+            f"evaluation/RESOLVER_TIER_CALIBRATION_20260902.md). Run "
+            f"'uv sync --extra callgraph' (or 'pip install -U pyan3') to "
+            f"fix the venv-vs-lock drift."
+        )
 
 # Flavors that correspond to callable definitions (not modules or classes).
 _CALLABLE_FLAVORS = {"FUNCTION", "METHOD", "STATICMETHOD", "CLASSMETHOD"}
@@ -352,13 +386,25 @@ _METHOD_FLAVORS = {"METHOD", "STATICMETHOD", "CLASSMETHOD"}
 
 
 def pyan_available() -> bool:
-    """Return True if pyan3 is installed and the import succeeded.
+    """Return True if pyan3>=2.8 is installed and its postprocessor API matches.
+
+    False both when pyan3 is absent entirely (``[callgraph]`` extra not
+    installed) and when an incompatible pyan3 version is installed (e.g. a
+    stale venv still on pyan3<2.8's ``cull_inherited`` API) — both cases are
+    gated at module import time, not just "package present". Call
+    :func:`pyan_unavailable_reason` for a human-actionable explanation of
+    which case applies.
 
     Use this guard before calling :class:`PyanResolver` or :func:`build_call_edges`
     in tests or tooling that wants to skip the pyan pass when the ``[callgraph]``
-    extra is absent.
+    extra is absent or incompatible.
     """
     return _PYAN_AVAILABLE
+
+
+def pyan_unavailable_reason() -> str:
+    """Return why :func:`pyan_available` is False, or ``""`` if it is True."""
+    return _PYAN_UNAVAILABLE_REASON
 
 
 @contextmanager
@@ -511,9 +557,16 @@ class PyanResolver:
             endpoints mapped to a known chunk_id.
         """
         if not _PYAN_AVAILABLE:
-            logger.info(
-                "[PYAN] pyan3 not installed — skipping cross-module edge injection. "
-                "Install the '[callgraph]' extra for higher-recall call edges."
+            # Version-mismatch case (package present, API incompatible) is a
+            # loud WARNING, not the quiet INFO used for "extra never
+            # installed" — a stale venv silently losing the pyan tier is a
+            # recall regression, not an expected/intentional absence.
+            log_fn = logger.warning if _PYAN_VERSION_MISMATCH else logger.info
+            log_fn(
+                "[PYAN] %s — skipping cross-module edge injection.",
+                _PYAN_UNAVAILABLE_REASON
+                or "pyan3 not installed — install the '[callgraph]' extra "
+                "for higher-recall call edges.",
             )
             return []
 
