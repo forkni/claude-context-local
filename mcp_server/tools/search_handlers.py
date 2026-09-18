@@ -203,6 +203,22 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
     return reindexed, None
 
 
+def _chunk_id_path_for_hint(chunk_id: str) -> str:
+    """Drive-letter-safe file-path prefix of *chunk_id*, for same-file
+    preference comparison against a ``path_hint``.
+
+    A naive ``chunk_id.split(":")[0]`` truncates a Windows absolute path at
+    its drive-letter colon (``"F:/proj/a.py:10-20:function:foo"`` -> ``"F"``),
+    so the same-file preference below never matches on Windows. Falls back to
+    that naive split only when ``derive_symbol_hint`` can't parse *chunk_id*
+    (e.g. a nameless module chunk) -- narrower than the preference this
+    feeds, so the fallback never widens what counts as a match. Mirrors
+    ``search.relationship_analyzer._chunk_id_path_for_hint``.
+    """
+    hint = derive_symbol_hint(chunk_id)
+    return hint[0] if hint is not None else chunk_id.split(":")[0]
+
+
 async def _resolve_symbol_to_chunk_id(
     symbol_name: str,
     searcher: Any,
@@ -250,7 +266,9 @@ async def _resolve_symbol_to_chunk_id(
                 hint = normalize_path_lower(path_hint)
                 matches = sorted(
                     matches,
-                    key=lambda cid: normalize_path_lower(cid.split(":")[0]) != hint,
+                    key=lambda cid: (
+                        normalize_path_lower(_chunk_id_path_for_hint(cid)) != hint
+                    ),
                 )
             return matches[0], {
                 "resolved_from": symbol_name,
@@ -270,7 +288,9 @@ async def _resolve_symbol_to_chunk_id(
         hint = normalize_path_lower(path_hint)
         candidates = sorted(
             candidates,
-            key=lambda r: normalize_path_lower(r.chunk_id.split(":")[0]) != hint,
+            key=lambda r: (
+                normalize_path_lower(_chunk_id_path_for_hint(r.chunk_id)) != hint
+            ),
         )
     if candidates:
         best = candidates[0]

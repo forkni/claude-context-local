@@ -418,3 +418,64 @@ async def test_resolve_tier1_prefers_real_language_over_td_operator():
     mock_gs.get_nodes_by_name.return_value = [td]
     chunk_id, _ = await _resolve_symbol_to_chunk_id("view", mock_searcher)
     assert chunk_id == td
+
+
+@pytest.mark.asyncio
+async def test_resolve_tier1_path_hint_drive_letter_safe():
+    """Tier-1: same-file preference matches a Windows absolute path_hint.
+
+    Regression guard: ``chunk_id.split(":")[0]`` truncates
+    ``"F:/proj/a.py:30-45:function:my_func"`` to ``"F"`` at the drive-letter
+    colon, so the same-file candidate would lose to the cross-file one
+    without the drive-letter-safe ``_chunk_id_path_for_hint`` helper.
+    """
+    from mcp_server.tools.search_handlers import _resolve_symbol_to_chunk_id
+
+    other_file = "F:/proj/b.py:1-10:function:my_func"
+    same_file = "F:/proj/a.py:30-45:function:my_func"
+
+    mock_gs = Mock()
+    # Same-file match is NOT first in raw graph-index order.
+    mock_gs.get_nodes_by_name.return_value = [other_file, same_file]
+
+    mock_searcher = Mock()
+    mock_searcher.graph_storage = mock_gs
+
+    chunk_id, info = await _resolve_symbol_to_chunk_id(
+        "my_func", mock_searcher, path_hint="F:/proj/a.py"
+    )
+
+    assert chunk_id == same_file
+    assert info["resolution_method"] == "graph_lookup"
+
+
+@pytest.mark.asyncio
+async def test_resolve_tier2_path_hint_drive_letter_safe():
+    """Tier-2: same-file preference matches a Windows absolute path_hint
+    even when the cross-file result ranks higher in raw search order."""
+    from mcp_server.tools.search_handlers import _resolve_symbol_to_chunk_id
+
+    other_file_result = Mock()
+    other_file_result.metadata = {"name": "my_func"}
+    other_file_result.chunk_id = "F:/proj/b.py:1-10:function:my_func"
+
+    same_file_result = Mock()
+    same_file_result.metadata = {"name": "my_func"}
+    same_file_result.chunk_id = "F:/proj/a.py:30-45:function:my_func"
+
+    mock_gs = Mock()
+    mock_gs.get_nodes_by_name.return_value = []
+    mock_gs.graph.nodes.return_value = []
+
+    mock_searcher = Mock()
+    mock_searcher.graph_storage = mock_gs
+    # Semantic search ranks the cross-file match first — would win without
+    # a drive-letter-safe path_hint comparison.
+    mock_searcher.search.return_value = [other_file_result, same_file_result]
+
+    chunk_id, info = await _resolve_symbol_to_chunk_id(
+        "my_func", mock_searcher, path_hint="F:/proj/a.py"
+    )
+
+    assert chunk_id == "F:/proj/a.py:30-45:function:my_func"
+    assert info["resolution_method"] == "semantic_search"

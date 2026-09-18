@@ -38,6 +38,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _chunk_id_path_for_hint(chunk_id: str) -> str:
+    """Drive-letter-safe file-path prefix of *chunk_id*, for same-file
+    preference comparison against a ``path_hint``.
+
+    A naive ``chunk_id.split(":")[0]`` truncates a Windows absolute path at
+    its drive-letter colon (``"F:/proj/a.py:10-20:function:foo"`` -> ``"F"``),
+    so the same-file preference below never matches on Windows. Falls back to
+    that naive split only when ``derive_symbol_hint`` can't parse *chunk_id*
+    (e.g. a nameless module chunk) -- narrower than the preference this
+    feeds, so the fallback never widens what counts as a match. Mirrors
+    ``mcp_server.tools.search_handlers._chunk_id_path_for_hint``.
+    """
+    hint = derive_symbol_hint(chunk_id)
+    return hint[0] if hint is not None else chunk_id.split(":")[0]
+
+
 class RelationshipAnalyzer:
     """Analyses the impact radius of code changes."""
 
@@ -731,7 +747,9 @@ class RelationshipAnalyzer:
                 hint = normalize_path_lower(path_hint)
                 matches = sorted(
                     matches,
-                    key=lambda cid: normalize_path_lower(cid.split(":")[0]) != hint,
+                    key=lambda cid: (
+                        normalize_path_lower(_chunk_id_path_for_hint(cid)) != hint
+                    ),
                 )
             for cid in matches:
                 result = self.searcher.get_by_chunk_id(cid)
