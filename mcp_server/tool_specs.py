@@ -50,6 +50,7 @@ from typing import Any, Literal
 
 from mcp.types import Tool
 
+from graph.procedural_graph import NODE_ID_PATTERN, PG_RELATIONS
 from mcp_server.config_schema import (
     CONFIG_BACKED,
     HAND_TYPED,
@@ -987,7 +988,7 @@ A Procedural Graph is a directed multigraph of actions ("nodes") and transitions
 
 WHEN TO USE:
 - After completing a step in a known procedure, to see what to do (or watch out for) next
-- Exploring a stored procedure's structure before starting it (any hops value still applies; there is no "whole graph" mode from this tool)
+- Exploring a stored procedure's structure before starting it -- there is no whole-graph *parameter*, but a last_action that misses every node returns located: false plus every transition in the graph
 
 WHEN NOT TO USE:
 - last_action is not from the procedure's own closed vocabulary — a miss is reported (located: false) rather than guessed at; no fuzzy matching is attempted
@@ -1061,7 +1062,17 @@ RETURNS:
                     "properties": {
                         "add_nodes": {
                             "type": "array",
-                            "items": {"type": "object"},
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {
+                                        "type": "string",
+                                        "pattern": NODE_ID_PATTERN.pattern,
+                                    },
+                                },
+                                "required": ["id"],
+                                "additionalProperties": False,
+                            },
                             "description": "Nodes to add: [{id: string}, ...]",
                         },
                         "delete_nodes": {
@@ -1071,15 +1082,50 @@ RETURNS:
                         },
                         "add_edges": {
                             "type": "array",
-                            "items": {"type": "object"},
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "src": {"type": "string"},
+                                    "dst": {"type": "string"},
+                                    "relation": {
+                                        "type": "string",
+                                        "enum": list(PG_RELATIONS),
+                                    },
+                                    "condition": {"type": "string"},
+                                    "guidance": {"type": "string"},
+                                    "pitfalls": {"type": "string"},
+                                },
+                                "required": [
+                                    "src",
+                                    "dst",
+                                    "relation",
+                                    "condition",
+                                    "guidance",
+                                    "pitfalls",
+                                ],
+                                "additionalProperties": False,
+                            },
                             "description": "Transitions to add: [{src, dst, relation, condition, guidance, pitfalls}, ...] (all string fields)",
                         },
                         "delete_edges": {
                             "type": "array",
-                            "items": {"type": "object"},
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "src": {"type": "string"},
+                                    "dst": {"type": "string"},
+                                    "relation": {
+                                        "type": "string",
+                                        "enum": list(PG_RELATIONS),
+                                    },
+                                },
+                                "required": ["src", "dst", "relation"],
+                                "additionalProperties": False,
+                            },
                             "description": "Transitions to delete: [{src, dst, relation}, ...]",
                         },
                     },
+                    "additionalProperties": False,
                 },
                 "dry_run": {
                     "type": "boolean",

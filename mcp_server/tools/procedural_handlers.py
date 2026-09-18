@@ -110,6 +110,8 @@ async def handle_edit_procedural_graph(arguments: dict[str, Any]) -> dict:
         errors=list(report.errors),
         applied=report.applied,
         node_count=len(result_graph.node_ids),
+        # hops=1 is a no-op here: extract(None, ...) always returns every
+        # transition regardless of hops (see ProceduralGraph.extract).
         edge_count=len(result_graph.extract(None, 1)),
         committed=committed,
     )
