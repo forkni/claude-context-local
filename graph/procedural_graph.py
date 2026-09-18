@@ -299,6 +299,23 @@ def _validate_structure(nodes: list[str], edges: list[dict[str, str]]) -> list[s
     unreachable = sorted(n for n in g if n not in seen)
     if unreachable:
         errors.append(f"node(s) with no path to a terminal: {unreachable}")
+
+    if len(sources) == 1:
+        entry = sources[0]
+        fwd_seen: set[str] = {entry}
+        fwd_queue: deque[str] = deque([entry])
+        while fwd_queue:
+            node = fwd_queue.popleft()
+            for succ in g.successors(node):
+                if succ not in fwd_seen:
+                    fwd_seen.add(succ)
+                    fwd_queue.append(succ)
+        fwd_unreachable = sorted(n for n in g if n not in fwd_seen)
+        if fwd_unreachable:
+            errors.append(
+                f"node(s) not reachable from the entry node {entry!r}: {fwd_unreachable}"
+            )
+
     return errors
 
 

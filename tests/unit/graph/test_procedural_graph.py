@@ -228,6 +228,28 @@ def test_document_rejects_self_loop():
     assert any("self-loop" in e for e in errors)
 
 
+def test_document_rejects_island_unreachable_from_entry():
+    """P<->Q->R drains into its own terminal R, so backward reachability
+    from terminals passes (every node reaches one), and P/Q's in-degree
+    from the cycle keeps the entry-count check at exactly one source
+    (Start) -- only a forward BFS from the entry catches this island.
+    """
+    doc = {
+        "schema_version": PG_SCHEMA_VERSION,
+        "name": "island",
+        "nodes": [{"id": n} for n in ("Start", "A", "End", "P", "Q", "R")],
+        "edges": [
+            _edge("Start", "A"),
+            _edge("A", "End"),
+            _edge("P", "Q"),
+            _edge("Q", "P", relation="TRIGGERS"),
+            _edge("Q", "R", relation="PROVIDES_INPUT_FOR"),
+        ],
+    }
+    errors = _errors_of(doc)
+    assert any("not reachable from the entry node" in e for e in errors)
+
+
 def test_document_reports_every_error_not_just_first():
     doc = _toy_doc(
         schema_version=99,
@@ -686,6 +708,25 @@ def test_apply_edit_rejects_node_with_no_path_to_terminal():
     report = graph.apply_edit(edit)
     assert not report.valid
     assert any("no path to a terminal" in e for e in report.errors)
+
+
+def test_apply_edit_rejects_island_severed_from_entry():
+    """P<->Q connects to the existing terminal C via Q->C, satisfying
+    backward reachability, but is never reached forward from entry A --
+    only the entry-reachability check catches this.
+    """
+    graph = _toy_graph()
+    edit = {
+        "add_nodes": [{"id": "P"}, {"id": "Q"}],
+        "add_edges": [
+            _edge("P", "Q", relation="LEADS_TO"),
+            _edge("Q", "P", relation="TRIGGERS"),
+            _edge("Q", "C", relation="PROVIDES_INPUT_FOR"),
+        ],
+    }
+    report = graph.apply_edit(edit)
+    assert not report.valid
+    assert any("not reachable from the entry node" in e for e in report.errors)
 
 
 def test_apply_edit_rejects_delete_that_leaves_two_entry_nodes():

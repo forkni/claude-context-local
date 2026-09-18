@@ -83,6 +83,19 @@ which fits a hand-authored, free-text-edge document that must survive index main
   the seed's `Start` node is not an entry-rule violation by itself (it leaves `Read_Layout` as the
   sole remaining source) — it can still fail for the ordinary reason that `Start`'s incident edges
   disappear with it.
+- **Reachability is checked in both directions from the entry, not just into the terminals.**
+  `validate()` requires every node to have both a path *to* some terminal (backward BFS from all
+  terminals) and a path *from* the sole entry (forward BFS from it, run only once the entry is
+  unambiguous) — a cyclic island that drains into its own terminal passes the first check and the
+  entry-count check alike, since its nodes still have in-degree ≥ 1 from the cycle, so only the
+  forward check catches it. Multiple terminals stay allowed — a procedure may legitimately end
+  several ways; this ADR never required exactly one, and the seed's single `End` is pinned by a
+  fixture test, not by the validator. This rule runs on every `load()`, not just on edit, because
+  both go through `from_document`; a previously-stored graph that violates it becomes unloadable
+  (`ProceduralGraphError`, naming the unreachable nodes) rather than silently served. The intended
+  recovery path is the same one this ADR already specifies for any invalid document: a re-import
+  with `force=True` from the corrected producer-side source, not `edit_procedural_graph` (which
+  can't load a graph it can't validate).
 - Guidance text is returned **verbatim and is never fetched or expanded** — if Φ text contains a
   reference to something else, resolving it is the calling agent's job, not CCL's.
 - This is **pull, not push**: there is no hook, no automatic prompt injection, no background
