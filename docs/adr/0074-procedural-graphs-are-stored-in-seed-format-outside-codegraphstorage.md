@@ -28,9 +28,10 @@ The cross-repo contract is a single JSON document shape:
 | `edges` | `[{"src","dst","relation","condition","guidance","pitfalls"}]` | all seven keys required, no others |
 
 Relations are a closed set of four: `LEADS_TO`, `TRIGGERS`, `PROVIDES_INPUT_FOR`, `CONVERGES_TO`.
-The bundled `tests/fixtures/pg/network_layout_seed.json` seed carries 12 nodes and 17 transitions
-mirroring the producer's own `tools/pg_seed_network_layout.json`, including one intentional cycle
-(`Verify_Layout` back to `Set_Position`) — procedural graphs are cyclic by design, not a defect to
+The bundled `tests/fixtures/pg/network_layout_seed.json` seed is the canonical dump of the
+producer's own `tools/pg_seed_network_layout.json`: 12 nodes and 24 transitions, including two
+intentional cycles (`Verify_Layout` back to `Set_Position` via `TRIGGERS`, and `Update_Annotation`
+back to `Identify_Group` via `LEADS_TO`) — procedural graphs are cyclic by design, not a defect to
 validate away.
 
 Nothing in CCL today can hold this shape. `CodeGraphStorage` (`graph/graph_storage.py`) is
@@ -156,6 +157,6 @@ which fits a hand-authored, free-text-edge document that must survive index main
   `mcp_server.storage_manager`, avoiding a measured 10.4s PyTorch import cost); a second run without
   `--force` exits 1.
 - `MCP_EXPOSE_ADVANCED_TOOLS=1` → `build_tool_list()` returns 20 tools; unset → 10.
-- Manual smoke test: `get_procedural_guidance("network_layout", "Create_Op", hops=2)` returns 5
+- Manual smoke test: `get_procedural_guidance("network_layout", "Create_Op", hops=2)` returns 8
   transitions, each line carrying `condition:`, `guidance:`, and `pitfalls:`; a dry-run
   `edit_procedural_graph` reports `valid` with `committed=false` and leaves the file byte-identical.

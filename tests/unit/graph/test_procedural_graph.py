@@ -278,8 +278,8 @@ def test_seed_fixture_has_12_nodes():
     assert len(_seed_graph().node_ids) == 12
 
 
-def test_seed_fixture_has_17_edges():
-    assert len(_seed_graph().extract(None, 1)) == 17
+def test_seed_fixture_has_24_edges():
+    assert len(_seed_graph().extract(None, 1)) == 24
 
 
 def test_seed_fixture_end_is_only_terminal():
@@ -424,24 +424,24 @@ def test_extract_hops_1_returns_2():
     assert len(_seed_graph().extract("Create_Op", 1)) == 2
 
 
-def test_extract_hops_2_returns_5():
-    assert len(_seed_graph().extract("Create_Op", 2)) == 5
+def test_extract_hops_2_returns_8():
+    assert len(_seed_graph().extract("Create_Op", 2)) == 8
 
 
-def test_extract_hops_4_returns_11():
-    assert len(_seed_graph().extract("Create_Op", 4)) == 11
+def test_extract_hops_4_returns_21():
+    assert len(_seed_graph().extract("Create_Op", 4)) == 21
 
 
-def test_extract_saturates_at_11_for_large_hops():
-    assert len(_seed_graph().extract("Create_Op", 99)) == 11
+def test_extract_saturates_at_21_for_large_hops():
+    assert len(_seed_graph().extract("Create_Op", 99)) == 21
 
 
-def test_extract_miss_returns_all_17_with_hop_none():
+def test_extract_miss_returns_all_24_with_hop_none():
     # extract() itself only raises on an unknown start; the "miss -> full
     # graph" behavior lives in the handler layer. Exercise it directly here
     # via start=None, which is what a locate() miss maps to.
     transitions = _seed_graph().extract(None, 1)
-    assert len(transitions) == 17
+    assert len(transitions) == 24
     assert all(t.hop is None for t in transitions)
 
 
@@ -451,11 +451,12 @@ def test_extract_no_edge_repeats_despite_cycle():
     assert len(keys) == len(set(keys))
 
 
-def test_extract_hop4_edge_is_cycle_closing_verify_layout_to_set_position():
+def test_extract_hop4_edges_are_identify_group_fanout():
     transitions = _seed_graph().extract("Create_Op", 4)
     hop4 = [t for t in transitions if t.hop == 4]
     assert [(t.src, t.relation, t.dst) for t in hop4] == [
-        ("Verify_Layout", "LEADS_TO", "Set_Position")
+        ("Identify_Group", "LEADS_TO", "Compute_Positions"),
+        ("Identify_Group", "LEADS_TO", "Update_Annotation"),
     ]
 
 
@@ -501,7 +502,7 @@ def test_serialize_miss_golden_header():
     header = text.split("\n", 1)[0]
     assert header == (
         'Procedural graph "network_layout": "Foo" is not a procedure node; '
-        "full graph, 17 transitions."
+        "full graph, 24 transitions."
     )
     assert not text.split("\n")[1].startswith("[hop")
 
@@ -511,7 +512,7 @@ def test_serialize_last_action_none_header():
     transitions = graph.extract(None, 1)
     text = graph.serialize("network_layout", None, None, 2, transitions)
     header = text.split("\n", 1)[0]
-    assert header == 'Procedural graph "network_layout": full graph, 17 transitions.'
+    assert header == 'Procedural graph "network_layout": full graph, 24 transitions.'
 
 
 def test_serialize_singular_hop_and_transition():
@@ -590,8 +591,11 @@ def test_apply_edit_delete_node_drops_incident_edges():
     after = {(t.src, t.relation, t.dst) for t in report.graph.extract(None, 1)}
     assert "Reposition_Docked" not in report.graph.node_ids
     assert before - after == {
-        ("Set_Position", "PROVIDES_INPUT_FOR", "Reposition_Docked"),
+        ("Compute_Positions", "PROVIDES_INPUT_FOR", "Reposition_Docked"),
+        ("Query_Docked", "LEADS_TO", "Reposition_Docked"),
         ("Reposition_Docked", "CONVERGES_TO", "Verify_Layout"),
+        ("Reposition_Docked", "LEADS_TO", "Query_Docked"),
+        ("Verify_Layout", "TRIGGERS", "Reposition_Docked"),
     }
 
 

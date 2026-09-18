@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "name": "network_layout",
+  "notes": "Hand-crafted expert Procedural Graph (paper Mode 1) for the network-layout procedure, transcribed 2026-09-16 from .claude/rules/network-layout.md's Placement Procedure and Anti-Patterns sections. `guidance` values are verbatim quotes (at most two sentences) of the matching Placement Procedure step or formula; `pitfalls` values are verbatim Anti-Patterns bullets, or \"\" where none applies; `condition` is one clause. Producer-side contract only -- see tools/pg_actions.py's PG_RELATIONS / PG_EDGE_FIELDS and docs/adr/0011-procedural-graph-state-lives-outside-the-tox.md for the claude-context-local consumer this mirrors without talking to it.",
   "nodes": [
     {
       "id": "Start"
@@ -43,138 +44,194 @@
     {
       "src": "Compute_Positions",
       "dst": "Create_Op",
-      "relation": "LEADS_TO",
-      "condition": "Target positions computed.",
-      "guidance": "Create the operator that will occupy the first computed position.",
-      "pitfalls": "Creating operators before positions are computed forces a second move pass."
+      "relation": "PROVIDES_INPUT_FOR",
+      "condition": "all positions batched in advance",
+      "guidance": "Batch-compute all positions before placing anything. Never place one operator, then figure out where the next one goes.",
+      "pitfalls": ""
     },
     {
       "src": "Compute_Positions",
-      "dst": "Update_Annotation",
+      "dst": "Reposition_Docked",
       "relation": "PROVIDES_INPUT_FOR",
-      "condition": "Target positions computed.",
-      "guidance": "Computed positions also drive the layout annotation shown to the user.",
-      "pitfalls": ""
+      "condition": "dock slots computed from the host's size and dock count",
+      "guidance": "Row Y: row_y = sy - dh - 30 -- a tight ~30-unit gap directly below the host's bottom edge. Do NOT drop a full grid step (200) below; that produces the \"stranded op with a long diagonal wire\" look, not a docked companion hugging its host.",
+      "pitfalls": "Leaving docked callback/info DATs at their auto-spawn position. TD drops them at arbitrary coordinates whenever they're created, whether by hand or by script."
+    },
+    {
+      "src": "Compute_Positions",
+      "dst": "Set_Position",
+      "relation": "PROVIDES_INPUT_FOR",
+      "condition": "all positions batched in advance",
+      "guidance": "Batch-compute all positions before placing anything. Never place one operator, then figure out where the next one goes.",
+      "pitfalls": "Using fixed offsets like nodeX + 300 without accounting for nodeWidth -- this is the #1 cause of overlapping operators when ops are wider than ~100 units."
     },
     {
       "src": "Connect_Ops",
       "dst": "Update_Annotation",
-      "relation": "PROVIDES_INPUT_FOR",
-      "condition": "Operators connected.",
-      "guidance": "The new connections feed the annotation describing the network.",
-      "pitfalls": ""
+      "relation": "LEADS_TO",
+      "condition": "wiring done",
+      "guidance": "Place, connect, then update the annotation to enclose the new operators, expanding its width/height as needed.",
+      "pitfalls": "Creating operators without updating the enclosing annotation."
     },
     {
       "src": "Create_Op",
       "dst": "Set_Position",
       "relation": "LEADS_TO",
-      "condition": "Operator created.",
-      "guidance": "Set the operator's position to its computed target.",
-      "pitfalls": "Leaving a new operator at its default position hides layout intent."
+      "condition": "op exists and sits at (0, 0)",
+      "guidance": "Place, connect, then update the annotation to enclose the new operators, expanding its width/height as needed.",
+      "pitfalls": "Leaving script-created ops at (0, 0) / overlapping -- the most common layout failure; TD's bare .create() always drops new ops there. Position + Verify every time, regardless of how the ops were created."
     },
     {
       "src": "Create_Op",
-      "dst": "Connect_Ops",
+      "dst": "Query_Docked",
       "relation": "TRIGGERS",
-      "condition": "Operator created.",
-      "guidance": "Creation triggers connecting the operator into the existing network.",
-      "pitfalls": "Connecting before position is set makes the resulting wires hard to read."
+      "condition": "op type auto-spawns docked companions",
+      "guidance": "Some operators auto-spawn companion ops docked to them (anything in op.docked) -- callback DATs, info DATs, shader DATs, keys.",
+      "pitfalls": "Leaving docked callback/info DATs at their auto-spawn position. TD drops them at arbitrary coordinates whenever they're created, whether by hand or by script."
     },
     {
       "src": "Identify_Group",
       "dst": "Compute_Positions",
       "relation": "LEADS_TO",
-      "condition": "Target group identified.",
-      "guidance": "Compute target positions for every operator in the group.",
-      "pitfalls": "Ignoring existing spacing conventions produces cluttered layouts."
+      "condition": "target group chosen, or a new group decided",
+      "guidance": "Compute position: use each operator's actual nodeWidth/nodeHeight. New operators extend the group to the right: rightmost_nodeX + rightmost_nodeWidth + 200 (snapped to 200-unit grid).",
+      "pitfalls": "Placing \"near\" a related op by picking a mathematically close but visually wrong position -- filling a gap in the middle of a finished row instead of extending rightward."
     },
     {
       "src": "Identify_Group",
-      "dst": "Query_Docked",
-      "relation": "PROVIDES_INPUT_FOR",
-      "condition": "Group membership is known.",
-      "guidance": "Group membership narrows which operators need a dock-state query.",
-      "pitfalls": "Stale membership data yields a query against the wrong operators."
-    },
-    {
-      "src": "Query_Docked",
-      "dst": "Verify_Layout",
-      "relation": "CONVERGES_TO",
-      "condition": "Operator is not docked.",
-      "guidance": "With no docked operator to reposition, proceed straight to verification.",
-      "pitfalls": "Verifying too early misses a dock relationship formed later in the pass."
-    },
-    {
-      "src": "Query_Docked",
       "dst": "Update_Annotation",
-      "relation": "PROVIDES_INPUT_FOR",
-      "condition": "Dock state queried.",
-      "guidance": "Dock state is recorded in the annotation regardless of the query result.",
-      "pitfalls": "Omitting a negative dock result makes the annotation look incomplete."
+      "relation": "LEADS_TO",
+      "condition": "group chosen and only its annotation needs changing",
+      "guidance": "Expand annotations when adding operators. Recalculate the bounding box with padding after every addition.",
+      "pitfalls": "Creating operators without updating the enclosing annotation."
+    },
+    {
+      "src": "Query_Docked",
+      "dst": "Compute_Positions",
+      "relation": "LEADS_TO",
+      "condition": "docked list is non-empty and the slots are not yet computed",
+      "guidance": "Layout formula -- given host op bottom-left (sx,sy), size (sw,sh), and N docks (use the max dw,dh across docks for uniform spacing). Docked ops HUG the host -- they are the one deliberate exception to 200-grid spacing; place them tight, never a full grid step away.",
+      "pitfalls": ""
+    },
+    {
+      "src": "Query_Docked",
+      "dst": "Reposition_Docked",
+      "relation": "LEADS_TO",
+      "condition": "docked list is non-empty",
+      "guidance": "Procedure (for scripted builds): after creating any op in a script, query op.docked, reposition every docked op per the layout formula (set nodeX/nodeY directly), then re-check the layout to confirm the docked row landed directly under the host with no overlap.",
+      "pitfalls": ""
     },
     {
       "src": "Read_Layout",
       "dst": "Identify_Group",
       "relation": "LEADS_TO",
-      "condition": "Existing layout has been read.",
-      "guidance": "Identify the operator group that needs repositioning.",
-      "pitfalls": "Do not assume a single group; a selection may span several."
+      "condition": "layout read and it is not already messy; if every op sits at the origin, treat all of them as new",
+      "guidance": "Identify the target group: determine which annotation group the new operator belongs to. If none fits, you will create a new one.",
+      "pitfalls": ""
+    },
+    {
+      "src": "Read_Layout",
+      "dst": "Verify_Layout",
+      "relation": "TRIGGERS",
+      "condition": "existing layout looks messy: score it before adding",
+      "guidance": "Flag problems: if the existing layout is messy (overlapping ops, orphaned ops outside annotations, broken grid alignment), tell the user before adding to it. Do not silently work around a bad layout.",
+      "pitfalls": ""
     },
     {
       "src": "Reposition_Docked",
       "dst": "Verify_Layout",
       "relation": "CONVERGES_TO",
-      "condition": "Docked operator repositioned.",
-      "guidance": "Both the docked and moved operators are now placed; verify the pair.",
-      "pitfalls": "Verifying only the moved operator misses drift in its docked partner."
+      "condition": "any dock moved",
+      "guidance": "Verify (mandatory gate): after placing, re-check the layout. No turn that creates or moves operators may end without this check, and it must run during iterative building too -- not just at the very end.",
+      "pitfalls": ""
+    },
+    {
+      "src": "Reposition_Docked",
+      "dst": "Query_Docked",
+      "relation": "LEADS_TO",
+      "condition": "another host with docked companions remains",
+      "guidance": "After you create ANY op with docked ops, you MUST place EVERY one of its docked ops directly below the host; if directly-below is occupied, place it directly to the host's right. Never leave a docked op where TD dropped it.",
+      "pitfalls": ""
     },
     {
       "src": "Set_Position",
-      "dst": "Reposition_Docked",
-      "relation": "PROVIDES_INPUT_FOR",
-      "condition": "Position set.",
-      "guidance": "The new position is the input for repositioning any docked operator.",
-      "pitfalls": "Using the pre-move position here reintroduces the overlap being fixed."
+      "dst": "Verify_Layout",
+      "relation": "CONVERGES_TO",
+      "condition": "any placement happened",
+      "guidance": "Verify (mandatory gate): after placing, re-check the layout. No turn that creates or moves operators may end without this check, and it must run during iterative building too -- not just at the very end.",
+      "pitfalls": "Moving an operator without verifying the target coordinates are clear -- TD does not check for overlap when repositioning."
+    },
+    {
+      "src": "Set_Position",
+      "dst": "Connect_Ops",
+      "relation": "LEADS_TO",
+      "condition": "all batched positions applied; every new op placed",
+      "guidance": "Place, connect, then update the annotation to enclose the new operators, expanding its width/height as needed. If ops from the batch remain unplaced, stay in Set_Position and place the next one before taking this transition.",
+      "pitfalls": ""
+    },
+    {
+      "src": "Set_Position",
+      "dst": "Update_Annotation",
+      "relation": "LEADS_TO",
+      "condition": "all batched positions applied; every op placed and no wiring is needed",
+      "guidance": "Place, connect, then update the annotation to enclose the new operators, expanding its width/height as needed. If ops from the batch remain unplaced, stay in Set_Position and place the next one before taking this transition.",
+      "pitfalls": "Creating operators without updating the enclosing annotation."
     },
     {
       "src": "Set_Position",
       "dst": "Query_Docked",
       "relation": "TRIGGERS",
-      "condition": "Position set.",
-      "guidance": "Query whether the moved operator is docked to another.",
-      "pitfalls": "Skipping the dock query can silently detach a docked pair."
+      "condition": "a moved op has docked companions",
+      "guidance": "After you create ANY op with docked ops, you MUST place EVERY one of its docked ops directly below the host; if directly-below is occupied, place it directly to the host's right. Never leave a docked op where TD dropped it.",
+      "pitfalls": "Leaving docked callback/info DATs at their auto-spawn position. TD drops them at arbitrary coordinates whenever they're created, whether by hand or by script."
     },
     {
       "src": "Start",
       "dst": "Read_Layout",
       "relation": "LEADS_TO",
-      "condition": "Layout pass begins.",
-      "guidance": "Read the existing network layout before making changes.",
+      "condition": "always",
+      "guidance": "Read first: inspect the parent COMP's current layout and annotations in the network editor. Understand existing positions, groups, and flow before touching anything.",
       "pitfalls": ""
     },
     {
       "src": "Update_Annotation",
       "dst": "Verify_Layout",
       "relation": "CONVERGES_TO",
-      "condition": "Annotation updated.",
-      "guidance": "With the annotation current, verify the layout it describes.",
-      "pitfalls": "An unverified layout can drift out of sync with its own annotation."
+      "condition": "any annotation changed",
+      "guidance": "Verify (mandatory gate): after placing, re-check the layout. No turn that creates or moves operators may end without this check, and it must run during iterative building too -- not just at the very end.",
+      "pitfalls": ""
     },
     {
       "src": "Update_Annotation",
+      "dst": "Identify_Group",
+      "relation": "LEADS_TO",
+      "condition": "another group remains to be laid out",
+      "guidance": "Identify the target group: Determine which annotation group the new operator belongs to. If none fits, you will create a new one.",
+      "pitfalls": ""
+    },
+    {
+      "src": "Verify_Layout",
       "dst": "End",
       "relation": "LEADS_TO",
-      "condition": "Annotation updated and layout already verified.",
-      "guidance": "Close out the layout pass.",
-      "pitfalls": "Ending without a verification step leaves silent misplacements uncaught."
+      "condition": "zero violations",
+      "guidance": "Verify (mandatory gate): confirm no overlaps, nothing left at (0, 0), every docked op hugs its host, every wire flows forward, no ops outside annotations, grid alignment intact.",
+      "pitfalls": ""
+    },
+    {
+      "src": "Verify_Layout",
+      "dst": "Reposition_Docked",
+      "relation": "TRIGGERS",
+      "condition": "dock-hug violation reported",
+      "guidance": "ABSOLUTE RULE -- every docked op hugs its host, every time, no exceptions. If a slot collides with any other op (dock or not), move that other op to a clear region and recompute -- never thread docks around obstacles, never overlap, never leave one stranded.",
+      "pitfalls": "Leaving docked callback/info DATs at their auto-spawn position. TD drops them at arbitrary coordinates whenever they're created, whether by hand or by script."
     },
     {
       "src": "Verify_Layout",
       "dst": "Set_Position",
-      "relation": "LEADS_TO",
-      "condition": "Verification finds a position still out of tolerance.",
-      "guidance": "Return to Set_Position and correct the flagged operator.",
-      "pitfalls": "Repeating verification without changing tolerance can loop indefinitely; cap retries."
+      "relation": "TRIGGERS",
+      "condition": "overlap, origin, or forward-flow violation reported",
+      "guidance": "Confirm: no overlaps (use actual nodeWidth -- COMPs are wider than TOPs); nothing left at (0, 0); every wire flows forward (each source's nodeX + nodeWidth is left of its destination's nodeX -- no backward S wire).",
+      "pitfalls": "Using fixed offsets like nodeX + 300 without accounting for nodeWidth -- this is the #1 cause of overlapping operators when ops are wider than ~100 units."
     }
   ]
 }

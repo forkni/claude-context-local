@@ -64,7 +64,7 @@ class TestGetProceduralGuidance:
             {"graph": name, "last_action": "Not_A_Node", "hops": 1}
         )
         assert result["located"] is False
-        assert result["edge_count"] == 17
+        assert result["edge_count"] == 24
 
     async def test_hit_returns_located_true(self, base_dir):
         name = _seed_store(base_dir)
