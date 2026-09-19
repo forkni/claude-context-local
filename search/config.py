@@ -708,7 +708,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (15 fields)."""
+    """Neural reranker settings (16 fields)."""
 
     enabled: bool = field(
         default=True,  # Enabled by default (Quality First)
@@ -961,6 +961,28 @@ class RerankerConfig:
                 "133q recall@10/recall@20 upside CI (both include zero, both point "
                 "estimates negative)"
             ),
+        ),
+    )
+    listwise_packed_token_budget: int = field(
+        default=8192,  # Ceiling on one Jina listwise block's packed prompt
+        # length (query + preamble + all documents in that block). Peak
+        # attention-score-matrix VRAM scales ~64 bytes/element x L^2 (16
+        # heads, bfloat16, two live buffers — see
+        # docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md).
+        # JinaRerankerV3.rerank() engages this by lowering the tokenizer's
+        # model_max_length, which makes Jina's own multi-block flush loop
+        # (vendor modeling.py) sub-divide the window instead of packing
+        # everything into one flat prompt — v3 only (see
+        # _resolve_length_kwargs). At 8192 the fitted peak is ~11.3 GiB,
+        # inside the tightest observed cap (11.99 GiB) with ~0.7 GiB
+        # headroom. Not benchmark_locked: a safety ceiling, not a
+        # quality-tuned value.
+        metadata=spec(
+            range=(2048, 32768),
+            flat_alias="reranker_listwise_packed_token_budget",
+            env="CLAUDE_RERANKER_LISTWISE_PACKED_TOKEN_BUDGET",
+            reader="search/neural_reranker.py",
+            construction_baked=True,
         ),
     )
 

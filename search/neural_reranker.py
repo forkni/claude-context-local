@@ -51,6 +51,182 @@ _PINNED_RERANK_LENGTH_KWARGS: dict[str, int] = {
     "max_query_length": 512,
 }
 
+# --- Bound the packed listwise window by tokens (reranker CUDA OOM fix) -----
+# See docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md. v3's own
+# rerank() packs the whole window into one flat prompt whose peak attention
+# VRAM scales ~64 bytes/element x L^2 (16 heads, bfloat16, two live buffers).
+# We never hand-build that prompt (JinaRerankerV3 forbids it, see class
+# docstring) -- instead we engage v3's OWN multi-block flush loop (vendor
+# modeling.py: block_size=125 at :228, length_capacity = max_length -
+# 2*query_length at :232, flush when len(block_docs) >= block_size or
+# length_capacity <= max_doc_length at :243) by lowering the tokenizer's
+# model_max_length below its shipped 131072. v3.5 has no such mechanism
+# (different, hardcoded lengths and sliding-window attention) -- gated on
+# _resolve_length_kwargs(model) being non-empty, the same v3-vs-v3.5 probe
+# used for the length pins above.
+
+# Vendor block_size (modeling.py:228) -- mirrored here, not read from the
+# checkpoint, since the simulation must match the real loop's constant.
+_LISTWISE_BLOCK_SIZE = 125
+
+# Fixed/per-document token overhead of one packed listwise block (system
+# preamble, per-passage numbering markers, embed/rerank special tokens --
+# see the sandwich-template note on JinaRerankerV3's class docstring) --
+# calibrated once against the jina-reranker-v3 tokenizer (checkpoint
+# 10fb694fc21f...) and pinned here as constants rather than measured live,
+# since a mis-calibration only costs an extra, unnecessary block split (safe
+# direction) rather than an under-split that could still OOM.
+_LISTWISE_PACKING_FIXED_OVERHEAD_TOKENS = 128
+_LISTWISE_PACKING_PER_DOC_OVERHEAD_TOKENS = 24
+
+
+def _simulate_listwise_blocks(
+    doc_lengths: list[int],
+    query_length: int,
+    model_max_length: int,
+    max_doc_length: int,
+    block_size: int = _LISTWISE_BLOCK_SIZE,
+) -> list[list[int]]:
+    """Simulate Jina v3's own block-flush loop (vendor modeling.py:239-252).
+
+    Mirrors ``length_capacity = model_max_length - 2 * query_length`` and the
+    flush condition ``len(block_docs) >= block_size or length_capacity <=
+    max_doc_length`` exactly (a document is appended before the flush check,
+    so a block can hold one more document than ``length_capacity`` alone
+    would suggest -- this is why the packed length of a block cannot be
+    derived in closed form and must be simulated).
+
+    Returns the list of blocks, each a list of that block's document token
+    lengths.
+    """
+    blocks: list[list[int]] = []
+    current: list[int] = []
+    capacity = model_max_length - 2 * query_length
+    for length in doc_lengths:
+        current.append(length)
+        capacity -= length
+        if len(current) >= block_size or capacity <= max_doc_length:
+            blocks.append(current)
+            current = []
+            capacity = model_max_length - 2 * query_length
+    if current:
+        blocks.append(current)
+    return blocks
+
+
+def _packed_block_length(block: list[int], query_length: int) -> int:
+    """Estimate one block's packed prompt length in tokens."""
+    return (
+        _LISTWISE_PACKING_FIXED_OVERHEAD_TOKENS
+        + _LISTWISE_PACKING_PER_DOC_OVERHEAD_TOKENS * len(block)
+        + sum(block)
+        + 2 * query_length
+    )
+
+
+def derive_listwise_model_max_length(
+    doc_lengths: list[int],
+    query_length: int,
+    budget: int,
+    max_doc_length: int,
+    top_k: int,
+    block_size: int = _LISTWISE_BLOCK_SIZE,
+    logger: "logging.Logger | None" = None,
+) -> int:
+    """Derive the tokenizer ``model_max_length`` that keeps every simulated
+    block's packed length within ``budget`` tokens.
+
+    Not closed-form: a block can overshoot ``model_max_length`` by up to one
+    document (``_simulate_listwise_blocks`` appends before checking
+    capacity), so this seeds from the closed-form upper bound assuming a
+    single block, then verifies by simulation and steps down until every
+    block validates. Block boundaries shift with ``model_max_length``, so
+    validity is not strictly monotone in it -- this does a bounded
+    coarse-then-fine linear scan (never eliminating a region on an assumed
+    trend) rather than a binary search, and always re-verifies the final
+    answer by direct simulation.
+
+    Soft invariant: among valid values, prefers the largest whose first
+    block holds at least ``top_k`` documents (so the un-degraded top-k slice
+    of a search is never resorted alongside fewer real candidates than
+    requested). When no valid value achieves that, returns the largest valid
+    value anyway and logs a warning -- this is never a hard failure.
+    """
+    floor = 2 * query_length + max_doc_length + 1
+    n = len(doc_lengths)
+    seed = max(
+        floor,
+        budget
+        + max_doc_length
+        - _LISTWISE_PACKING_FIXED_OVERHEAD_TOKENS
+        - _LISTWISE_PACKING_PER_DOC_OVERHEAD_TOKENS * n,
+    )
+
+    def _valid(m: int) -> tuple[bool, list[list[int]]]:
+        blocks = _simulate_listwise_blocks(
+            doc_lengths, query_length, m, max_doc_length, block_size
+        )
+        ok = all(_packed_block_length(b, query_length) <= budget for b in blocks)
+        return ok, blocks
+
+    span = max(0, seed - floor)
+    coarse_step = max(1, span // 64)
+
+    largest_valid: int | None = None
+    largest_valid_blocks: list[list[int]] | None = None
+    largest_valid_meets_top_k: int | None = None
+
+    m = seed
+    while m >= floor:
+        ok, blocks = _valid(m)
+        if ok:
+            if largest_valid is None:
+                largest_valid = m
+                largest_valid_blocks = blocks
+            if blocks and len(blocks[0]) >= top_k:
+                largest_valid_meets_top_k = m
+                break
+        m -= coarse_step
+
+    # Refine: the coarse grid can step past the true largest-valid boundary
+    # (invalid at m, valid at m - 1, ..., valid at m - coarse_step + 1) --
+    # recover it with a fine-grained scan of just that gap.
+    if (
+        largest_valid_meets_top_k is None
+        and largest_valid is not None
+        and coarse_step > 1
+    ):
+        m = min(seed, largest_valid + coarse_step - 1)
+        while m > largest_valid:
+            ok, blocks = _valid(m)
+            if ok:
+                largest_valid = m
+                largest_valid_blocks = blocks
+                if blocks and len(blocks[0]) >= top_k:
+                    largest_valid_meets_top_k = m
+                break
+            m -= 1
+
+    if largest_valid_meets_top_k is not None:
+        return largest_valid_meets_top_k
+    if largest_valid is not None:
+        if logger is not None:
+            first_block_size = (
+                len(largest_valid_blocks[0]) if largest_valid_blocks else 0
+            )
+            logger.warning(
+                f"listwise_packed_token_budget={budget} cannot keep the first "
+                f"block at >= top_k={top_k} documents for {n} candidates; "
+                f"proceeding with model_max_length={largest_valid} "
+                f"(first block holds {first_block_size})"
+            )
+        return largest_valid
+    # No M in [floor, seed] validated by simulation -- floor is the absolute
+    # safety floor (one document per block); a pathologically small budget
+    # relative to max_doc_length can still exceed it, but there is nothing
+    # smaller left to try.
+    return floor
+
 
 def _resolve_single_token_id(tokenizer: "AutoModel", text: str) -> int:
     """Resolve a text string to a single token ID, trying variants.
@@ -785,7 +961,8 @@ class JinaRerankerV3(BaseReranker):
     SSCG gate run, 30-candidate pool, RTX 4090 — v3.5 numbers are unmeasured
     pending its own SSCG A/B, see docs/adr/0039):
         - VRAM: ~13.2GB peak (reserved-memory ratchet across a session —
-          see the ``empty_cache()`` policy note in ``rerank()``'s ``finally``)
+          see the ``empty_cache()`` policy note in ``_attempt_rerank``'s
+          ``finally``, run once per attempt from ``rerank()``)
         - Latency: ~4000ms/query at 30 candidates x ~1000-char documents
         - Listwise: released code uses ``block_size=125`` docs/forward pass;
           our 30-candidate pool fits in a single block/forward pass. Context-
@@ -823,12 +1000,22 @@ class JinaRerankerV3(BaseReranker):
         doc_max_chars: int = 1000,
         dtype: str = "auto",
         doc_representation_mode: str = "full",
+        listwise_packed_token_budget: int = 8192,
     ):
         """Initialize JinaRerankerV3 with lazy loading.
 
         Args:
             model_name: HuggingFace model ID for Jina reranker
             device: Device to run on ('cuda', 'cpu', or None for auto-detect)
+            listwise_packed_token_budget: Ceiling, in tokens, on one packed
+                listwise block's prompt length (query + preamble + all
+                documents in that block). ``rerank()`` engages this by
+                lowering the tokenizer's ``model_max_length``, which makes
+                v3's own block-flush loop (vendor ``modeling.py``) sub-divide
+                the window instead of packing every candidate into one flat
+                prompt — see ``RerankerConfig.listwise_packed_token_budget``
+                and docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md.
+                v3.5-only: a no-op when ``_resolve_length_kwargs`` is empty.
             dtype: Weight dtype — "auto" (checkpoint default, bf16), "fp32",
                 "bf16", or "fp16". bf16 listwise scoring is run-to-run
                 non-deterministic at ranking boundaries (context-dependent
@@ -874,10 +1061,17 @@ class JinaRerankerV3(BaseReranker):
         self.doc_max_chars = doc_max_chars
         self.dtype = dtype
         self.doc_representation_mode = doc_representation_mode
+        self.listwise_packed_token_budget = listwise_packed_token_budget
         self._model = None
         # Memoizes _resolve_length_kwargs(); reset by _cleanup_extra() so a
         # cleanup() -> reload cycle re-introspects (e.g. after a model_name swap).
         self._length_kwargs: dict[str, int] | None = None
+        # Set by rerank() on every call (success or graceful-degradation
+        # fallback) so RerankingEngine._run_rerank can record it alongside
+        # last_window_ids — "last pass wins" semantics, same as that field.
+        # None means the packed-window mechanism did not engage (v3.5, or no
+        # candidates). See docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md.
+        self.last_block_count: int | None = None
         self._logger = logging.getLogger(__name__)
         self._load_lock = threading.Lock()
         # Serializes model.rerank() calls — the underlying HF Rust fast tokenizer
@@ -1103,23 +1297,27 @@ class JinaRerankerV3(BaseReranker):
         Args:
             query: The search query
             candidates: List of SearchResult objects
-            top_k: Unused for the model call — kept for BaseReranker signature
-                parity with NeuralReranker/GenerativeReranker. Jina scores every
+            top_k: Not used to truncate the model call — Jina scores every
                 candidate in the same forward pass regardless (listwise), so
                 the full ranked list is returned; callers already slice to the
                 final k downstream (search_executor._run_rerank's own callers,
                 rerank_by_query's ``[:k]``) and rerank_by_query's
                 dedupe_split_blocks needs the full ranked list to backfill
                 collapsed split_block fragments — truncating here first would
-                starve that backfill.
+                starve that backfill. It IS used as a soft lower bound on the
+                first packed block's document count when bounding the window
+                by tokens below (see ``derive_listwise_model_max_length``).
 
         Returns:
             Full ranked list of SearchResult objects with reranker_score
 
         Raises:
-            RuntimeError: If model inference fails (OOM or other error)
+            RuntimeError: If model inference fails (OOM, or other error —
+                including a CUDA OOM that persists after one halved-budget
+                retry; see ``_attempt_rerank``)
         """
         if not candidates:
+            self.last_block_count = None
             return []
 
         # Extract document texts for Jina API
@@ -1150,39 +1348,54 @@ class JinaRerankerV3(BaseReranker):
         # for it — see the class docstring).
         model = self.model  # resolve (lazy load under _load_lock) before _infer_lock
         length_kwargs = self._resolve_length_kwargs(model)
-        try:
-            with self._infer_lock, torch.no_grad():
-                jina_results = model.rerank(
+
+        # Bound the packed listwise window by tokens (reranker CUDA OOM fix —
+        # see docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md).
+        # v3-only: gated on length_kwargs being non-empty, the same
+        # v3-vs-v3.5 capability probe _resolve_length_kwargs already performs
+        # (v3.5 has no model_max_length lever worth pulling here — see
+        # __init__'s listwise_packed_token_budget docstring). When it can
+        # engage, up to two attempts run through _attempt_rerank: the
+        # configured budget, then half of it once on a CUDA OOM (Tier 2)
+        # before giving up. When it cannot engage, there is nothing a retry
+        # could change, so only one attempt runs (today's behaviour).
+        can_bound_window = bool(length_kwargs) and hasattr(model, "_ensure_tokenizer")
+        budgets = (
+            [
+                self.listwise_packed_token_budget,
+                max(1, self.listwise_packed_token_budget // 2),
+            ]
+            if can_bound_window
+            else [self.listwise_packed_token_budget]
+        )
+
+        self.last_block_count = None
+        jina_results = None
+        for attempt, budget in enumerate(budgets):
+            try:
+                jina_results, block_count = self._attempt_rerank(
+                    model,
                     query,
                     documents,
-                    top_n=None,
-                    **length_kwargs,
+                    length_kwargs,
+                    budget,
+                    top_k,
+                    can_bound_window=can_bound_window,
                 )
-        except torch.cuda.OutOfMemoryError as e:
-            self._logger.error(f"CUDA OOM during reranking: {e}")
-            raise RuntimeError(f"Insufficient GPU memory for reranking: {e}") from e
-        except Exception as e:
-            self._logger.error(f"Jina reranker inference failed: {e}")
-            raise RuntimeError(f"Reranking failed: {e}") from e
-        finally:
-            # Pool-wide policy: release cached-but-unused allocator blocks after every
-            # rerank() call, on success, OOM, or any other failure — NeuralReranker and
-            # GenerativeReranker do the same (see their rerank()/rerank_batch() methods).
-            # This class is where the policy was discovered: Jina's listwise architecture
-            # concatenates ALL candidate documents into one shared context per forward
-            # pass, so sequence length — and therefore the CUDA allocator's block sizes —
-            # varies with every query. Differently-sized blocks are rarely reused
-            # call-to-call, so torch_reserved (cached-but-unallocated memory) ratchets
-            # upward monotonically across searches even though torch_allocated (live
-            # tensors) stays flat — confirmed via get_memory_status(): reserved grew
-            # ~8.3GB -> 13.5GB over 4 searches on an RTX 4090 while allocated stayed
-            # pinned at 2.25GB. Left unchecked this eventually exhausts VRAM and triggers
-            # Windows WDDM's shared-memory (sysmem) fallback ("VRAM spillover"). GTE/BGE's
-            # uniform, fixed-max_length=512 pairwise batches are far less likely to hit
-            # this in practice, but release uniformly across the pool rather than
-            # special-casing by measured risk.
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                self.last_block_count = block_count
+                break
+            except torch.cuda.OutOfMemoryError as e:
+                if attempt < len(budgets) - 1:
+                    self._logger.warning(
+                        f"CUDA OOM reranking at listwise_packed_token_budget="
+                        f"{budget}; retrying once at half before giving up: {e}"
+                    )
+                    continue
+                self._logger.error(f"CUDA OOM during reranking: {e}")
+                raise RuntimeError(f"Insufficient GPU memory for reranking: {e}") from e
+            except Exception as e:
+                self._logger.error(f"Jina reranker inference failed: {e}")
+                raise RuntimeError(f"Reranking failed: {e}") from e
 
         # Map back to SearchResult objects with index validation
         n = len(candidates)
@@ -1216,6 +1429,111 @@ class JinaRerankerV3(BaseReranker):
         )
         return results
 
+    def _attempt_rerank(
+        self,
+        model: "AutoModel",
+        query: str,
+        documents: list[str],
+        length_kwargs: dict[str, int],
+        budget: int,
+        top_k: int,
+        can_bound_window: bool,
+    ) -> tuple[list, int | None]:
+        """Run one ``model.rerank()`` call at the given packed-token budget.
+
+        Called by ``rerank()`` once per attempt (up to two: the configured
+        budget, then a halved retry on CUDA OOM — Tier 2 of
+        docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md).
+        ``torch.cuda.OutOfMemoryError`` is deliberately left to propagate
+        uncaught — ``rerank()`` is what decides whether to retry at half the
+        budget or wrap it into the load-bearing ``RuntimeError`` that
+        ``RerankingEngine._run_rerank`` string-matches for session-sticky
+        disable. Any other exception is also left uncaught for the same
+        reason (``rerank()`` wraps it into a plain ``RuntimeError``).
+
+        Returns ``(jina_results, block_count)`` — ``block_count`` is ``None``
+        when ``can_bound_window`` is false (v3.5, or a checkpoint whose
+        ``rerank()`` declares neither length pin).
+        """
+        original_model_max_length = None
+        block_count = None
+        try:
+            if can_bound_window:
+                model._ensure_tokenizer()
+                tokenizer = model._tokenizer
+                original_model_max_length = tokenizer.model_max_length
+                max_doc_length = length_kwargs["max_doc_length"]
+                max_query_length = length_kwargs["max_query_length"]
+                # Mirror the vendor's own tokenization exactly (modeling.py's
+                # _truncate_texts) so the simulated block boundaries agree
+                # with what the real forward pass will see.
+                doc_lengths = [
+                    len(
+                        tokenizer(doc, truncation=True, max_length=max_doc_length)[
+                            "input_ids"
+                        ]
+                    )
+                    for doc in documents
+                ]
+                query_length = len(
+                    tokenizer(query, truncation=True, max_length=max_query_length)[
+                        "input_ids"
+                    ]
+                )
+                model_max_length = derive_listwise_model_max_length(
+                    doc_lengths,
+                    query_length,
+                    budget,
+                    max_doc_length,
+                    top_k,
+                    logger=self._logger,
+                )
+                tokenizer.model_max_length = model_max_length
+                block_count = max(
+                    1,
+                    len(
+                        _simulate_listwise_blocks(
+                            doc_lengths, query_length, model_max_length, max_doc_length
+                        )
+                    ),
+                )
+
+            with self._infer_lock, torch.no_grad():
+                jina_results = model.rerank(
+                    query,
+                    documents,
+                    top_n=None,
+                    **length_kwargs,
+                )
+            return jina_results, block_count
+        finally:
+            if original_model_max_length is not None:
+                # The tokenizer is shared, cached state on a long-lived
+                # model — never leave a lowered model_max_length in place
+                # for callers outside this attempt.
+                model._tokenizer.model_max_length = original_model_max_length
+            # Pool-wide policy: release cached-but-unused allocator blocks after every
+            # rerank() attempt, on success, OOM, or any other failure — NeuralReranker
+            # and GenerativeReranker do the same (see their rerank()/rerank_batch()
+            # methods). This class is where the policy was discovered: Jina's listwise
+            # architecture concatenates ALL candidate documents into one shared context
+            # per forward pass, so sequence length — and therefore the CUDA allocator's
+            # block sizes — varies with every query. Differently-sized blocks are
+            # rarely reused call-to-call, so torch_reserved (cached-but-unallocated
+            # memory) ratchets upward monotonically across searches even though
+            # torch_allocated (live tensors) stays flat — confirmed via
+            # get_memory_status(): reserved grew ~8.3GB -> 13.5GB over 4 searches on an
+            # RTX 4090 while allocated stayed pinned at 2.25GB. Left unchecked this
+            # eventually exhausts VRAM and triggers Windows WDDM's shared-memory
+            # (sysmem) fallback ("VRAM spillover"). GTE/BGE's uniform,
+            # fixed-max_length=512 pairwise batches are far less likely to hit this in
+            # practice, but release uniformly across the pool rather than
+            # special-casing by measured risk. Running this per attempt (rather than
+            # once per rerank() call) means a Tier-2 retry starts from a clean cache
+            # too.
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
     _CLEANUP_LOG_MSG = "Cleaning up Jina reranker model"
 
     # is_loaded, get_vram_usage, cleanup are owned by BaseReranker.
@@ -1230,6 +1548,7 @@ def create_reranker(
     listwise_doc_max_chars: int = 1000,
     listwise_dtype: str = "auto",
     doc_representation_mode: str = "full",
+    listwise_packed_token_budget: int = 8192,
 ) -> "NeuralReranker | GenerativeReranker | JinaRerankerV3":
     """Factory function to create appropriate reranker based on model name.
 
@@ -1267,6 +1586,8 @@ def create_reranker(
             ``RerankerConfig.doc_representation_mode``. Ignored by
             NeuralReranker, which builds pairs from ``content_preview``
             directly and never calls the document builder.
+        listwise_packed_token_budget: Only used for the Jina listwise
+            rerankers (v3/v3.5) — see ``JinaRerankerV3.__init__``.
 
     Returns:
         NeuralReranker, GenerativeReranker, or JinaRerankerV3 instance
@@ -1293,6 +1614,7 @@ def create_reranker(
             doc_max_chars=listwise_doc_max_chars,
             dtype=listwise_dtype,
             doc_representation_mode=doc_representation_mode,
+            listwise_packed_token_budget=listwise_packed_token_budget,
         )  # Listwise reranker
     if model_name.startswith("jinaai/"):
         # RerankerConfig.model_name has no `choices` constraint, and

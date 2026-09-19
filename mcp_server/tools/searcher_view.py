@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from graph.graph_storage import CodeGraphStorage
     from search.indexer import CodeIndexManager
+    from search.reranking_engine import RerankingEngine
 
 
 class SearcherView:
@@ -53,6 +54,18 @@ class SearcherView:
         return getattr(self._s, "index_manager", None) or getattr(
             self._s, "dense_index", None
         )
+
+    @property
+    def reranking_engine(self) -> RerankingEngine | None:
+        """Return the RerankingEngine, or None when the searcher has none.
+
+        ``HybridSearcher`` sets ``.reranking_engine`` at construction;
+        ``IntelligentSearcher`` has no such attribute and yields None. Used
+        to surface the reranker CUDA OOM fix's block-count/rerank-skipped
+        state to MCP callers — see
+        docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md.
+        """
+        return getattr(self._s, "reranking_engine", None)
 
     @property
     def graph_storage(self) -> CodeGraphStorage | None:

@@ -8,7 +8,10 @@ import torch
 from search.neural_reranker import (
     JINA_LISTWISE_RERANKERS,
     JinaRerankerV3,
+    _packed_block_length,
+    _simulate_listwise_blocks,
     create_reranker,
+    derive_listwise_model_max_length,
 )
 from search.reranker import SearchResult
 
@@ -63,6 +66,78 @@ class _FakeV35Model:
             {"index": i, "relevance_score": 1.0 - i * 0.1, "document": doc}
             for i, doc in enumerate(documents)
         ]
+
+
+class _FakeTokenizer:
+    """Character-length token model: one token per character, truncated to
+    ``max_length`` when requested. Deterministic and dependency-free, so
+    window-bounding tests can size documents precisely by character count
+    instead of needing a real tokenizer.
+    """
+
+    def __init__(self, model_max_length: int = 131072):
+        self.model_max_length = model_max_length
+
+    def __call__(self, text, truncation=True, max_length=None):
+        length = len(text)
+        if truncation and max_length is not None:
+            length = min(length, max_length)
+        return {"input_ids": list(range(length))}
+
+
+class _FakeV3ModelWithTokenizer(_FakeV3Model):
+    """_FakeV3Model plus the tokenizer surface ``_attempt_rerank`` mutates
+    (``_ensure_tokenizer`` / ``_tokenizer.model_max_length``) -- a separate
+    subclass rather than a change to ``_FakeV3Model`` itself, so every
+    existing test built on the tokenizer-less fake keeps exercising the
+    ``can_bound_window=False`` path unchanged (see test hazard #1 in the
+    companion plan for docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md).
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._tokenizer = _FakeTokenizer()
+        # Captured value of model_max_length while a rerank() call is in
+        # flight, so tests can observe the mutation without reaching into
+        # JinaRerankerV3 internals.
+        self.model_max_length_during_call = None
+
+    def _ensure_tokenizer(self):
+        pass  # already constructed in __init__; nothing lazy to do
+
+    def rerank(
+        self,
+        query,
+        documents,
+        top_n=None,
+        return_embeddings=False,
+        max_doc_length=2048,
+        max_query_length=512,
+    ):
+        self.model_max_length_during_call = self._tokenizer.model_max_length
+        return super().rerank(
+            query,
+            documents,
+            top_n=top_n,
+            return_embeddings=return_embeddings,
+            max_doc_length=max_doc_length,
+            max_query_length=max_query_length,
+        )
+
+
+class _FakeV35ModelWithTokenizer(_FakeV35Model):
+    """_FakeV35Model plus a tokenizer surface -- proves the v3.5 gate keys
+    off ``_resolve_length_kwargs`` being empty, not off tokenizer presence
+    alone (a model that merely *has* ``_ensure_tokenizer`` must still be
+    left untouched when it declares neither length pin).
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._tokenizer = _FakeTokenizer()
+
+    def _ensure_tokenizer(self):
+        pass
 
 
 class TestJinaRerankerV3:
@@ -508,6 +583,311 @@ class TestJinaRerankerV3:
             )
 
 
+class TestDeriveListwiseModelMaxLength:
+    """Pure-function tests for the M-derivation
+    (docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md).
+
+    ``derive_listwise_model_max_length`` / ``_simulate_listwise_blocks`` /
+    ``_packed_block_length`` need only doc lengths, query length, budget,
+    and top_k -- no tokenizer or model involved, per test hazard #1 in the
+    companion plan (``_FakeV3Model`` has no ``_tokenizer``).
+    """
+
+    def test_dense_docs_produce_multiple_blocks(self):
+        """30 docs at ~1000 tokens each vastly exceed an 8192 budget -- the
+        derived M must force more than one block."""
+        doc_lengths = [1000] * 30
+        m = derive_listwise_model_max_length(
+            doc_lengths, query_length=20, budget=8192, max_doc_length=2048, top_k=10
+        )
+        blocks = _simulate_listwise_blocks(doc_lengths, 20, m, 2048)
+        assert len(blocks) > 1
+
+    def test_sparse_docs_produce_a_single_block(self):
+        """A handful of short docs comfortably fits an 8192 budget in one
+        block -- no behaviour change vs. today on the unsplit Python canon."""
+        doc_lengths = [100] * 5
+        m = derive_listwise_model_max_length(
+            doc_lengths, query_length=20, budget=8192, max_doc_length=2048, top_k=10
+        )
+        blocks = _simulate_listwise_blocks(doc_lengths, 20, m, 2048)
+        assert len(blocks) == 1
+
+    def test_every_simulated_block_fits_the_budget(self):
+        """Regardless of corpus shape, every simulated block at the derived
+        M must pack within budget tokens."""
+        doc_lengths = [1500, 200, 1800, 50, 1999, 300, 1700, 20, 1600, 900]
+        query_length, budget, max_doc_length = 64, 4096, 2048
+        m = derive_listwise_model_max_length(
+            doc_lengths, query_length, budget, max_doc_length, top_k=5
+        )
+        blocks = _simulate_listwise_blocks(doc_lengths, query_length, m, max_doc_length)
+        assert blocks  # sanity: simulation produced something to check
+        for block in blocks:
+            assert _packed_block_length(block, query_length) <= budget
+
+    def test_never_drops_below_the_floor(self):
+        """Even a pathologically small budget -- too small to fit even one
+        document plus overhead -- must not push M below the absolute floor
+        (2q + max_doc_length + 1, one document's worth of headroom)."""
+        doc_lengths = [2048] * 50
+        query_length, budget, max_doc_length = 512, 2048, 2048
+        m = derive_listwise_model_max_length(
+            doc_lengths, query_length, budget, max_doc_length, top_k=10
+        )
+        floor = 2 * query_length + max_doc_length + 1
+        assert m >= floor
+
+    def test_soft_top_k_invariant_met_when_budget_allows(self):
+        """When the budget comfortably covers top_k documents, the first
+        block must hold at least top_k of them."""
+        doc_lengths = [500] * 20
+        query_length, budget, max_doc_length, top_k = 20, 8192, 2048, 10
+        m = derive_listwise_model_max_length(
+            doc_lengths, query_length, budget, max_doc_length, top_k=top_k
+        )
+        blocks = _simulate_listwise_blocks(doc_lengths, query_length, m, max_doc_length)
+        assert len(blocks[0]) >= top_k
+
+    def test_soft_top_k_invariant_falls_back_with_warning_when_unattainable(self):
+        """When no valid M can keep top_k documents in the first block
+        (budget too tight relative to per-document length), the derivation
+        must still return a valid M -- never fail the request -- and log a
+        warning rather than silently proceeding."""
+        doc_lengths = [2000] * 20
+        query_length, budget, max_doc_length, top_k = 20, 2200, 2048, 10
+        logger = MagicMock()
+        m = derive_listwise_model_max_length(
+            doc_lengths,
+            query_length,
+            budget,
+            max_doc_length,
+            top_k=top_k,
+            logger=logger,
+        )
+        blocks = _simulate_listwise_blocks(doc_lengths, query_length, m, max_doc_length)
+        assert len(blocks[0]) < top_k  # the invariant this budget cannot meet
+        for block in blocks:
+            assert _packed_block_length(block, query_length) <= budget  # still valid
+        logger.warning.assert_called_once()
+
+
+class TestListwiseWindowBounding:
+    """Integration-level tests for JinaRerankerV3's window-bounding
+    mechanism: model_max_length mutation/restoration, the v3.5 gate, and
+    the Tier-2 halved-budget OOM retry
+    (docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md).
+    """
+
+    def test_model_max_length_mutated_during_call_and_restored_after(self):
+        fake_model = _FakeV3ModelWithTokenizer()
+        original = fake_model._tokenizer.model_max_length
+        reranker = JinaRerankerV3(listwise_packed_token_budget=8192)
+        reranker._model = fake_model
+
+        candidates = [
+            SearchResult(
+                chunk_id=str(i), score=1.0, metadata={"content_preview": "x" * 50}
+            )
+            for i in range(3)
+        ]
+        reranker.rerank("query", candidates, top_k=3)
+
+        assert fake_model.model_max_length_during_call is not None
+        assert fake_model.model_max_length_during_call < original
+        assert fake_model._tokenizer.model_max_length == original
+        assert reranker.last_block_count == 1
+
+    def test_model_max_length_restored_on_exception_path(self):
+        """The tokenizer is shared, cached state on a long-lived model --
+        a failed rerank() call must not leave model_max_length lowered."""
+        fake_model = _FakeV3ModelWithTokenizer()
+        original = fake_model._tokenizer.model_max_length
+        fake_model.rerank = lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("inference blew up")
+        )
+
+        reranker = JinaRerankerV3(listwise_packed_token_budget=8192)
+        reranker._model = fake_model
+
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+        with pytest.raises(RuntimeError, match="Reranking failed"):
+            reranker.rerank("query", candidates, top_k=1)
+
+        assert fake_model._tokenizer.model_max_length == original
+
+    def test_v35_gate_tokenizer_not_mutated_when_length_kwargs_empty(self):
+        """v3.5's rerank() declares neither max_doc_length nor
+        max_query_length, so _resolve_length_kwargs is empty and
+        can_bound_window must be False even though this fake exposes a
+        _tokenizer/_ensure_tokenizer surface -- proves the gate keys off
+        length_kwargs emptiness, not tokenizer presence alone."""
+        fake_model = _FakeV35ModelWithTokenizer()
+        original = fake_model._tokenizer.model_max_length
+        reranker = JinaRerankerV3(listwise_packed_token_budget=8192)
+        reranker._model = fake_model
+
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+        results = reranker.rerank("query", candidates, top_k=1)
+
+        assert len(results) == 1
+        assert fake_model._tokenizer.model_max_length == original
+        assert reranker.last_block_count is None
+
+    def test_oom_retries_once_at_half_budget_then_succeeds(self):
+        reranker = JinaRerankerV3(listwise_packed_token_budget=8192)
+        reranker._model = _FakeV3ModelWithTokenizer()
+
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+        seen_budgets = []
+
+        def fake_attempt(
+            model, query, documents, length_kwargs, budget, top_k, can_bound_window
+        ):
+            seen_budgets.append(budget)
+            if len(seen_budgets) == 1:
+                raise torch.cuda.OutOfMemoryError("CUDA out of memory.")
+            return (
+                [{"index": 0, "relevance_score": 0.9, "document": documents[0]}],
+                1,
+            )
+
+        with patch.object(reranker, "_attempt_rerank", side_effect=fake_attempt):
+            results = reranker.rerank("query", candidates, top_k=1)
+
+        assert len(results) == 1
+        assert seen_budgets == [8192, 4096]
+
+    def test_oom_exhausted_raises_runtime_error_matching_session_disable_string(self):
+        """RerankingEngine._run_rerank detects OOM by string-matching "cuda"
+        + "out of memory"/"oom" on str(e) -- the re-raised RuntimeError's
+        message must preserve that verbatim, or the session-sticky disable
+        backstop silently breaks."""
+        reranker = JinaRerankerV3(listwise_packed_token_budget=8192)
+        reranker._model = _FakeV3ModelWithTokenizer()
+
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+        with (
+            patch.object(
+                reranker,
+                "_attempt_rerank",
+                side_effect=torch.cuda.OutOfMemoryError(
+                    "CUDA out of memory. Tried to allocate 2.00 GiB"
+                ),
+            ),
+            pytest.raises(
+                RuntimeError, match="Insufficient GPU memory for reranking"
+            ) as exc_info,
+        ):
+            reranker.rerank("query", candidates, top_k=1)
+
+        message = str(exc_info.value).lower()
+        assert "cuda" in message
+        assert "out of memory" in message or "oom" in message
+
+    def test_no_retry_when_window_cannot_be_bounded(self):
+        """v3.5 (or any checkpoint whose rerank() declares neither length
+        pin) has nothing a retry could change -- only one attempt should
+        run even on OOM."""
+        reranker = JinaRerankerV3(listwise_packed_token_budget=8192)
+        reranker._model = _FakeV35Model()
+
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+        seen_budgets = []
+
+        def fake_attempt(
+            model, query, documents, length_kwargs, budget, top_k, can_bound_window
+        ):
+            seen_budgets.append(budget)
+            raise torch.cuda.OutOfMemoryError("CUDA out of memory.")
+
+        with (
+            patch.object(reranker, "_attempt_rerank", side_effect=fake_attempt),
+            pytest.raises(RuntimeError, match="Insufficient GPU memory for reranking"),
+        ):
+            reranker.rerank("query", candidates, top_k=1)
+
+        assert seen_budgets == [8192]
+
+    def test_vendor_compute_single_batch_never_passes_truncation(self):
+        """Guard against a future jinaai/jina-reranker-v3 republish silently
+        changing _compute_single_batch to truncate its packed prompt.
+
+        Today (cached revision 10fb694fc21f...) _compute_single_batch's
+        tokenizer call passes no truncation=True, which is what makes a
+        lowered model_max_length (see derive_listwise_model_max_length)
+        only widen block count -- never silently drop content. No upstream
+        revision is pinned anywhere in this repo (see the ADR's "Standing
+        risk" section), so this is a real, not hypothetical, risk. Reads
+        the cached trust_remote_code module straight off disk (no network
+        call); skips rather than fails when it isn't cached locally.
+        """
+        import ast
+        import glob
+        import os
+
+        from transformers.utils import HF_MODULES_CACHE
+
+        candidates = glob.glob(
+            os.path.join(
+                HF_MODULES_CACHE,
+                "transformers_modules",
+                "jinaai",
+                "jina_hyphen_reranker_hyphen_v3",
+                "*",
+                "modeling.py",
+            )
+        )
+        if not candidates:
+            pytest.skip(
+                "jinaai/jina-reranker-v3 trust_remote_code module not cached locally"
+            )
+
+        with open(candidates[0], encoding="utf-8") as f:
+            source = f.read()
+        tree = ast.parse(source)
+        method_source = None
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name == "_compute_single_batch"
+            ):
+                method_source = ast.get_source_segment(source, node)
+                break
+        assert method_source is not None, (
+            "_compute_single_batch not found in vendor modeling.py -- "
+            "the vendor module's shape has changed; re-check this guard."
+        )
+        assert "truncation" not in method_source, (
+            "jinaai/jina-reranker-v3's _compute_single_batch now references "
+            "truncation -- a lowered model_max_length (see "
+            "derive_listwise_model_max_length) could silently truncate the "
+            "packed prompt instead of just widening block count. Re-derive "
+            "the token-budget math in "
+            "docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md."
+        )
+
+
 class TestCreateRerankerFactoryJina:
     """Tests for create_reranker factory with Jina models."""
 
@@ -528,3 +908,16 @@ class TestCreateRerankerFactoryJina:
             reranker = create_reranker(model_name)
             assert isinstance(reranker, JinaRerankerV3)
             assert reranker.model_name == model_name
+
+    def test_listwise_packed_token_budget_passed_to_jina_reranker(self):
+        """RerankerConfig.listwise_packed_token_budget must thread through
+        the factory to JinaRerankerV3, not silently fall back to the
+        default (docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md)."""
+        reranker = create_reranker(
+            "jinaai/jina-reranker-v3", listwise_packed_token_budget=4096
+        )
+        assert reranker.listwise_packed_token_budget == 4096
+
+    def test_listwise_packed_token_budget_defaults_to_8192(self):
+        reranker = create_reranker("jinaai/jina-reranker-v3")
+        assert reranker.listwise_packed_token_budget == 8192

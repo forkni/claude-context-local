@@ -104,7 +104,7 @@ def test_section_docstring_field_counts_match_dataclasses_fields():
 
 def test_construction_baked_fields_are_pinned():
     """Ratchet for spec(construction_baked=True) (Part 2/C1 of the ADR-0018
-    follow-on plan): the thirteen fields read once into a collaborator (cached
+    follow-on plan): the fourteen fields read once into a collaborator (cached
     HybridSearcher/reranker) at construction rather than live per search call
     - pin the exact set so a silent addition or removal shows up here instead
     of only as a stale benchmark arm that silently didn't take effect.
@@ -154,6 +154,10 @@ def test_construction_baked_fields_are_pinned():
             # as the five reranker fields above - captured on the instance at
             # construction, so an arm override needs a rebuild to take effect.
             ("reranker", "doc_representation_mode"),
+            # Reranker CUDA OOM fix (2026-09-19): baked into JinaRerankerV3 at
+            # construction alongside listwise_doc_max_chars/listwise_dtype -
+            # see docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md.
+            ("reranker", "listwise_packed_token_budget"),
         }
     )
     assert expected == SearchConfig._CONSTRUCTION_BAKED_FIELDS

@@ -72,6 +72,18 @@ class RerankingEngine:
         # promotion). Lets diagnostics distinguish pool membership from window
         # membership — see docs/adr/0013-hop1-reserve-at-final-pool.md.
         self.last_window_ids: list[str] | None = None
+        # Reranker CUDA OOM fix (see
+        # docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md):
+        # recorded by _run_rerank alongside last_window_ids, same "last pass
+        # wins" semantics. last_block_count is the number of packed listwise
+        # blocks the most recent rerank pass split into (None when the
+        # reranker isn't a JinaRerankerV3, or doesn't expose the mechanism —
+        # e.g. v3.5, or no rerank has run yet). last_rerank_skipped is True
+        # when that pass fell back to unreranked candidates (OOM or any
+        # other rerank failure), mirroring the graceful-degradation path
+        # below rather than a new failure mode.
+        self.last_block_count: int | None = None
+        self.last_rerank_skipped: bool = False
         self._logger = logging.getLogger(__name__)
 
     def should_enable_neural_reranking(
@@ -172,6 +184,7 @@ class RerankingEngine:
                 listwise_doc_max_chars=config.reranker.listwise_doc_max_chars,
                 listwise_dtype=config.reranker.listwise_dtype,
                 doc_representation_mode=config.reranker.doc_representation_mode,
+                listwise_packed_token_budget=config.reranker.listwise_packed_token_budget,
             )
             self._logger.debug(f"{log_prefix} Neural reranker initialized")
         elif (
@@ -195,6 +208,7 @@ class RerankingEngine:
                 listwise_doc_max_chars=config.reranker.listwise_doc_max_chars,
                 listwise_dtype=config.reranker.listwise_dtype,
                 doc_representation_mode=config.reranker.doc_representation_mode,
+                listwise_packed_token_budget=config.reranker.listwise_packed_token_budget,
             )
         elif not should_enable and self.neural_reranker is not None:
             self.neural_reranker.cleanup()
@@ -240,6 +254,13 @@ class RerankingEngine:
             self._logger.debug(
                 f"{log_prefix} Processed {rerank_count} candidates in {neural_time:.3f}s"
             )
+            # See docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md —
+            # getattr rather than a direct read since only JinaRerankerV3 sets
+            # last_block_count (NeuralReranker/GenerativeReranker don't).
+            self.last_block_count = getattr(
+                self.neural_reranker, "last_block_count", None
+            )
+            self.last_rerank_skipped = False
             return result
         # OOM detection path: all mutations here are boundary (requires real CUDA OOM).
         # ExceptionReplacer, And/Or in OOM string detection, and True→False on _session_oom_detected
@@ -248,6 +269,8 @@ class RerankingEngine:
             self._logger.warning(
                 f"{log_prefix} Reranking failed: {e}, using original results"
             )
+            self.last_block_count = None
+            self.last_rerank_skipped = True
             error_str = str(e).lower()
             if "cuda" in error_str and (  # pragma: no mutate
                 "out of memory" in error_str or "oom" in error_str  # pragma: no mutate

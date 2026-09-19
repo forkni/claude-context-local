@@ -141,17 +141,24 @@ integer heads gives an **exact** fit at **heads = 32, L = 8,948** — not an app
 `32 × 8948² × 2 = 5,124,345,856` bytes, matching the observed `5,124,269,056` to within rounding,
 and **8,948 is the identical `packed_prompt_tokens` figure leg 0 measured independently** from the
 tokenizer, for the same N=30 TD corpus. Two independent measurements (a live CUDA allocation
-event, and a pure-CPU tokenizer run) agree on the same packed sequence length.
+event, and a pure-CPU tokenizer run) agree on the same packed sequence length. **Correction:** the
+checkpoint's `config.json` declares `num_attention_heads: 16`, not 32 — the factor of 32 that
+back-solves exactly here is two live 16-head score buffers counted together in this single
+largest-allocation event (the same 64 B/element figure used elsewhere in this document, restated
+per-buffer as 32 head-equivalents), not a wrong head count for the model.
 
 **Why the full `[1, 32, L, L]` matrix gets materialized at all** (rather than a flash/memory-
 efficient SDPA kernel that never forms it): `sdpa_attention.py:124` sets
-`is_causal = q_length > 1 and attention_mask is None and is_causal` — Jina's listwise packing uses
-a real, non-`None` custom `attention_mask` to implement per-document isolation inside the shared
-context, which forces `is_causal = False` and takes the code down the explicit-mask path
-(`:158`) rather than the causal fast path that a plain decoder-only forward would use. This is an
-architectural property of listwise packing, not a bug — the model *needs* that mask to do its job
-— but it is precisely what removes PyTorch's ability to dispatch to an attention kernel that
-avoids full materialization.
+`is_causal = q_length > 1 and attention_mask is None and is_causal` — **correction:**
+`attention_mask` here is the tokenizer's own plain padding mask (`_compute_single_batch`,
+`modeling.py:160-184`, built via `padding=True, padding_side="left"` and handed straight to
+`forward`), **not** a custom mask implementing per-document isolation — Jina's listwise packing has
+no such mechanism; attention across documents packed into the same block is plain, unrestricted
+causal attention, with no isolation between them. Any non-`None` mask is enough to force
+`is_causal = False` and take the code down the explicit-mask path (`:158`) rather than the causal
+fast path. This is an architectural property of left-padded batched decoding, not a
+listwise-specific isolation mechanism — but it is precisely what removes PyTorch's ability to
+dispatch to an attention kernel that avoids full materialization.
 
 **The 56 largest (>4 GiB) alloc events collapse to only 2 distinct virtual addresses**, each
 reused ~28 times (56/2) — one allocation-then-free cycle per full-attention decoder layer, hence

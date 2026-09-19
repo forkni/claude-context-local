@@ -504,6 +504,8 @@ class SearchOrchestrator:
         formatted_results: list[dict],
         subgraph_data: dict | None,
         reindexed: bool = False,
+        rerank_block_count: int | None = None,
+        rerank_skipped: bool = False,
     ) -> dict:
         """Block I: assemble the response dict (results + optional subgraph keys +
         conditional routing info), then attach the system guidance message.
@@ -530,6 +532,36 @@ class SearchOrchestrator:
             note = (
                 "Note: the index was refreshed (changed files detected) before "
                 "this search ran — results reflect the latest code."
+            )
+            response["system_message"] = (
+                f"{note} {response['system_message']}"
+                if response.get("system_message")
+                else note
+            )
+
+        # Reranker CUDA OOM fix (see
+        # docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md):
+        # surface both possible degradations of the rerank pass rather than
+        # leaving either silent. rerank_skipped (the pre-existing OOM
+        # fallback — reranking silently disabled for the rest of the
+        # session) takes precedence over reporting a block split, since a
+        # skipped pass means no block-bounding ran at all.
+        if rerank_skipped:
+            response["rerank_skipped"] = True
+            note = (
+                "Neural reranking was skipped for this search (GPU memory); "
+                "results are fusion-ordered."
+            )
+            response["system_message"] = (
+                f"{note} {response['system_message']}"
+                if response.get("system_message")
+                else note
+            )
+        elif rerank_block_count is not None and rerank_block_count > 1:
+            response["rerank_block_count"] = rerank_block_count
+            note = (
+                f"Rerank window was split into {rerank_block_count} blocks "
+                "to fit GPU memory."
             )
             response["system_message"] = (
                 f"{note} {response['system_message']}"
@@ -594,9 +626,18 @@ class SearchOrchestrator:
         )
 
         # Block I: response assembly (subgraph_data is already None here when
-        # include_subgraph is false — Block G above skipped extraction)
+        # include_subgraph is false — Block G above skipped extraction).
+        # reranking_engine is None for IntelligentSearcher — getattr defaults
+        # keep this a no-op there, same as HybridSearcher before any rerank
+        # pass has run.
+        reranking_engine = SearcherView(outcome.searcher).reranking_engine
         return self._build_response(
-            plan, formatted_results, subgraph_data, outcome.reindexed
+            plan,
+            formatted_results,
+            subgraph_data,
+            outcome.reindexed,
+            rerank_block_count=getattr(reranking_engine, "last_block_count", None),
+            rerank_skipped=getattr(reranking_engine, "last_rerank_skipped", False),
         )
 
     # ---------------------------------------------------------------------------

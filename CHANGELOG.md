@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Reranker listwise window is bounded by tokens, fixing a CUDA OOM on token-dense corpora**
+  (ADR-0076) — `JinaRerankerV3.rerank()` packed the entire rerank window into one flat prompt with
+  nothing bounding total token mass, so a token-dense corpus (TD operator chunks) could raise
+  `torch.cuda.OutOfMemoryError`; `RerankingEngine` already caught that and fell back to unreranked
+  results, but silently disabled neural reranking for the rest of the session
+  (`_session_oom_detected`). A new `RerankerConfig.listwise_packed_token_budget` field (default
+  8192) is used to derive a bound on the tokenizer's `model_max_length` via greedy-fill simulation
+  of Jina's own block-flush loop, engaging its existing multi-block regime instead of hand-building
+  a smaller prompt; a floor keeps at least one document per block, and a soft invariant keeps the
+  first block at or above `top_k_candidates` where the budget allows. One halved-budget retry is
+  attempted on OOM before falling back, preserving the existing `RuntimeError` message verbatim so
+  `_run_rerank`'s OOM string-match detection keeps working. Both outcomes — a split window and the
+  unreranked fallback — are now recorded on `RerankingEngine` (`last_block_count`,
+  `last_rerank_skipped`) and surfaced to MCP callers as a `system_message` via a new
+  `SearcherView.reranking_engine` accessor, instead of degrading silently.
 - **TD network `expressions:` content** (ADR-0062, 2026-09-10) — `TDNetworkChunker` renders
   `par_modes` `mode == "expression"` entries as an `expressions: name=expr, ...` content line
   (before `params:`, capped at 900 chars), making TD expression source text (e.g.
