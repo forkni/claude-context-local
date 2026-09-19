@@ -1398,6 +1398,13 @@ class JinaRerankerV3(BaseReranker):
                 raise RuntimeError(f"Reranking failed: {e}") from e
 
         # Map back to SearchResult objects with index validation
+        if jina_results is None:
+            # Unreachable in practice: budgets always has >=1 entry, and every
+            # loop iteration either assigns jina_results and breaks, or raises
+            # (OOM on the final attempt, or any other exception). Guard kept
+            # for pyrefly's benefit (it can't prove the loop always runs) and
+            # as a defensive backstop if that invariant ever changes.
+            raise RuntimeError("Reranking failed: no results produced")
         n = len(candidates)
         results = []
         for jina_result in jina_results:
