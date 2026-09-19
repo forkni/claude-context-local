@@ -80,6 +80,7 @@ for avoiding re-litigating settled questions.
 | [0072](0072-td-edge-type-vocabulary-is-declared-and-drift-tested.md) | TD edge-type vocabulary is declared and drift-tested (`clones`) | accepted | 2026-09-15 |
 | [0073](0073-td-network-edges-carry-only-honest-provenance.md) | TD network edges carry only honest provenance | accepted | 2026-09-15 |
 | [0074](0074-procedural-graphs-are-stored-in-seed-format-outside-codegraphstorage.md) | Procedural graphs are stored in seed format outside CodeGraphStorage | accepted | 2026-09-16 |
+| [0075](0075-td-graph-doc-budget-is-pinned-to-the-producer-contract.md) | TD graph doc budget is pinned to the producer contract (5 MB -> 24 MiB) | accepted | 2026-09-19 |
 
 ## Adding a new ADR
 

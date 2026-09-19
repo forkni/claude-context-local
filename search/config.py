@@ -1093,7 +1093,10 @@ class ChunkingConfig:
     # chunker. Same default as the profiler's own (former) MAX_FILE_SIZE_BYTES
     # constant, which now reads this field instead of hardcoding its own copy.
     max_file_size_bytes: int = field(
-        default=5 * 1024 * 1024,  # 5 MB
+        default=24 * 1024 * 1024,  # 24 MiB (TD_Glossary_tox ADR 0014, 2026-09-19:
+        # sized to `tdgraph_contract.CHUNKER_MAX_DOC_BYTES`, the producer's
+        # whole-artifact admission gate for `*.tdgraph.json` exports; see
+        # tests/unit/chunking/test_td_graph_doc_budget.py)
         metadata=spec(
             range=(1024, 100 * 1024 * 1024),
             flat_alias="max_file_size_bytes",

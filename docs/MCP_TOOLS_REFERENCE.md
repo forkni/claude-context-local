@@ -654,7 +654,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 - `adaptive_multiplier_min` (float): T_min multiplier for high-complexity functions (0.1-1.0, default: 0.5)
 - `max_complexity_cap` (int): Cyclomatic complexity ceiling for normalization (5-100, default: 30)
 - `glsl_filter_td_prefix` (bool): Filter TouchDesigner `TD*`-prefixed builtins from GLSL call-graph edges (default: True)
-- `max_file_size_bytes` (int): Files larger than this are skipped by the chunker (1024-104857600, default: 5242880 / 5 MB). Does not affect the adaptive-sizing profiler, which reads its own import-time-seeded 5 MB default independently of this setting.
+- `max_file_size_bytes` (int): Files larger than this are skipped by the chunker (1024-104857600, default: 25165824 / 24 MiB, sized to TD_Glossary_tox's `tdgraph_contract.CHUNKER_MAX_DOC_BYTES` - TD_Glossary_tox ADR 0014, 2026-09-19). The adaptive-sizing profiler's `repo_profiler.MAX_FILE_SIZE_BYTES` reads this same field, but only once at import time - changing it at runtime (e.g. via a live config reload) does not move the profiler's already-frozen constant.
 
 **Note**: Re-index project to apply changes.
 

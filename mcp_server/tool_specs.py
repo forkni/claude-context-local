@@ -967,7 +967,7 @@ RETURNS:
                 },
                 "max_file_size_bytes": {
                     **CONFIG_BACKED["configure_chunking.max_file_size_bytes"],
-                    "description": "Files larger than this are skipped by the chunker (never chunked, never indexed). Does not affect the adaptive-sizing profiler, which reads its own import-time-seeded 5 MB default and is not affected by this setting.",
+                    "description": "Files larger than this are skipped by the chunker (never chunked, never indexed). The adaptive-sizing profiler's repo_profiler.MAX_FILE_SIZE_BYTES reads this same field, but only once at import time -- changing it at runtime (e.g. via a live config reload) does not move the profiler's already-frozen constant.",
                 },
                 "enable_td_network_indexing": {
                     **CONFIG_BACKED["configure_chunking.enable_td_network_indexing"],

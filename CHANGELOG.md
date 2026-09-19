@@ -311,6 +311,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`chunking.max_file_size_bytes` default 5 MB → 24 MiB (25165824)**, 2026-09-19
+  (`docs/adr/0075-td-graph-doc-budget-is-pinned-to-the-producer-contract.md`) — raised jointly
+  with TD_Glossary_tox's producer-side budget raise (TD_Glossary_tox ADR 0014): a zero-data-loss
+  `*.tdgraph.json` export of a POPX-scale foreign network measured at 18,491,105 B, over the old
+  5 MB gate by a wide margin, and `chunking/multi_language_chunker.py`'s size check gates *before*
+  TD-network dispatch (`:342` vs `:349`), so any TD export over the old cap was silently dropped
+  with only an invisible-by-default `logger.info`, never reaching the chunker at all. 24 MiB is
+  the same 24 MiB constant on both sides — this repo's own declared validation range
+  (1024–104,857,600) is separate and unchanged, and neither repo imports the other, so the two
+  copies are kept honest by a new literal-vs-literal drift test,
+  `tests/unit/chunking/test_td_graph_doc_budget.py`, pinned against
+  `tdgraph_contract.CHUNKER_MAX_DOC_BYTES`. This also raises `repo_profiler.MAX_FILE_SIZE_BYTES`
+  (import-time-seeded from this same field, see `search/config.py`). The listwise reranker's VRAM
+  profile (bounded by `top_k_candidates` × `listwise_doc_max_chars`, independent of index size) is
+  unaffected by this raise in that sense — but that same character-vs-token mismatch caused a live
+  CUDA OOM the same day when admitting more TD `operator` chunks shifted the candidate pool's
+  content mix; see `evaluation/RERANKER_TD_TOKEN_DENSITY_20260919.md`. Historical note: the
+  `chunking.max_file_size_bytes` entry below (v0.26.0, 2026-09-02) accurately describes the
+  field's original 5 MB default at introduction and is left unchanged.
 - **Retrieval canon re-pinned 2026-09-05** (`evaluation/CANON_20260905_REBASELINE.md`) after the
   16-commit `contains`-edge search-path burst (`5d50708`…`abeef6f`): full force reindex (234
   files / 2,871 chunks, 29,664 edges incl. 894 new `contains`), 63q determinism reconfirmed

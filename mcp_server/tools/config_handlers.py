@@ -335,10 +335,10 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     sizing_mode ("fixed"|"adaptive"), adaptive_multiplier_max (1.0-2.0),
     adaptive_multiplier_min (0.1-1.0), max_complexity_cap (5-100),
     glsl_filter_td_prefix (bool), max_file_size_bytes (1024-104857600).
-    Note: max_file_size_bytes only affects the chunker's own cap — the
-    adaptive-sizing profiler (``chunking/repo_profiler.py``) reads its own
-    import-time-seeded default independently and is not affected by this
-    setting.
+    Note: the adaptive-sizing profiler's ``repo_profiler.MAX_FILE_SIZE_BYTES``
+    reads this same field, but only once at import time — changing it at
+    runtime (e.g. via this handler, or a live config reload) does not move
+    the profiler's already-frozen constant.
     """
     config_manager = get_config_manager()
     config = config_manager.load_config()
