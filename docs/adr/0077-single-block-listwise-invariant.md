@@ -208,8 +208,8 @@ no principled reading under which scoring a window in one coherent block is
 worse than fragmenting it), but must be recorded honestly rather than
 presented as a win.
 
-`listwise_window_fit` gets `spec(benchmark_locked=...)` citing this gate's
-report only after the gate runs — see `search/config.py` and
+`listwise_window_fit` carries `spec(benchmark_locked=...)` citing this gate's
+report — see `search/config.py:1009-1018` and
 `tests/unit/search/test_index_probe.py`'s `FORBIDDEN_AUTO_TUNE_KEYS` literal.
 
 ### Gate results (2026-09-20)
@@ -238,9 +238,11 @@ ADR-0072 CLONES merge — newer than the 09-08 canon's 235/2,978).
   pin and this substrate, not a defect introduced by this ADR. Raising
   `listwise_packed_token_budget` (9000→16000) was checked as a possible
   fix and found inert — confirms the binding cap is
-  `listwise_doc_max_chars`, unrelated to this field. A canon re-pin remains
-  separately owed (see Out of scope) to make future inertness checks
-  comparable again.
+  `listwise_doc_max_chars`, unrelated to this field. The canon re-pin this
+  needed has since landed — `evaluation/CANON_20260920_REBASELINE.md` —
+  and independently confirms the "substrate drift" diagnosis: it names the
+  drift's actual cause (a restored pyan call-edge tier, `ee63b8ef`) and
+  measures deltas of the same sign and a comparable magnitude to leg 1's.
 - **Leg 2 (decisive A/B, budget 7000, split vs truncate)** — neutral on
   both datasets, no guard-rail breach: 63q mrr −0.0146, recall@5 −0.0013,
   recall@10 −0.0013, recall@20 −0.0040, ndcg@5 −0.0009 (all CIs include 0);
@@ -307,11 +309,12 @@ ADR-0072 CLONES merge — newer than the 09-08 canon's 235/2,978).
   `signature_head` starves routinely; that would be a signal to revisit
   `_LISTWISE_MIN_DOC_TOKEN_ALLOWANCE` or `listwise_packed_token_budget`
   rather than to abandon the invariant.
-- Out of scope for this ADR: a canon re-pin (separately owed), a
-  `TD_Glossary_tox` golden set (the real measurement gap — the existing one
-  is 21 queries against a tiny synthetic fixture, not reusable here), and
-  jina-reranker-v3.5 (no `max_doc_length`/`max_query_length` levers, so this
-  mechanism does not apply to it — already excluded by ADR-0076's gate).
+- Out of scope for this ADR: a `TD_Glossary_tox` golden set (the real
+  measurement gap — the existing one is 21 queries against a tiny synthetic
+  fixture, not reusable here), and jina-reranker-v3.5 (no
+  `max_doc_length`/`max_query_length` levers, so this mechanism does not
+  apply to it — already excluded by ADR-0076's gate). The canon re-pin
+  named here as owed is done — see `evaluation/CANON_20260920_REBASELINE.md`.
 
 ## Re-evaluation triggers
 

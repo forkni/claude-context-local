@@ -115,9 +115,15 @@ Two invariants:
 
 - **Hard floor:** `model_max_length >= 2 * query_length + max_doc_length +
   1` — one document per block is the minimum unit of progress.
-- **Soft invariant:** among valid values, prefer the largest whose first
-  block holds at least `top_k` documents; when none does, take the largest
-  valid value and log a warning rather than fail the request.
+- **Soft invariant (superseded 2026-09-20, ADR-0077):** among valid values,
+  prefer the largest whose first block holds at least `top_k` documents;
+  when none does, take the largest valid value and log a warning rather
+  than fail the request. Deleted by `7de48119` —
+  `derive_listwise_model_max_length` now only enforces the hard floor and
+  budget validity; it runs at all only as a fallback when ADR-0077's
+  adaptive per-document truncation (`derive_listwise_doc_budget`,
+  `_fit_single_block`) under-shoots and a multi-block split becomes
+  unavoidable. See `docs/adr/0077-single-block-listwise-invariant.md`.
 
 `JinaRerankerV3._attempt_rerank` applies the derived value to
 `model._tokenizer.model_max_length` (after `model._ensure_tokenizer()`,
@@ -263,10 +269,15 @@ Reconsider this design if any of the following hold:
 
 1. The vendor checkpoint republishes with a different block-flush rule or
    adds truncation to `_compute_single_batch` (see "Standing risk" above).
-2. `top_k_candidates` or `listwise_doc_max_chars` change enough that the
-   soft top-k invariant routinely fails to hold even at the maximum allowed
-   budget (32768) — that would indicate the budget range itself needs
-   revisiting, not just the default.
+2. **(Superseded 2026-09-20, ADR-0077 — the soft top-k invariant this
+   trigger names no longer exists in the code, see the Decision section
+   above)** `top_k_candidates` or `listwise_doc_max_chars` change enough
+   that the soft top-k invariant routinely fails to hold even at the
+   maximum allowed budget (32768) — that would indicate the budget range
+   itself needs revisiting, not just the default. The live equivalent is
+   ADR-0077's own re-evaluation condition: adaptive truncation under-shoots
+   often enough that multi-block splitting (the accepted fallback) becomes
+   routine rather than rare.
 3. A smaller or more VRAM-efficient listwise model replaces
    `jinaai/jina-reranker-v3`, changing the 64 B/element factorization this
    ADR's default was calibrated against.

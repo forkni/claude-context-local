@@ -1,5 +1,14 @@
 # Retrieval Canon Re-Baseline (2026-09-08)
 
+> **SUPERSEDED (2026-09-20) — measured on a pyan-dark substrate.** The venv had silently
+> drifted 34 packages behind `uv.lock` since `f5acd585` (2026-09-02); `pyan_available()` kept
+> reporting the tier usable while the real `ImportError` fired inside a resolver subprocess and
+> was swallowed as non-fatal (`ee63b8ef`, 2026-09-14). Every canon from 09-03 through this one
+> — six consecutive re-baselines — silently missed the pyan cross-module edge tier (libcst-only
+> in practice). This doc's numbers are not wrong as *measurements of that substrate*, but that
+> substrate is not what any later canon (including 09-20) reflects. See
+> `evaluation/CANON_20260920_REBASELINE.md`.
+
 ## Status: MEASURED — gate PASSED, no fix required
 
 Re-pin owed by ADR-0069 ("fix phantom-node shadowing of resolved call edges, D1+D2") — a

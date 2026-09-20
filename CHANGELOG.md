@@ -348,6 +348,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Retrieval canon re-pinned 2026-09-20** (`evaluation/CANON_20260920_REBASELINE.md`) after
+  discovering the 2026-09-08 pin below (and 09-03→09-08, six re-baselines) was measured on a
+  **pyan-dark substrate**: the venv had silently drifted 34 packages behind `uv.lock` since
+  `f5acd585` (2026-09-02), so `pyan_available()` reported the pyan cross-module call-edge tier
+  usable while its real `ImportError` fired inside a resolver subprocess and was swallowed as
+  non-fatal (`ee63b8ef`, 2026-09-14). Restoring the venv on this F2LLM machine brings the tier
+  back: call graph 7,050 nodes / 31,567 edges (+195/+957 vs 09-08), resolver mix `lsp 2029 /
+  chunker 1132 / libcst 775 / pyan 573`, on 238 files / 3,061 chunks. 63q determinism reconfirmed
+  bit-identical across two independent rounds at clean HEAD (`624fef0c`). 63q MRR **0.8330**,
+  133q **0.6514**, F-via-similar **0.8876** — deltas vs 09-08 (+0.0089/+0.0045/+0.0205 MRR,
+  −0.0201/−0.0214/−0.0174 recall@20) **marginally breach** the pre-registered ±0.02 band on all
+  three views, by 0.0001–0.0014, attributed to the restored pyan tier's centrality-mediated
+  reordering (PageRank reaches ranking through the BM25 adaptive boost and
+  `EgoGraphRetriever.set_centrality_scores`) rather than a code regression — gold-set and
+  BM25-corpus-statistics alternatives were checked and ruled out. `pool_hit_rate` unchanged or
+  improved on every view; adopted as canon-of-record anyway per the canon doc's Part 1 section.
+  Also recorded: every canon in this lineage, including this one, is measured with the intent
+  layer pinned off (`pin_intent_off=True`), not the live serving config
+  (`search_config.json`'s `default_intent: "HYBRID"`), so `GraphScoringStage._reorder_synthetic`'s
+  module-chunk demotion is inert in the benchmark but active on the running MCP server — a
+  harness-measurement gap, not a user-visible one. Non-comparable to the separate `BAAI/bge-m3`
+  notebook lineage (09-14/09-14B, different machine). See `docs/BENCHMARKS.md`.
 - **`chunking.max_file_size_bytes` default 5 MB → 24 MiB (25165824)**, 2026-09-19
   (`docs/adr/0075-td-graph-doc-budget-is-pinned-to-the-producer-contract.md`) — raised jointly
   with TD_Glossary_tox's producer-side budget raise (TD_Glossary_tox ADR 0014): a zero-data-loss
