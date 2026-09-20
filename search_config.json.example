@@ -82,7 +82,8 @@
     "hop1_reserved_slots": 6,
     "merged_pool_policy": "score",
     "graph_hop_window_cap": 0,
-    "listwise_packed_token_budget": 8192
+    "listwise_packed_token_budget": 8192,
+    "listwise_window_fit": "truncate"
   },
   "query_expansion": {
     "enabled": false,

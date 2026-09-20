@@ -8,15 +8,15 @@ instruments the exact boundary between "gold is in the merged pool" and "gold is
 window the listwise reranker actually scores" to distinguish three failure modes:
 
 - **window-cut**: gold is in the merged pool (``multi_hop_searcher.py:478``) but falls
-  outside ``candidates[:top_k_candidates]`` at the hard cut (``reranking_engine.py:217``) —
+  outside ``candidates[:top_k_candidates]`` at the hard cut (``reranking_engine.py:253-254``) —
   the model never sees it.
 - **model-demotion**: gold is inside the window but the listwise model still ranks it > k.
 - **pool-loss**: gold never reached the merged pool at all (a pre-existing retrieval gap,
   out of scope for this probe).
 
-Mechanism (three incomparable score scales feed the ``:270`` sort that determines the cut):
+Mechanism (three incomparable score scales feed the ``:337`` sort that determines the cut):
 hop-1 survivors carry a jina relevance score overwritten in place
-(``neural_reranker.py:1117-1119``, range observed ~+0.22..-0.12); semantic-expansion chunks
+(``neural_reranker.py:1521-1525``, range observed ~+0.22..-0.12); semantic-expansion chunks
 carry raw FAISS cosine (``multi_hop_searcher.py:141``, ~0.5-0.9); graph-expansion chunks carry
 literal ``0.0`` (``multi_hop_searcher.py:227``). Sorting all three together at the merge-pool
 rerank means cosine-scored expansion chunks systematically outrank hop-1 winners.
@@ -32,8 +32,16 @@ gated behind ``search/config.py``'s ``RerankerConfig.merged_pool_policy`` field
   ``is_merged_pass`` (``"window" in kwargs`` — only Pass 2's dispatch ever passes that
   kwarg at all, an exact discriminator unlike sniffing ``hop1_reserved_slots``' value) —
   *not* by list position or log prefix alone, since both passes share the
-  ``"[NEURAL_RERANK]"`` prefix (``reranking_engine.py:458``); only Pass 1
+  ``"[NEURAL_RERANK]"`` prefix (``reranking_engine.py:571``); only Pass 1
   (``SearchExecutor.apply_neural_reranking``) uses the distinct ``"[NEURAL_RERANK-SEARCH]"``.
+- **ADR-0077 single-block invariant**: each Pass-2 call record also captures
+  ``last_block_count``/``last_doc_token_cap`` (``RerankingEngine`` attributes populated from
+  ``JinaRerankerV3`` post-call — see ``search/reranking_engine.py``'s ``_run_rerank`` and
+  ``search/neural_reranker.py``'s ``JinaRerankerV3.__init__`` for their exact "last pass wins"
+  semantics and the one documented asymmetry). ``print_query_report()`` and
+  ``summarize_listwise_invariant()`` surface these so "did the invariant hold — exactly one
+  block, on every query, at both budgets?" is answerable from a single offline pass, without
+  a GPU benchmark leg — see docs/adr/0077-single-block-listwise-invariant.md.
 - ``simulate_windows()`` replays each query's captured Pass-2 pool (order/score/source/
   ``hop1_rank`` snapshot, taken pre-sort) through the **actual production**
   ``RerankingEngine._order_merged_pool``/``._apply_hop1_reserve`` static methods for every
@@ -320,7 +328,7 @@ class Instrumentation:
         # _run_rerank call (fired synchronously from inside it) can record which
         # rerank_by_query call it belongs to. This is the Pass-2/Pass-3
         # disambiguation: both dispatch _run_rerank under the same "[NEURAL_RERANK]"
-        # log_prefix (reranking_engine.py:458), so the prefix alone can't tell them apart.
+        # log_prefix (reranking_engine.py:571), so the prefix alone can't tell them apart.
         self._active_ordinal: int | None = None
 
     def install(self) -> None:
@@ -393,22 +401,36 @@ class Instrumentation:
                 config = get_search_config()
             rerank_count = min(config.reranker.top_k_candidates, len(candidates))
             window = candidates[:rerank_count]
-            instrumentation.run_rerank_calls.append(
-                {
-                    "log_prefix": log_prefix,
-                    "rerank_by_query_ordinal": instrumentation._active_ordinal,
-                    "top_k_candidates": config.reranker.top_k_candidates,
-                    "candidate_ids": [
-                        normalize_chunk_id(c.chunk_id) for c in candidates
-                    ],
-                    "window_ids": [normalize_chunk_id(c.chunk_id) for c in window],
-                    "rerank_count": rerank_count,
-                    "boundary_score": window[-1].score if window else None,
-                }
-            )
-            return orig_run_rerank(
+            call_record = {
+                "log_prefix": log_prefix,
+                "rerank_by_query_ordinal": instrumentation._active_ordinal,
+                "top_k_candidates": config.reranker.top_k_candidates,
+                "candidate_ids": [normalize_chunk_id(c.chunk_id) for c in candidates],
+                "window_ids": [normalize_chunk_id(c.chunk_id) for c in window],
+                "rerank_count": rerank_count,
+                "boundary_score": window[-1].score if window else None,
+                # ADR-0077 single-block invariant (filled in below, after
+                # orig_run_rerank runs -- these are RerankingEngine attributes
+                # orig_run_rerank mutates as a side effect, not something the
+                # call args expose). Placeholder None here covers the case
+                # where orig_run_rerank raises: the call is still on record,
+                # just without an invariant reading for it.
+                "last_block_count": None,
+                "last_doc_token_cap": None,
+            }
+            instrumentation.run_rerank_calls.append(call_record)
+            result = orig_run_rerank(
                 self_engine, query_or_content, candidates, k, log_prefix, config=config
             )
+            # See search/reranking_engine.py's RerankingEngine.__init__ for the
+            # exact "last pass wins" semantics of both attributes, and
+            # JinaRerankerV3.__init__ (search/neural_reranker.py) for the one
+            # documented asymmetry between them.
+            call_record["last_block_count"] = self_engine.last_block_count
+            call_record["last_doc_token_cap"] = getattr(
+                self_engine, "last_doc_token_cap", None
+            )
+            return result
 
         self._multi_hop_searcher._single_hop_search = patched_single_hop
         self._engine_cls.rerank_by_query = patched_rerank_by_query
@@ -545,6 +567,15 @@ def print_query_report(record: dict) -> None:
                 f"top_k_candidates={pass2_window['top_k_candidates']}, "
                 f"policy={pass2_call['merged_pool_policy']!r})"
             )
+            # ADR-0077 single-block invariant readings, captured by
+            # Instrumentation.install()'s patched_run_rerank post-call. None
+            # here means _run_rerank raised (call is on record but the
+            # RerankingEngine attributes never got read back).
+            print(
+                "  Listwise invariant: block_count="
+                f"{pass2_window['last_block_count']!r} "
+                f"doc_token_cap={pass2_window['last_doc_token_cap']!r}"
+            )
             print(f"  Window channel histogram: {record['channel_histogram']}")
             print(
                 "  Pool score ranges: "
@@ -599,6 +630,42 @@ def _policy_gold_net(records: list[dict], policy: str) -> tuple[int, int, int]:
         rescues += len((variant - base) & golds)
         evictions += len((base - variant) & golds)
     return rescues, evictions, rescues - evictions
+
+
+def summarize_listwise_invariant(records: list[dict]) -> dict:
+    """ADR-0077 single-block invariant tally across every observed listwise rerank call
+    (Pass-2's ``pass2_window`` plus any Pass-3 tail calls), offline -- Verification tier 2.
+    Answers "did the invariant hold, on every query, at this budget?" without a GPU leg.
+
+    ``last_block_count``/``last_doc_token_cap`` are read straight off each captured
+    ``run_rerank_calls`` entry (see ``Instrumentation.install()``'s ``patched_run_rerank``) --
+    they are ``None`` on a call that never reached a successful/attempted
+    ``_fit_single_block`` solve (v3.5, no candidates, or an exception before the read-back;
+    see ``JinaRerankerV3.__init__`` and ``RerankingEngine.__init__``'s ``last_doc_token_cap``
+    comments for the exact per-layer semantics)."""
+    calls: list[tuple[str, dict]] = []
+    for r in records:
+        if r["pass2_window"] is not None:
+            calls.append((r["query_id"], r["pass2_window"]))
+        for c in r["pass3_calls"]:
+            calls.append((r["query_id"], c))
+
+    engaged = [(qid, c) for qid, c in calls if c["last_block_count"] is not None]
+    multi_block = [(qid, c) for qid, c in engaged if c["last_block_count"] > 1]
+    doc_token_caps = [
+        c["last_doc_token_cap"]
+        for _, c in engaged
+        if c["last_doc_token_cap"] is not None
+    ]
+
+    return {
+        "n_calls": len(calls),
+        "n_engaged": len(engaged),
+        "n_multi_block": len(multi_block),
+        "multi_block_query_ids": sorted({qid for qid, _ in multi_block}),
+        "min_doc_token_cap": min(doc_token_caps) if doc_token_caps else None,
+        "median_doc_token_cap": _median_or_none(doc_token_caps),
+    }
 
 
 def compute_predictions(records: list[dict]) -> dict:
@@ -1522,6 +1589,17 @@ def main() -> int:
         f"pool-loss={pool_loss_count} ok={ok_count}"
     )
 
+    listwise_invariant = summarize_listwise_invariant(per_query_records)
+    print(
+        "Listwise invariant (ADR-0077): "
+        f"{listwise_invariant['n_multi_block']}/{listwise_invariant['n_engaged']} "
+        "engaged calls were multi-block "
+        f"(min_doc_token_cap={listwise_invariant['min_doc_token_cap']}, "
+        f"median_doc_token_cap={listwise_invariant['median_doc_token_cap']})"
+    )
+    if listwise_invariant["multi_block_query_ids"]:
+        print(f"  Multi-block queries: {listwise_invariant['multi_block_query_ids']}")
+
     predictions = compute_predictions(per_query_records)
     gate = evaluate_gate(per_query_records, predictions)
     print_predictions_report(predictions, gate)
@@ -1535,6 +1613,7 @@ def main() -> int:
             "n_queries": len(items),
             "predictions": predictions,
             "gate": gate,
+            "listwise_invariant_summary": listwise_invariant,
             "self_validity_failures": self_validity_failures,
             "records": per_query_records,
         }

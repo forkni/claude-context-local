@@ -708,7 +708,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (16 fields)."""
+    """Neural reranker settings (17 fields)."""
 
     enabled: bool = field(
         default=True,  # Enabled by default (Quality First)
@@ -983,6 +983,39 @@ class RerankerConfig:
             env="CLAUDE_RERANKER_LISTWISE_PACKED_TOKEN_BUDGET",
             reader="search/neural_reranker.py",
             construction_baked=True,
+        ),
+    )
+    listwise_window_fit: str = field(
+        default="truncate",  # How JinaRerankerV3 keeps a packed listwise
+        # window within listwise_packed_token_budget. "truncate" (default,
+        # ADR-0077): adaptively lower a uniform per-document token cap
+        # (derive_listwise_doc_budget) until the whole window packs into
+        # ONE listwise block -- top_k_candidates is never reduced, only
+        # document bodies are trimmed (falling back to signature_head
+        # representation, then to the "split" backstop, if even that
+        # starves). "split" (ADR-0076's original mechanism, kept as an
+        # escape hatch): allow Jina's own multi-block flush loop to
+        # sub-divide the window instead -- this is what the invariant
+        # replaces, since a cross-block query-vector blend measurably
+        # degrades ranking (docs/adr/0077-single-block-listwise-invariant.md).
+        # Construction-baked like listwise_packed_token_budget:
+        # _ensure_reranker() rebuilds only on model_name change.
+        metadata=spec(
+            choices=("truncate", "split"),
+            flat_alias="reranker_listwise_window_fit",
+            env="CLAUDE_RERANKER_LISTWISE_WINDOW_FIT",
+            reader="search/neural_reranker.py",
+            construction_baked=True,
+            benchmark_locked=(
+                "ADR-0077 Gate 2026-09-20: truncate ships on correctness grounds "
+                "(single-block invariant, ADR-0076's split-tail safety claim refuted "
+                "by vendor modeling.py). Decisive A/B (budget=7000, split vs truncate) "
+                "neutral both datasets, all CIs include 0, no guard-rail breach. Leg-1 "
+                "inertness check showed an apparent 63q recall regression against the "
+                "stale 09-08 canon; isolated via split-vs-truncate at budget=8192 on "
+                "identical substrate -- bit-identical (0 movers), proving the "
+                "regression is substrate drift, not this field"
+            ),
         ),
     )
 

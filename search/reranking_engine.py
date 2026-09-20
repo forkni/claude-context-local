@@ -83,6 +83,13 @@ class RerankingEngine:
         # other rerank failure), mirroring the graceful-degradation path
         # below rather than a new failure mode.
         self.last_block_count: int | None = None
+        # ADR-0077 single-block invariant: mirrors last_block_count's "last
+        # pass wins" semantics for the uniform per-document token cap
+        # JinaRerankerV3._fit_single_block solved (getattr'd the same way,
+        # since NeuralReranker/GenerativeReranker don't set it either).
+        # Offline observability only — see
+        # scripts/benchmark/probe_rerank_window.py.
+        self.last_doc_token_cap: int | None = None
         self.last_rerank_skipped: bool = False
         self._logger = logging.getLogger(__name__)
 
@@ -185,6 +192,7 @@ class RerankingEngine:
                 listwise_dtype=config.reranker.listwise_dtype,
                 doc_representation_mode=config.reranker.doc_representation_mode,
                 listwise_packed_token_budget=config.reranker.listwise_packed_token_budget,
+                listwise_window_fit=config.reranker.listwise_window_fit,
             )
             self._logger.debug(f"{log_prefix} Neural reranker initialized")
         elif (
@@ -209,6 +217,7 @@ class RerankingEngine:
                 listwise_dtype=config.reranker.listwise_dtype,
                 doc_representation_mode=config.reranker.doc_representation_mode,
                 listwise_packed_token_budget=config.reranker.listwise_packed_token_budget,
+                listwise_window_fit=config.reranker.listwise_window_fit,
             )
         elif not should_enable and self.neural_reranker is not None:
             self.neural_reranker.cleanup()
@@ -260,6 +269,9 @@ class RerankingEngine:
             self.last_block_count = getattr(
                 self.neural_reranker, "last_block_count", None
             )
+            self.last_doc_token_cap = getattr(
+                self.neural_reranker, "last_doc_token_cap", None
+            )
             self.last_rerank_skipped = False
             return result
         # OOM detection path: all mutations here are boundary (requires real CUDA OOM).
@@ -270,6 +282,7 @@ class RerankingEngine:
                 f"{log_prefix} Reranking failed: {e}, using original results"
             )
             self.last_block_count = None
+            self.last_doc_token_cap = None
             self.last_rerank_skipped = True
             error_str = str(e).lower()
             if "cuda" in error_str and (  # pragma: no mutate

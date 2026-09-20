@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Single-block listwise reranking is now an invariant, not a preference** (ADR-0077) — a 3-leg
+  gate on ADR-0076's multi-block splitting fix found it was not safe: forcing a split moved
+  133q recall@5/NDCG@5 (the *head* of the ranking) by more than the pre-registered ±0.02
+  tolerance, refuting ADR-0076's "block 1 is near-invariant" argument (vendor `modeling.py`
+  discards per-block scores and computes one global sort over a cross-block-averaged query
+  vector — there is no un-degraded slice). `JinaRerankerV3._fit_single_block` now adaptively
+  truncates document bodies to a uniform per-document token cap
+  (`derive_listwise_doc_budget`, pure binary search) so a rerank window always packs into one
+  listwise block — `top_k_candidates` is never reduced, only document text is trimmed. Below a
+  150-token-per-document floor, the request's documents are rebuilt as lighter
+  `signature_head` renderings instead of truncating full text further; if even that starves,
+  the request degrades to ADR-0076's original splitting machinery, now demoted to a backstop.
+  New `RerankerConfig.listwise_window_fit` field (`"truncate"` default, `"split"` escape hatch
+  for rollback, now `benchmark_locked`). `scripts/benchmark/probe_rerank_window.py` gained an
+  offline single-block invariant tally (`summarize_listwise_invariant`) so "did every query
+  stay at one block?" is answerable without a GPU benchmark leg. Gate closed 2026-09-20: the
+  decisive split-vs-truncate A/B (budget forced to 7000, TD's production two-block regime) was
+  neutral on both golden sets (all CIs include 0, no guard-rail breach) — ships on correctness
+  grounds, recorded honestly rather than as a win. The gate's inertness leg initially looked
+  like a regression against the stale canon; isolating `split` vs `truncate` at the same budget
+  on the same substrate came back bit-identical, proving that was substrate drift, not this
+  change — see `docs/adr/0077-single-block-listwise-invariant.md`'s Gate results.
 - **Reranker listwise window is bounded by tokens, fixing a CUDA OOM on token-dense corpora**
   (ADR-0076) — `JinaRerankerV3.rerank()` packed the entire rerank window into one flat prompt with
   nothing bounding total token mass, so a token-dense corpus (TD operator chunks) could raise

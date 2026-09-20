@@ -158,6 +158,10 @@ def test_construction_baked_fields_are_pinned():
             # construction alongside listwise_doc_max_chars/listwise_dtype -
             # see docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md.
             ("reranker", "listwise_packed_token_budget"),
+            # Single-block listwise invariant (ADR-0077): read in the same
+            # JinaRerankerV3.__init__ call as listwise_packed_token_budget
+            # above - an arm override needs a rebuild to take effect.
+            ("reranker", "listwise_window_fit"),
         }
     )
     assert expected == SearchConfig._CONSTRUCTION_BAKED_FIELDS

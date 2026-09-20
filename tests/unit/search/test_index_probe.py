@@ -101,6 +101,7 @@ class TestGuardrails:
             "reranker.doc_representation_mode",
             "reranker.merged_pool_policy",
             "reranker.graph_hop_window_cap",
+            "reranker.listwise_window_fit",
             "query_expansion.enabled",
             "multi_hop.expansion",
             "multi_hop.multi_hop_mode",

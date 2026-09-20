@@ -67,6 +67,25 @@ This is why the derivation below carries a soft invariant keeping block 1 at
 least `top_k` candidates deep: the un-degraded, highest-confidence slice of a
 search should never itself shrink below what the caller asked for.
 
+> **Correction (2026-09-19, ADR-0077):** claim 1 above ("block 1 is
+> near-invariant") is refuted. Vendor `modeling.py` discards per-block
+> scores entirely and computes one global sort over a query vector that is
+> the *max-weighted average* of every block's query embedding
+> (`np.average(query_embeddings, axis=0, weights=block_weights)`,
+> `weights` = each block's best score) — so a strong hit in block 2 tilts
+> the reference vector block 1 is scored against, too. There is no
+> un-degraded slice when the final sort is global. The 3-leg gate on this
+> ADR's own commits confirmed it empirically: forcing a multi-block split
+> (Leg 3) moved recall@5/NDCG@5 — the *head* of the ranking, not the tail —
+> by more than the pre-registered ±0.02 tolerance. Claim 3 (the query
+> vector changes globally) was correct and is what actually explains the
+> damage. ADR-0077 replaces the soft "first block ≥ top_k" invariant below
+> with a hard single-block invariant enforced by adaptive per-document
+> truncation; this ADR's token-budget derivation, OOM retry, and
+> `RuntimeError` contract are unchanged and remain in effect as the backstop
+> for when that truncation under-shoots. See
+> `docs/adr/0077-single-block-listwise-invariant.md`.
+
 ## Decision
 
 ### New config field

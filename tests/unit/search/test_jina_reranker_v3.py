@@ -11,6 +11,7 @@ from search.neural_reranker import (
     _packed_block_length,
     _simulate_listwise_blocks,
     create_reranker,
+    derive_listwise_doc_budget,
     derive_listwise_model_max_length,
 )
 from search.reranker import SearchResult
@@ -69,20 +70,26 @@ class _FakeV35Model:
 
 
 class _FakeTokenizer:
-    """Character-length token model: one token per character, truncated to
-    ``max_length`` when requested. Deterministic and dependency-free, so
-    window-bounding tests can size documents precisely by character count
-    instead of needing a real tokenizer.
+    """Character-length token model: one token per character (id = ord(char)),
+    truncated to ``max_length`` when requested. Deterministic and
+    dependency-free, so window-bounding tests can size documents precisely by
+    character count instead of needing a real tokenizer. ``decode`` inverts
+    ``__call__`` exactly (``chr(id)``), so ADR-0077's truncate-and-decode
+    solver round-trips predictably: a cap of N tokens decodes back to the
+    document's first N characters.
     """
 
     def __init__(self, model_max_length: int = 131072):
         self.model_max_length = model_max_length
 
     def __call__(self, text, truncation=True, max_length=None):
-        length = len(text)
+        ids = [ord(c) for c in text]
         if truncation and max_length is not None:
-            length = min(length, max_length)
-        return {"input_ids": list(range(length))}
+            ids = ids[:max_length]
+        return {"input_ids": ids}
+
+    def decode(self, ids, skip_special_tokens=True):
+        return "".join(chr(i) for i in ids)
 
 
 class _FakeV3ModelWithTokenizer(_FakeV3Model):
@@ -584,13 +591,19 @@ class TestJinaRerankerV3:
 
 
 class TestDeriveListwiseModelMaxLength:
-    """Pure-function tests for the M-derivation
-    (docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md).
+    """Pure-function tests for the M-derivation -- ADR-0076's split backstop,
+    demoted by ADR-0077 (docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md,
+    docs/adr/0077-single-block-listwise-invariant.md).
 
     ``derive_listwise_model_max_length`` / ``_simulate_listwise_blocks`` /
-    ``_packed_block_length`` need only doc lengths, query length, budget,
-    and top_k -- no tokenizer or model involved, per test hazard #1 in the
-    companion plan (``_FakeV3Model`` has no ``_tokenizer``).
+    ``_packed_block_length`` need only doc lengths, query length, and budget
+    -- no tokenizer or model involved, per test hazard #1 in the companion
+    plan (``_FakeV3Model`` has no ``_tokenizer``). The old soft top-k
+    invariant (and its ``top_k``/``logger`` params) was removed under
+    ADR-0077: multi-block splitting is now only reached as a backstop after
+    the single-block truncation solver (``derive_listwise_doc_budget``,
+    below) under- or over-shoots, so there is no "un-degraded top-k slice"
+    left to protect here -- the invariant lives upstream instead.
     """
 
     def test_dense_docs_produce_multiple_blocks(self):
@@ -598,7 +611,7 @@ class TestDeriveListwiseModelMaxLength:
         derived M must force more than one block."""
         doc_lengths = [1000] * 30
         m = derive_listwise_model_max_length(
-            doc_lengths, query_length=20, budget=8192, max_doc_length=2048, top_k=10
+            doc_lengths, query_length=20, budget=8192, max_doc_length=2048
         )
         blocks = _simulate_listwise_blocks(doc_lengths, 20, m, 2048)
         assert len(blocks) > 1
@@ -608,7 +621,7 @@ class TestDeriveListwiseModelMaxLength:
         block -- no behaviour change vs. today on the unsplit Python canon."""
         doc_lengths = [100] * 5
         m = derive_listwise_model_max_length(
-            doc_lengths, query_length=20, budget=8192, max_doc_length=2048, top_k=10
+            doc_lengths, query_length=20, budget=8192, max_doc_length=2048
         )
         blocks = _simulate_listwise_blocks(doc_lengths, 20, m, 2048)
         assert len(blocks) == 1
@@ -619,7 +632,7 @@ class TestDeriveListwiseModelMaxLength:
         doc_lengths = [1500, 200, 1800, 50, 1999, 300, 1700, 20, 1600, 900]
         query_length, budget, max_doc_length = 64, 4096, 2048
         m = derive_listwise_model_max_length(
-            doc_lengths, query_length, budget, max_doc_length, top_k=5
+            doc_lengths, query_length, budget, max_doc_length
         )
         blocks = _simulate_listwise_blocks(doc_lengths, query_length, m, max_doc_length)
         assert blocks  # sanity: simulation produced something to check
@@ -633,43 +646,193 @@ class TestDeriveListwiseModelMaxLength:
         doc_lengths = [2048] * 50
         query_length, budget, max_doc_length = 512, 2048, 2048
         m = derive_listwise_model_max_length(
-            doc_lengths, query_length, budget, max_doc_length, top_k=10
+            doc_lengths, query_length, budget, max_doc_length
         )
         floor = 2 * query_length + max_doc_length + 1
         assert m >= floor
 
-    def test_soft_top_k_invariant_met_when_budget_allows(self):
-        """When the budget comfortably covers top_k documents, the first
-        block must hold at least top_k of them."""
-        doc_lengths = [500] * 20
-        query_length, budget, max_doc_length, top_k = 20, 8192, 2048, 10
-        m = derive_listwise_model_max_length(
-            doc_lengths, query_length, budget, max_doc_length, top_k=top_k
-        )
-        blocks = _simulate_listwise_blocks(doc_lengths, query_length, m, max_doc_length)
-        assert len(blocks[0]) >= top_k
 
-    def test_soft_top_k_invariant_falls_back_with_warning_when_unattainable(self):
-        """When no valid M can keep top_k documents in the first block
-        (budget too tight relative to per-document length), the derivation
-        must still return a valid M -- never fail the request -- and log a
-        warning rather than silently proceeding."""
-        doc_lengths = [2000] * 20
-        query_length, budget, max_doc_length, top_k = 20, 2200, 2048, 10
-        logger = MagicMock()
-        m = derive_listwise_model_max_length(
-            doc_lengths,
-            query_length,
-            budget,
-            max_doc_length,
-            top_k=top_k,
-            logger=logger,
+class TestDeriveListwiseDocBudget:
+    """Pure-function tests for the ADR-0077 single-block truncation solver.
+
+    ``derive_listwise_doc_budget`` is the uniform per-document token cap
+    that, applied to every document, guarantees the packed window fits one
+    listwise block -- the mechanism the single-block invariant is built on.
+    """
+
+    def test_short_docs_are_never_capped_below_their_own_length(self):
+        """When every document already fits comfortably, the solver must not
+        trim anything -- the cap should be >= the longest document."""
+        doc_lengths = [50, 80, 120, 60]
+        cap = derive_listwise_doc_budget(doc_lengths, query_length=20, budget=8192)
+        assert cap >= max(doc_lengths)
+
+    def test_dense_docs_are_capped_below_their_own_length(self):
+        """30 docs at 1000 tokens each vastly exceed an 8192 budget -- the
+        solver must lower the cap below 1000 so the packed set fits."""
+        doc_lengths = [1000] * 30
+        cap = derive_listwise_doc_budget(doc_lengths, query_length=20, budget=8192)
+        assert cap < 1000
+        packed = sum(min(length, cap) for length in doc_lengths)
+        assert (
+            _packed_block_length([min(length, cap) for length in doc_lengths], 20)
+            <= 8192
         )
-        blocks = _simulate_listwise_blocks(doc_lengths, query_length, m, max_doc_length)
-        assert len(blocks[0]) < top_k  # the invariant this budget cannot meet
-        for block in blocks:
-            assert _packed_block_length(block, query_length) <= budget  # still valid
-        logger.warning.assert_called_once()
+        assert packed > 0  # sanity: not degenerately zeroed out
+
+    def test_only_long_documents_are_trimmed_uniform_cap(self):
+        """A mix of long and short documents: short ones must be left
+        untouched by the uniform cap while long ones get trimmed to it."""
+        doc_lengths = [50, 3000, 80, 4000, 60]
+        cap = derive_listwise_doc_budget(doc_lengths, query_length=20, budget=2048)
+        trimmed = [min(length, cap) for length in doc_lengths]
+        assert trimmed[0] == doc_lengths[0]  # 50, short -- untouched
+        assert trimmed[2] == doc_lengths[2]  # 80, short -- untouched
+        assert trimmed[1] == cap  # 3000, long -- trimmed to cap
+        assert trimmed[3] == cap  # 4000, long -- trimmed to cap
+
+    def test_cap_monotonically_increases_with_budget(self):
+        """More budget must never produce a smaller (or worse) cap -- the
+        binary search relies on packed() being monotonic in the cap."""
+        doc_lengths = [1200] * 15
+        small = derive_listwise_doc_budget(doc_lengths, query_length=20, budget=4096)
+        large = derive_listwise_doc_budget(doc_lengths, query_length=20, budget=16384)
+        assert large >= small
+
+    def test_zero_when_overhead_alone_exceeds_budget(self):
+        """A pathologically tiny budget that can't even cover the fixed +
+        per-document + query overhead must return 0, signalling the caller
+        to fall back to a lighter representation or the split backstop."""
+        doc_lengths = [500] * 50
+        cap = derive_listwise_doc_budget(doc_lengths, query_length=2000, budget=128)
+        assert cap == 0
+
+    def test_empty_doc_lengths_returns_zero(self):
+        assert derive_listwise_doc_budget([], query_length=20, budget=8192) == 0
+
+
+class TestFitSingleBlock:
+    """Tests for the ADR-0077 truncate-then-verify solver
+    (``JinaRerankerV3._fit_single_block``), exercised directly against
+    ``_FakeTokenizer`` rather than through ``rerank()`` -- isolates the
+    floor -> ``signature_head`` swap and the decode-and-verify path from
+    OOM retry / model-loading machinery.
+    """
+
+    def test_short_docs_pass_through_untouched(self):
+        reranker = JinaRerankerV3(listwise_packed_token_budget=8192)
+        tokenizer = _FakeTokenizer()
+        documents = ["short doc " * 3, "another short one"]
+        result_docs, _model_max_length, block_count = reranker._fit_single_block(
+            tokenizer,
+            documents,
+            None,
+            query_length=20,
+            budget=8192,
+            max_doc_length=2048,
+        )
+        assert result_docs == documents
+        assert block_count == 1
+        # Docs passed through untouched, so the solved cap must not have
+        # bound below the longest document's length.
+        assert reranker.last_doc_token_cap >= max(len(d) for d in documents)
+
+    def test_long_doc_is_truncated_and_decodes_to_a_prefix(self):
+        """A document far longer than the derived cap must be truncated to
+        exactly its first N characters -- proving the token-cap -> decode
+        round-trip is exact under the character-per-token fake."""
+        reranker = JinaRerankerV3(listwise_packed_token_budget=1024)
+        tokenizer = _FakeTokenizer()
+        long_doc = "x" * 5000
+        result_docs, _model_max_length, block_count = reranker._fit_single_block(
+            tokenizer,
+            [long_doc],
+            None,
+            query_length=20,
+            budget=1024,
+            max_doc_length=2048,
+        )
+        assert len(result_docs) == 1
+        assert result_docs[0] == long_doc[: len(result_docs[0])]
+        assert len(result_docs[0]) < len(long_doc)
+        assert block_count == 1
+        # _FakeTokenizer is 1-char-per-token and decode/encode round-trips
+        # exactly, so the recorded cap must equal the truncated length.
+        assert reranker.last_doc_token_cap == len(result_docs[0])
+
+    def test_header_inclusive_accounting_fits_under_budget(self):
+        """The final packed length (fixed + per-doc overhead + doc tokens +
+        2*query_length), recomputed over the TRUNCATED documents, must fit
+        the budget -- the whole point of the solver, not just the raw
+        pre-truncation doc cap."""
+        reranker = JinaRerankerV3(listwise_packed_token_budget=2048)
+        tokenizer = _FakeTokenizer()
+        documents = ["y" * 3000, "z" * 3000, "short"]
+        result_docs, _model_max_length, block_count = reranker._fit_single_block(
+            tokenizer,
+            documents,
+            None,
+            query_length=50,
+            budget=2048,
+            max_doc_length=2048,
+        )
+        final_lengths = [
+            len(tokenizer(doc, truncation=True, max_length=2048)["input_ids"])
+            for doc in result_docs
+        ]
+        assert _packed_block_length(final_lengths, 50) <= 2048
+        assert block_count == 1
+        assert reranker.last_doc_token_cap is not None
+
+    def test_floor_swaps_to_fallback_documents(self):
+        """When the solved cap for "full" documents falls below
+        ``_LISTWISE_MIN_DOC_TOKEN_ALLOWANCE``, the solver must swap to
+        ``fallback_documents`` (a lighter signature_head rendering) rather
+        than truncate the full text into a sliver."""
+        reranker = JinaRerankerV3(listwise_packed_token_budget=500)
+        tokenizer = _FakeTokenizer()
+        documents = ["f" * 1000 for _ in range(10)]
+        fallback_documents = ["s" * 50 for _ in range(10)]
+        result_docs, _model_max_length, block_count = reranker._fit_single_block(
+            tokenizer,
+            documents,
+            fallback_documents,
+            query_length=20,
+            budget=500,
+            max_doc_length=2048,
+        )
+        assert result_docs != documents
+        for doc in result_docs:
+            assert doc == "" or doc.startswith("s")
+        assert block_count == 1
+        # Recorded cap reflects the post-swap solve against the lighter
+        # fallback_documents, not the original (too-narrow) full-text cap.
+        assert reranker.last_doc_token_cap is not None
+
+    def test_no_fallback_and_below_floor_degrades_to_split_backstop(self):
+        """No ``fallback_documents`` provided (``doc_representation_mode``
+        is already ``signature_head``, or the ``split`` escape hatch chose
+        this path) and the solved cap can't fit even the truncated set into
+        one block -- must not silently under-fill; degrades to the
+        ADR-0076 split backstop (``block_count`` may exceed 1) with a
+        logged warning rather than risking an OOM."""
+        reranker = JinaRerankerV3(listwise_packed_token_budget=300)
+        tokenizer = _FakeTokenizer()
+        documents = ["f" * 1000 for _ in range(10)]
+        with patch.object(reranker._logger, "warning") as mock_warning:
+            _result_docs, _model_max_length, block_count = reranker._fit_single_block(
+                tokenizer,
+                documents,
+                None,
+                query_length=20,
+                budget=300,
+                max_doc_length=2048,
+            )
+        assert block_count >= 1
+        mock_warning.assert_called_once()
+        # Cap is recorded even on the degradation path -- it reflects the
+        # attempted (too-narrow) solve, not a control input.
+        assert reranker.last_doc_token_cap is not None
 
 
 class TestListwiseWindowBounding:
@@ -697,15 +860,39 @@ class TestListwiseWindowBounding:
         assert fake_model.model_max_length_during_call < original
         assert fake_model._tokenizer.model_max_length == original
         assert reranker.last_block_count == 1
+        # ADR-0077: derive_listwise_doc_budget's binary search never returns
+        # above max(doc_lengths) (see its `hi = max(doc_lengths)` -- there is
+        # no reason to solve for a cap larger than the longest document), so
+        # three tiny "x"*50 documents at budget=8192 solve to a small cap
+        # regardless of the floor -- the invariant engaged (block count 1)
+        # without needing to trim anything meaningfully; the floor->
+        # signature_head swap is covered separately by
+        # TestFitSingleBlock.test_floor_swaps_to_fallback_documents.
+        assert reranker.last_doc_token_cap is not None
 
     def test_model_max_length_restored_on_exception_path(self):
         """The tokenizer is shared, cached state on a long-lived model --
         a failed rerank() call must not leave model_max_length lowered."""
         fake_model = _FakeV3ModelWithTokenizer()
         original = fake_model._tokenizer.model_max_length
-        fake_model.rerank = lambda *a, **k: (_ for _ in ()).throw(
-            RuntimeError("inference blew up")
-        )
+
+        # A bare `lambda *a, **k` would erase the named max_doc_length/
+        # max_query_length params _resolve_length_kwargs introspects for,
+        # making can_bound_window False -- which would skip model_max_length
+        # mutation (and _fit_single_block) entirely, defeating this test's
+        # own purpose. Keep the real signature so can_bound_window stays
+        # True and the raise happens where the vendor call actually is.
+        def _boom(
+            query,
+            documents,
+            top_n=None,
+            return_embeddings=False,
+            max_doc_length=2048,
+            max_query_length=512,
+        ):
+            raise RuntimeError("inference blew up")
+
+        fake_model.rerank = _boom
 
         reranker = JinaRerankerV3(listwise_packed_token_budget=8192)
         reranker._model = fake_model
@@ -719,6 +906,17 @@ class TestListwiseWindowBounding:
             reranker.rerank("query", candidates, top_k=1)
 
         assert fake_model._tokenizer.model_max_length == original
+        # ADR-0077: last_block_count only gets assigned from a *returned*
+        # _attempt_rerank call (rerank():1479), so it stays None here -- the
+        # exception aborted before that line ran. last_doc_token_cap is
+        # different: _fit_single_block sets it as a side effect INSIDE
+        # _attempt_rerank, before the model.rerank() call that raised, so it
+        # is populated even though the overall call failed. This is the
+        # documented asymmetry (see JinaRerankerV3.__init__'s
+        # last_doc_token_cap comment) -- last_doc_token_cap reflects the last
+        # *attempted* solve, not only the last successful one.
+        assert reranker.last_block_count is None
+        assert reranker.last_doc_token_cap is not None
 
     def test_v35_gate_tokenizer_not_mutated_when_length_kwargs_empty(self):
         """v3.5's rerank() declares neither max_doc_length nor
@@ -741,6 +939,8 @@ class TestListwiseWindowBounding:
         assert len(results) == 1
         assert fake_model._tokenizer.model_max_length == original
         assert reranker.last_block_count is None
+        # can_bound_window is False for v3.5, so _fit_single_block never runs.
+        assert reranker.last_doc_token_cap is None
 
     def test_oom_retries_once_at_half_budget_then_succeeds(self):
         reranker = JinaRerankerV3(listwise_packed_token_budget=8192)
@@ -754,7 +954,14 @@ class TestListwiseWindowBounding:
         seen_budgets = []
 
         def fake_attempt(
-            model, query, documents, length_kwargs, budget, top_k, can_bound_window
+            model,
+            query,
+            documents,
+            length_kwargs,
+            budget,
+            top_k,
+            can_bound_window,
+            fallback_documents=None,
         ):
             seen_budgets.append(budget)
             if len(seen_budgets) == 1:
@@ -816,7 +1023,14 @@ class TestListwiseWindowBounding:
         seen_budgets = []
 
         def fake_attempt(
-            model, query, documents, length_kwargs, budget, top_k, can_bound_window
+            model,
+            query,
+            documents,
+            length_kwargs,
+            budget,
+            top_k,
+            can_bound_window,
+            fallback_documents=None,
         ):
             seen_budgets.append(budget)
             raise torch.cuda.OutOfMemoryError("CUDA out of memory.")
@@ -921,3 +1135,16 @@ class TestCreateRerankerFactoryJina:
     def test_listwise_packed_token_budget_defaults_to_8192(self):
         reranker = create_reranker("jinaai/jina-reranker-v3")
         assert reranker.listwise_packed_token_budget == 8192
+
+    def test_listwise_window_fit_passed_to_jina_reranker(self):
+        """RerankerConfig.listwise_window_fit must thread through the
+        factory to JinaRerankerV3, not silently fall back to the default
+        (docs/adr/0077-single-block-listwise-invariant.md)."""
+        reranker = create_reranker(
+            "jinaai/jina-reranker-v3", listwise_window_fit="split"
+        )
+        assert reranker.listwise_window_fit == "split"
+
+    def test_listwise_window_fit_defaults_to_truncate(self):
+        reranker = create_reranker("jinaai/jina-reranker-v3")
+        assert reranker.listwise_window_fit == "truncate"
