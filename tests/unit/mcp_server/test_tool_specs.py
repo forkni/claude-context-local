@@ -14,6 +14,7 @@ from mcp_server.tool_specs import (
     ADVANCED_TOOLS,
     TOOL_SPECS,
     _advanced_tools_enabled,
+    _tool_allowlist,
     build_tool_list,
 )
 from mcp_server.tools.config_handlers import (
@@ -39,6 +40,12 @@ def _clear_expose_advanced_env(monkeypatch):
     monkeypatch.delenv("MCP_EXPOSE_ADVANCED_TOOLS", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _clear_tool_allowlist_env(monkeypatch):
+    """Ensure no ambient MCP_TOOL_ALLOWLIST leaks between tests."""
+    monkeypatch.delenv("MCP_TOOL_ALLOWLIST", raising=False)
+
+
 class TestAdvancedToolsEnabled:
     def test_unset_defaults_to_false(self):
         assert _advanced_tools_enabled() is False
@@ -52,6 +59,23 @@ class TestAdvancedToolsEnabled:
     def test_other_values_stay_disabled(self, monkeypatch, value):
         monkeypatch.setenv("MCP_EXPOSE_ADVANCED_TOOLS", value)
         assert _advanced_tools_enabled() is False
+
+
+class TestToolAllowlist:
+    def test_unset_defaults_to_none(self):
+        assert _tool_allowlist() is None
+
+    def test_empty_string_defaults_to_none(self, monkeypatch):
+        monkeypatch.setenv("MCP_TOOL_ALLOWLIST", "")
+        assert _tool_allowlist() is None
+
+    def test_single_name(self, monkeypatch):
+        monkeypatch.setenv("MCP_TOOL_ALLOWLIST", "get_procedural_guidance")
+        assert _tool_allowlist() == frozenset({"get_procedural_guidance"})
+
+    def test_comma_separated_names_are_trimmed(self, monkeypatch):
+        monkeypatch.setenv("MCP_TOOL_ALLOWLIST", " search_code, find_path ,,")
+        assert _tool_allowlist() == frozenset({"search_code", "find_path"})
 
 
 class TestBuildToolList:
@@ -88,6 +112,48 @@ class TestBuildToolList:
 
         names = {tool.name for tool in tools}
         assert names.isdisjoint(ADVANCED_TOOLS)
+
+    def test_allowlist_unset_is_a_no_op(self, monkeypatch):
+        monkeypatch.delenv("MCP_TOOL_ALLOWLIST", raising=False)
+
+        tools = build_tool_list()
+
+        assert len(tools) == len(TOOL_SPECS) - len(ADVANCED_TOOLS)
+
+    def test_allowlist_of_one_name_yields_exactly_that_tool(self):
+        tools = build_tool_list(allowlist=frozenset({"search_code"}))
+
+        assert {tool.name for tool in tools} == {"search_code"}
+
+    def test_allowlisted_advanced_tool_needs_include_advanced_too(self):
+        allow = frozenset({"get_procedural_guidance"})
+
+        assert build_tool_list(include_advanced=False, allowlist=allow) == []
+        assert {
+            tool.name
+            for tool in build_tool_list(include_advanced=True, allowlist=allow)
+        } == {"get_procedural_guidance"}
+
+    def test_unknown_names_are_ignored_rather_than_raising(self):
+        tools = build_tool_list(
+            include_advanced=True, allowlist=frozenset({"search_code", "no_such_tool"})
+        )
+
+        assert {tool.name for tool in tools} == {"search_code"}
+
+    def test_env_var_narrows_the_default_list(self, monkeypatch):
+        monkeypatch.setenv("MCP_TOOL_ALLOWLIST", "search_code")
+
+        tools = build_tool_list()
+
+        assert {tool.name for tool in tools} == {"search_code"}
+
+    def test_explicit_allowlist_overrides_env_var(self, monkeypatch):
+        monkeypatch.setenv("MCP_TOOL_ALLOWLIST", "search_code")
+
+        tools = build_tool_list(allowlist=frozenset({"find_path"}))
+
+        assert {tool.name for tool in tools} == {"find_path"}
 
     def test_each_tool_has_name_description_and_schema(self):
         tools = build_tool_list(include_advanced=True)

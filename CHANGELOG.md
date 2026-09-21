@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`MCP_TOOL_ALLOWLIST` narrows `list_tools` advertisement to a named subset**, independent of
+  and composable with the existing `MCP_EXPOSE_ADVANCED_TOOLS` tier gate. Set it to a
+  comma-separated list of tool names (unknown names are ignored, not an error) to restrict what a
+  server instance advertises — e.g. a dedicated instance serving only
+  `get_procedural_guidance` to a benchmark arm that must not see the rest of this server's tools
+  (or their prompt-size cost). Like the advanced-tier gate, this only affects `list_tools`
+  advertisement; `TOOL_DISPATCH` still dispatches every tool by name regardless. Implemented as
+  `_tool_allowlist()` / a new `allowlist` parameter on `build_tool_list()` in `mcp_server/tool_specs.py`.
 - **Single-block listwise reranking is now an invariant, not a preference** (ADR-0077) — a 3-leg
   gate on ADR-0076's multi-block splitting fix found it was not safe: forcing a split moved
   133q recall@5/NDCG@5 (the *head* of the ranking) by more than the pre-registered ±0.02

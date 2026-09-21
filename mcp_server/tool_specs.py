@@ -36,6 +36,16 @@ advertises to the LLM — TOOL_DISPATCH still dispatches every tool by name
 regardless of this flag, so advanced tools remain callable by any client that
 already knows their name/schema (tests, scripts, power users).
 
+A second, independent knob narrows the advertised list further: set
+MCP_TOOL_ALLOWLIST to a comma-separated list of tool names to advertise only
+that subset (still subject to the advanced-tier filter above — an allowlisted
+advanced tool still needs MCP_EXPOSE_ADVANCED_TOOLS=1 to be listed). Unset
+(the default) means no restriction. Intended for dedicated single-purpose
+server instances — e.g. serving only get_procedural_guidance to an experiment
+arm without exposing the rest of this server's tools (and their prompt-size
+cost) to that arm. Like MCP_EXPOSE_ADVANCED_TOOLS, this only affects
+advertisement; TOOL_DISPATCH is unaffected.
+
 Config-backed properties (bounds/enum sourced from search/config.py's spec()
 metadata) spread their fragment from mcp_server.config_schema.CONFIG_BACKED;
 see that module's docstring for why a field's default is never published here.
@@ -97,6 +107,21 @@ def _advanced_tools_enabled() -> bool:
     for the tool-count budget this protects).
     """
     return os.getenv("MCP_EXPOSE_ADVANCED_TOOLS", "").lower() in ("1", "true", "yes")
+
+
+def _tool_allowlist() -> frozenset[str] | None:
+    """Restrict what list_tools advertises to a named subset.
+
+    Controlled by MCP_TOOL_ALLOWLIST (comma-separated tool names); None when
+    unset, meaning "no restriction". Like MCP_EXPOSE_ADVANCED_TOOLS this only
+    affects advertisement -- TOOL_DISPATCH still dispatches every tool by name.
+    Intended for dedicated single-purpose server instances (e.g. serving only
+    get_procedural_guidance to an experiment arm).
+    """
+    raw = os.getenv("MCP_TOOL_ALLOWLIST", "").strip()
+    if not raw:
+        return None
+    return frozenset(n.strip() for n in raw.split(",") if n.strip())
 
 
 @dataclass(frozen=True)
@@ -1156,21 +1181,30 @@ list_tools). Derived from each row's advanced= flag — see module docstring
 for the tool-count budget this protects."""
 
 
-def build_tool_list(include_advanced: bool | None = None) -> list[Tool]:
+def build_tool_list(
+    include_advanced: bool | None = None,
+    allowlist: frozenset[str] | None = None,
+) -> list[Tool]:
     """Build the MCP Tool list from TOOL_SPECS.
 
     Args:
         include_advanced: Whether to include ADVANCED_TOOLS. Defaults to the
             MCP_EXPOSE_ADVANCED_TOOLS environment variable (see module docstring)
             when None. Pass explicitly (e.g. from tests) to override.
+        allowlist: Restrict the result to these tool names. Defaults to the
+            MCP_TOOL_ALLOWLIST environment variable (see module docstring) when
+            None. Pass an explicit frozenset (e.g. from tests) to override.
     """
     if include_advanced is None:
         include_advanced = _advanced_tools_enabled()
+    if allowlist is None:
+        allowlist = _tool_allowlist()
 
     return [
         Tool(name=s.name, description=s.description, input_schema=s.input_schema)
         for s in TOOL_SPECS
-        if include_advanced or not s.advanced
+        if (include_advanced or not s.advanced)
+        and (allowlist is None or s.name in allowlist)
     ]
 
 
