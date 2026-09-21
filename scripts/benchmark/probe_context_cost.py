@@ -143,7 +143,11 @@ except Exception:  # noqa: BLE001 - resilience: tiktoken is an optional cross-ch
     _ENCODING = None
 
 
-OUTPUT_FORMATS: tuple[str, ...] = ("verbose", "compact", "ultra")
+OUTPUT_FORMATS: tuple[str, ...] = (
+    "verbose",
+    "compact",
+    "ultra",
+)
 
 # Fields that would make a result "content-sufficient" rather than merely
 # "located" -- none of these are ever emitted by result_view._format_search_results
@@ -158,7 +162,7 @@ CONTENT_FIELD_CANDIDATES: tuple[str, ...] = (
     "raw_content",
 )
 
-# Matches output_formatter._to_toon_format's dynamic header key, e.g.
+# Matches output_formatter._to_ultra_format's dynamic header key, e.g.
 # "results[11]{chunk_id,kind,score}" -- the ultra-format array-of-dicts
 # encoding, needed since "results" as a literal key no longer exists there.
 _TOON_HEADER_RE = re.compile(r"^(\w+)\[(\d+)\]\{")
@@ -243,10 +247,10 @@ def _negative_evidence_key(redirect_kind: str | None) -> str:
 def _result_count(formatted: dict[str, Any], redirect_kind: str | None = None) -> int:
     """Number of results in a formatted payload, across all three
     ``output_format`` shapes. ``ultra`` renames the carrier key (see
-    ``_negative_evidence_key``) to a dynamic ``<key>[N]{...}`` header key; an
-    empty results list vanishes entirely under compact/ultra
-    (``_to_compact_format``/``_to_toon_format`` both skip
-    ``value in ([], {}, None, "")`` unless the key is in
+    ``_negative_evidence_key``) to a dynamic ``<key>[N]{...}`` header key.
+    An empty results list vanishes entirely under compact/ultra
+    (``_to_compact_format``/``_to_ultra_format``/``_optimize_payload`` all
+    skip ``value in ([], {}, None, "")`` unless the key is in
     ``output_formatter.NEVER_DROP_EMPTY_KEYS``) -- see
     ``_results_key_present`` for detecting that specific case (P11's
     negative-evidence defect).
@@ -517,6 +521,7 @@ async def probe_query(
             blob = json.dumps(formatted, separators=(",", ":"), default=str)
         format_stats[fmt] = {
             "payload_bytes": len(blob.encode("utf-8")),
+            "tiktoken_count": count_tokens_tiktoken(blob),
             "result_count": _result_count(formatted, redirect_kind),
             "results_key_present": _results_key_present(formatted, redirect_kind),
         }
@@ -638,8 +643,23 @@ def _summarize_connections_response(
     chunk_id: str | None,
     symbol_name: str | None,
     response: dict[str, Any],
+    format_response: Any,
 ) -> dict[str, Any]:
     blob = json.dumps(response, default=str)
+    # Per-output_format payload_bytes/tiktoken_count -- same handling as
+    # probe_query's format_stats loop. find_connections' own tool-specific
+    # tiktoken breakdown, alongside probe_query's search_code-shaped one.
+    format_stats: dict[str, dict[str, Any]] = {}
+    for fmt in OUTPUT_FORMATS:
+        formatted = format_response(response, fmt)
+        if fmt == "verbose":
+            fmt_blob = json.dumps(formatted, indent=2, default=str)
+        else:
+            fmt_blob = json.dumps(formatted, separators=(",", ":"), default=str)
+        format_stats[fmt] = {
+            "payload_bytes": len(fmt_blob.encode("utf-8")),
+            "tiktoken_count": count_tokens_tiktoken(fmt_blob),
+        }
     return {
         "id": query_id,
         "chunk_id": chunk_id,
@@ -652,6 +672,7 @@ def _summarize_connections_response(
         "indirect_callers": len(response.get("indirect_callers") or []),
         "payload_bytes": len(blob.encode("utf-8")),
         "tokens_tiktoken": count_tokens_tiktoken(blob),
+        "format_stats": format_stats,
     }
 
 
@@ -661,6 +682,7 @@ async def probe_connections_fanout(
     callee_entries: list[dict[str, Any]],
     d_entries: list[dict[str, Any]],
     max_depth: int,
+    format_response: Any,
 ) -> dict[str, Any]:
     """``find_connections`` payload size per symbol -- L4's measurement.
 
@@ -680,7 +702,9 @@ async def probe_connections_fanout(
             {"chunk_id": target, "max_depth": max_depth}
         )
         primary.append(
-            _summarize_connections_response(entry.get("id"), target, None, response)
+            _summarize_connections_response(
+                entry.get("id"), target, None, response, format_response
+            )
         )
 
     secondary: list[dict[str, Any]] = []
@@ -700,7 +724,9 @@ async def probe_connections_fanout(
             {"symbol_name": symbol, "max_depth": max_depth}
         )
         secondary.append(
-            _summarize_connections_response(entry.get("id"), None, symbol, response)
+            _summarize_connections_response(
+                entry.get("id"), None, symbol, response, format_response
+            )
         )
 
     return {"primary": primary, "secondary": secondary}
@@ -747,6 +773,14 @@ def summarize(
 
     payload_bytes_by_fmt = {
         fmt: [r["format_stats"][fmt]["payload_bytes"] for r in reports]
+        for fmt in OUTPUT_FORMATS
+    }
+    tiktoken_by_fmt = {
+        fmt: [
+            r["format_stats"][fmt]["tiktoken_count"]
+            for r in reports
+            if r["format_stats"][fmt]["tiktoken_count"] is not None
+        ]
         for fmt in OUTPUT_FORMATS
     }
     format_savings_means = {
@@ -817,6 +851,23 @@ def summarize(
         1 for c in connections_report["secondary"] if "skipped" in c
     )
 
+    # Per-output_format tiktoken counts for find_connections -- pooled across
+    # primary+secondary, skipping secondary entries with no response
+    # (symbol_extraction_failed).
+    connections_entries = [
+        c
+        for c in connections_report["primary"] + connections_report["secondary"]
+        if "format_stats" in c
+    ]
+    connections_tiktoken_by_fmt = {
+        fmt: [
+            c["format_stats"][fmt]["tiktoken_count"]
+            for c in connections_entries
+            if c["format_stats"][fmt]["tiktoken_count"] is not None
+        ]
+        for fmt in OUTPUT_FORMATS
+    }
+
     return {
         "n_queries": len(reports),
         "k_drift": {
@@ -837,6 +888,27 @@ def summarize(
                 "p90": _p90(payload_bytes_by_fmt[fmt]),
             }
             for fmt in OUTPUT_FORMATS
+        },
+        # Real tiktoken counts per output_format, per tool -- payload_bytes
+        # alone can't answer a token-budget question, since compression is a
+        # tokenizer-level effect, not a byte one.
+        "tiktoken_by_format": {
+            "search_code": {
+                fmt: {
+                    "mean": _mean(tiktoken_by_fmt[fmt]),
+                    "median": _median(tiktoken_by_fmt[fmt]),
+                    "p90": _p90(tiktoken_by_fmt[fmt]),
+                }
+                for fmt in OUTPUT_FORMATS
+            },
+            "find_connections": {
+                fmt: {
+                    "mean": _mean(connections_tiktoken_by_fmt[fmt]),
+                    "median": _median(connections_tiktoken_by_fmt[fmt]),
+                    "p90": _p90(connections_tiktoken_by_fmt[fmt]),
+                }
+                for fmt in OUTPUT_FORMATS
+            },
         },
         "format_savings_mean": format_savings_means,
         "results_vanished_count": results_vanished,
@@ -895,6 +967,14 @@ def print_summary(summary: dict[str, Any]) -> None:
             f"{pb['p90'] or 0:>8.0f} {summary['format_savings_mean'][fmt]:>9} "
             f"{summary['results_vanished_count'][fmt]:>9}"
         )
+
+    print("\n--- tiktoken counts by output_format, per tool ---")
+    print(f"{'format':>8} {'search_code':>13} {'find_connections':>17}")
+    tbf = summary["tiktoken_by_format"]
+    for fmt in OUTPUT_FORMATS:
+        sc = tbf["search_code"][fmt]["mean"]
+        fc = tbf["find_connections"][fmt]["mean"]
+        print(f"{fmt:>8} {sc or 0:>13.1f} {fc or 0:>17.1f}")
 
     gs = summary["gold_sufficiency"]
     print("\n--- gold_sufficiency (strictly from the raw payload) ---")
@@ -987,6 +1067,7 @@ async def _async_main(args: argparse.Namespace) -> dict[str, Any]:
             callee_entries,
             d_entries,
             max_depth=args.connections_max_depth,
+            format_response=format_response,
         )
 
         summary = summarize(reports, connections_report)

@@ -437,8 +437,8 @@ All 20 MCP tools support configurable output formatting via the `output_format` 
 | Format | Token Reduction | Use Case | Description |
 | -------- | ---------------- | ---------- | ------------- |
 | **verbose** | 0% (baseline) | Debugging, backward compatibility | Verbose JSON with indent=2, all fields included |
-| **compact** | 30-40% | Default, recommended | Omits empty fields, no indentation, removes redundant data |
-| **ultra** | 45-55% | Large result sets, bandwidth-constrained | Tabular arrays with header-declared fields |
+| **compact** | 30-40% | Middle ground, easier to read than tabular output | Omits empty fields, no indentation, removes redundant data |
+| **ultra** | 45-55% | **Default.** Large result sets, bandwidth-constrained | Tabular arrays with header-declared fields (JSON carrier) |
 
 ### Configuration
 
@@ -448,8 +448,8 @@ All 20 MCP tools support configurable output formatting via the `output_format` 
 # Via interactive menu
 start_mcp_server.cmd → 3. Search Configuration → A. Configure Output Format
 
-# Or directly in search_config.json
-"output_format": "compact"  # verbose, compact, or ultra
+# Or directly in search_config.json, under "output": {"format": ...}
+"format": "ultra"  # verbose, compact, ultra (default)
 ```
 
 **Override per-query**:
@@ -499,8 +499,7 @@ Ultra format optimizes token usage by declaring field names once in a header, th
   "results[2]{chunk_id,kind,score}": [
     ["auth.py:10-25:function:login", "function", 0.95],
     ["auth.py:30-45:function:logout", "function", 0.87]
-  ],
-  "_format_note": "Ultra format: header[count]{fields}: [[row1], [row2], ...]"
+  ]
 }
 ```
 
@@ -533,14 +532,14 @@ Ultra format optimizes token usage by declaring field names once in a header, th
 
 #### Real-World Example
 
-**Query**: `find_connections("mcp_server/output_formatter.py:109-177:function:_to_toon_format")`
+**Query**: `find_connections("mcp_server/output_formatter.py:109-177:function:_to_ultra_format")`
 
 **Ultra Response**:
 
 ```json
 {
-  "symbol": "_to_toon_format",
-  "chunk_id": "mcp_server/output_formatter.py:109-177:function:_to_toon_format",
+  "symbol": "_to_ultra_format",
+  "chunk_id": "mcp_server/output_formatter.py:109-177:function:_to_ultra_format",
   "direct_callers[1]{chunk_id,kind,score}": [
     ["mcp_server/output_formatter.py:17-34:function:format_response", "function", 1.0]
   ],
@@ -553,15 +552,14 @@ Ultra format optimizes token usage by declaring field names once in a header, th
     ["mcp_server/output_formatter.py:37-77:function:_to_compact_format", "function", 0.82],
     ["search/hybrid_searcher.py:245-289:function:_format_results", "function", 0.76],
     ...
-  ],
-  "_format_note": "Ultra format: header[count]{fields}: [[row1], [row2], ...]"
+  ]
 }
 ```
 
 **Token Savings**:
 
 - Standard JSON: 10 similar_code results × 3 fields = 30 field name occurrences
-- TOON format: 3 field names declared once = 3 occurrences
+- Ultra format: 3 field names declared once = 3 occurrences
 - **Reduction**: (30-3)/30 = 90% field name token savings for this array
 
 #### Schema Flexibility
@@ -579,7 +577,28 @@ Notice:
 
 - `direct_callers` has 3 fields
 - `uses_types` has 6 fields
-- Both use TOON format with appropriate headers
+- Both use the same tabular header syntax
+
+#### Nested Field Groups
+
+A column that's a dict on every row (uniform key set) nests inside the
+header instead of staying a raw JSON cell — e.g. `find_path`'s `path` array,
+where each hop is `{"node": {...}, "edge_to_next": {...} | None}`:
+
+```json
+{
+  "path[3]{node{chunk_id,name,type,file},edge_to_next{relationship_type,line}}": [
+    ["a.py:1-10:function:a", "a", "function", "a.py", "calls", 3],
+    ["b.py:1-10:function:b", "b", "function", "b.py", "calls", 7],
+    ["c.py:1-10:function:c", "c", "function", "c.py", null, null]
+  ]
+}
+```
+
+The final hop has no successor edge, so `edge_to_next` is `null`-filled
+rather than falling back to a flat, unnested header for the whole array —
+row cells still follow a depth-first walk of the (possibly nested) field
+list, exactly as for a flat column.
 
 ### Token Reduction Analysis
 
@@ -587,15 +606,15 @@ Notice:
 
 | Format | Characters | Estimated Tokens | Reduction |
 | -------- | ----------- | ------------------ | ----------- |
-| JSON | 3,259 | ~814 | 0% (baseline) |
+| JSON (verbose) | 3,259 | ~814 | 0% (baseline) |
 | Compact | 2,167 | ~541 | 33.5% |
-| TOON | 1,877 | ~469 | 42.4% |
+| Ultra | 1,877 | ~469 | 42.4% |
 
 **Recommendation**:
 
-- The server defaults to **ultra** (the "TOON" row above; `OutputConfig.format`) — best token efficiency for large result sets (k > 10) or bandwidth-constrained environments; omit `output_format` to use it
-- Use **compact** for a middle ground when tabular ultra output is harder to read than plain JSON
-- Use **verbose** (the "JSON" row above) only for debugging or when you need maximum readability
+- The server defaults to **ultra** (`OutputConfig.format`) — best token efficiency for large result sets (k > 10) or bandwidth-constrained environments; omit `output_format` to use it
+- Use **compact** for a middle ground when tabular output is harder to read than plain JSON
+- Use **verbose** only for debugging or when you need maximum readability
 
 ---
 

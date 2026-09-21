@@ -356,6 +356,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`ultra` output format: insertion-order headers, nested field groups, configurable sparse
+  threshold** (2026-09-21) — **wire-format change for every existing `ultra` consumer.** Field
+  order in `{fields}` headers is now the response's own insertion order instead of alphabetically
+  `sorted()`; a column that is a dict on every row (uniform key set) now nests inside the header
+  instead of staying a raw JSON cell — e.g. `find_path`'s `path[N]{node{chunk_id,name,type,file},
+  edge_to_next{relationship_type,line}}`, with a missing final-hop edge `null`-filled rather than
+  falling back to an unnested header for the whole array. `OutputConfig.sparse_threshold` (default
+  `0.25`) is now a documented config field (`search_config.json`'s `output.sparse_threshold`)
+  controlling the existing sparse-column split (`results_sparse`) instead of a hardcoded constant.
+  See `docs/MCP_TOOLS_REFERENCE.md`'s "Nested Field Groups" section.
+- **Real TOON v4.1 text output (`toon`/`toon-tab` formats) removed** (`docs/adr/0078-reject-real-toon-text-output.md`)
+  — an uncommitted prior session built a real TOON v4.1 text encoder
+  (`mcp_server/toon_encoder.py`) and its pre-registered promotion gate (`toon` ≤ `ultra` in
+  tiktoken count on both `search_code` and `find_connections`) failed: `toon` beat `ultra` on
+  `find_connections` (−0.94% tokens) but lost on `search_code` (+0.31%), the more-called tool.
+  Since nothing had shipped, it was deleted outright rather than kept opt-in — the encoder's one
+  genuine dependent, `ultra`'s tabular-eligibility detector, was extracted into
+  `output_formatter.py` as private helpers first, so the `ultra` improvements above are
+  unaffected. `output_format` now accepts only `verbose` / `compact` / `ultra`.
 - **Retrieval canon re-pinned 2026-09-20** (`evaluation/CANON_20260920_REBASELINE.md`) after
   discovering the 2026-09-08 pin below (and 09-03→09-08, six re-baselines) was measured on a
   **pyan-dark substrate**: the venv had silently drifted 34 packages behind `uv.lock` since

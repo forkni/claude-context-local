@@ -97,7 +97,8 @@
     "format": "ultra",
     "source_order_output": false,
     "include_subgraph": false,
-    "include_result_graph": false
+    "include_result_graph": false,
+    "sparse_threshold": 0.25
   },
   "chunking": {
     "enable_large_node_splitting": true,

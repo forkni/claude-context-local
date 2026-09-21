@@ -1022,7 +1022,7 @@ class RerankerConfig:
 
 @dataclass
 class OutputConfig:
-    """MCP output formatting settings (4 fields)."""
+    """MCP output formatting settings (5 fields)."""
 
     format: str = field(
         default="ultra",  # verbose, compact, ultra (default: ultra for 45-55% token reduction)
@@ -1050,6 +1050,14 @@ class OutputConfig:
         metadata=spec(
             flat_alias="include_result_graph",
             reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
+    sparse_threshold: float = field(
+        default=0.25,  # ultra: fields with fill_ratio below this move to a sparse index/value side-structure instead of a dense column
+        metadata=spec(
+            range=(0.0, 1.0),
+            flat_alias="sparse_threshold",
+            reader="mcp_server/output_formatter.py",
         ),
     )
 

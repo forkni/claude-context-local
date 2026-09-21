@@ -517,16 +517,21 @@ async def handle_call_tool(
             and not _is_carved_out_error_shape(result)
         )
         formatted_result = (
-            format_response(result, output_format)
+            format_response(
+                result,
+                output_format,
+                sparse_threshold=config.output.sparse_threshold,
+            )
             if isinstance(result, dict)
             else result
         )
 
-        # Use compact JSON (no indent) for compact/toon formats, verbose for json format.
-        # json.dumps runs inline on the event loop (#60). For typical search/index
-        # responses this is negligible (<1 ms). The only concern would be very large
-        # subgraph responses (find_connections with max_depth=5 on a dense graph); if
-        # that ever becomes a bottleneck, size-gate on len(result_text) and offload via
+        # Use compact JSON (no indent) for compact/ultra, pretty-printed JSON
+        # for verbose. json.dumps runs inline on the event loop (#60). For
+        # typical search/index responses this is negligible (<1 ms). The only
+        # concern would be very large subgraph responses (find_connections
+        # with max_depth=5 on a dense graph); if that ever becomes a
+        # bottleneck, size-gate on len(result_text) and offload via
         # asyncio.to_thread for payloads above ~1 MB.
         if output_format in ("compact", "ultra"):
             result_text = (

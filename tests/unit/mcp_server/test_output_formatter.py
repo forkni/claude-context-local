@@ -7,8 +7,10 @@ reducing token overhead through different output formats.
 from mcp_server.output_formatter import (
     NEVER_DROP_EMPTY_KEYS,
     _compact_dict,
+    _optimize_payload,
     _to_compact_format,
-    _to_toon_format,
+    _to_ultra_format,
+    _try_tabular_field_spec,
     format_response,
 )
 
@@ -41,7 +43,7 @@ class TestFormatResponse:
         assert "field" in result
         assert "empty" not in result
 
-    def test_toon_format_applied(self):
+    def test_ultra_format_applied(self):
         """Ultra format should convert arrays to tabular format."""
         data = {
             "items": [
@@ -52,9 +54,20 @@ class TestFormatResponse:
 
         result = format_response(data, "ultra")
 
-        # Should have TOON header
+        # Should have the ultra tabular header
         assert "items[2]{id,score}" in result
         assert result["items[2]{id,score}"] == [["a", 1.0], ["b", 0.5]]
+
+    def test_unknown_format_falls_through_to_compact(self):
+        """An unrecognized output_format string falls through to the compact
+        default rather than raising -- only "verbose" and "ultra" are
+        special-cased in format_response's dispatch."""
+        data = {"field": "value", "empty": []}
+
+        result = format_response(data, "xml")
+
+        assert isinstance(result, dict)
+        assert result == {"field": "value"}
 
 
 class TestCompactFormat:
@@ -251,8 +264,8 @@ class TestCompactDict:
         assert "score" in result
 
 
-class TestToonFormat:
-    """Tests for TOON tabular format."""
+class TestUltraFormat:
+    """Tests for ultra's tabular format."""
 
     def test_converts_array_to_tabular_format(self):
         """Arrays of dicts should be converted to tabular format."""
@@ -263,14 +276,14 @@ class TestToonFormat:
             ]
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
-        # Should have TOON header with count and fields
+        # Should have the ultra tabular header with count and fields
         assert "items[2]{id,score}" in result
         assert result["items[2]{id,score}"] == [["a", 1.0], ["b", 0.5]]
 
     def test_removes_redundant_fields_from_header(self):
-        """Redundant file/lines should not appear in TOON header."""
+        """Redundant file/lines should not appear in the ultra header."""
         data = {
             "callers": [
                 {
@@ -283,7 +296,7 @@ class TestToonFormat:
             ]
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
         # Header should not include file/lines
         header = list(result.keys())[0]
@@ -294,13 +307,13 @@ class TestToonFormat:
         assert "score" in header
 
     def test_handles_multiple_arrays(self):
-        """Multiple arrays should each get TOON headers."""
+        """Multiple arrays should each get their own ultra header."""
         data = {
             "callers": [{"id": "a"}, {"id": "b"}],
             "similar": [{"id": "c"}, {"id": "d"}],
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
         assert "callers[2]{id}" in result
         assert "similar[2]{id}" in result
@@ -313,7 +326,7 @@ class TestToonFormat:
             "items": [{"id": "a"}],
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
         assert result["count"] == 10
         assert result["message"] == "hello"
@@ -331,7 +344,7 @@ class TestToonFormat:
             }
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
         # Nested dict should be compacted (redundant fields removed)
         assert "chunk_id" in result["metadata"]
@@ -347,18 +360,18 @@ class TestToonFormat:
             "other": "value",
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
         assert "items" not in result
         assert result["other"] == "value"
 
     def test_handles_list_of_primitives(self):
-        """Lists of primitives should be preserved (no TOON format)."""
+        """Lists of primitives should be preserved (not tabular-formatted)."""
         data = {
             "numbers": [1, 2, 3],
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
         # Should keep as-is (not tabular format)
         assert result["numbers"] == [1, 2, 3]
@@ -372,7 +385,7 @@ class TestToonFormat:
             ]
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
         header = list(result.keys())[0]
         rows = result[header]
@@ -387,11 +400,11 @@ class TestToonFormat:
         for i, field in enumerate(fields):
             assert rows[0][i] == data["items"][0][field]
 
-    def test_toon_format_no_format_note(self):
-        """TOON format should not include format note (token optimization).
+    def test_ultra_format_no_format_note(self):
+        """Ultra format should not include format note (token optimization).
 
         Format note removed to save 15-30 tokens per response.
-        TOON format is self-explanatory and documented in MCP_TOOLS_REFERENCE.md.
+        Ultra format is self-explanatory and documented in MCP_TOOLS_REFERENCE.md.
         """
         data = {
             "items": [
@@ -400,7 +413,7 @@ class TestToonFormat:
             ]
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
         # Should NOT have format note (removed for token savings)
         assert "_format_note" not in result
@@ -421,7 +434,7 @@ class TestToonFormat:
             ]
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
         # Main table should NOT include graph column (only dense columns)
         assert "results[5]{id,score}" in result
@@ -450,19 +463,20 @@ class TestToonFormat:
             ]
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
-        # Main table SHOULD include complexity column (dense)
-        assert "results[5]{complexity,id}" in result
-        rows = result["results[5]{complexity,id}"]
+        # Main table SHOULD include complexity column (dense), in insertion
+        # order (id first, complexity second -- not alphabetical)
+        assert "results[5]{id,complexity}" in result
+        rows = result["results[5]{id,complexity}"]
         assert len(rows) == 5
         # First two rows have complexity values
-        assert rows[0][0] == 10
-        assert rows[1][0] == 20
+        assert rows[0][1] == 10
+        assert rows[1][1] == 20
         # Last three rows have None for complexity
-        assert rows[2][0] is None
-        assert rows[3][0] is None
-        assert rows[4][0] is None
+        assert rows[2][1] is None
+        assert rows[3][1] is None
+        assert rows[4][1] is None
 
         # Should NOT have sparse structure (all columns are dense)
         assert "results_sparse" not in result
@@ -484,7 +498,7 @@ class TestToonFormat:
             ]
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
         # Main table: only dense columns
         assert "results[5]{id,score}" in result
@@ -495,6 +509,57 @@ class TestToonFormat:
         assert "metadata" in result["results_sparse"]
         assert len(result["results_sparse"]["graph"]) == 1
         assert len(result["results_sparse"]["metadata"]) == 1
+
+    def test_nested_field_group_in_header(self):
+        """Uniform dict-valued columns nest in the header (nested field
+        groups), matching find_path.path's node/edge_to_next shape
+        (graph_queries.py) -- including the last hop's edge_to_next being
+        None, which must not disqualify the whole array from tabular form."""
+        data = {
+            "path": [
+                {
+                    "node": {"chunk_id": "a.py:1:function:a", "name": "a"},
+                    "edge_to_next": {"relationship_type": "calls", "line": 3},
+                },
+                {
+                    "node": {"chunk_id": "b.py:1:function:b", "name": "b"},
+                    "edge_to_next": {"relationship_type": "calls", "line": 7},
+                },
+                {
+                    "node": {"chunk_id": "c.py:1:function:c", "name": "c"},
+                    "edge_to_next": None,
+                },
+            ]
+        }
+
+        result = _to_ultra_format(data)
+
+        header = "path[3]{node{chunk_id,name},edge_to_next{relationship_type,line}}"
+        assert header in result
+        rows = result[header]
+        assert rows[0] == ["a.py:1:function:a", "a", "calls", 3]
+        assert rows[1] == ["b.py:1:function:b", "b", "calls", 7]
+        # Last hop's edge_to_next was None -- backfilled to a null-filled
+        # group instead of disqualifying the whole array from tabular form.
+        assert rows[2] == ["c.py:1:function:c", "c", None, None]
+
+    def test_mixed_dict_and_scalar_column_falls_back_to_flat_header(self):
+        """A column mixing a dict with a non-None scalar (not the narrow
+        dict-or-None gap) is a genuine shape mismatch -- falls back to the
+        flat single-level header, embedding the raw dict as a cell."""
+        data = {
+            "results": [
+                {"id": "a", "extra": {"note": "x"}},
+                {"id": "b", "extra": "plain string"},
+            ]
+        }
+
+        result = _to_ultra_format(data)
+
+        assert "results[2]{id,extra}" in result
+        rows = result["results[2]{id,extra}"]
+        assert rows[0] == ["a", {"note": "x"}]
+        assert rows[1] == ["b", "plain string"]
 
 
 class TestDataPreservation:
@@ -576,8 +641,8 @@ class TestDataPreservation:
         assert file_from_chunk == data["file"]
         assert lines_from_chunk == data["lines"]
 
-    def test_can_parse_toon_tabular_format(self):
-        """TOON tabular format should be parsable."""
+    def test_can_parse_ultra_tabular_format(self):
+        """Ultra's tabular format should be parsable."""
         data = {
             "items": [
                 {"id": "a", "score": 1.0, "kind": "function"},
@@ -585,10 +650,10 @@ class TestDataPreservation:
             ]
         }
 
-        toon = _to_toon_format(data)
+        ultra = _to_ultra_format(data)
 
         # Extract header
-        header_key = list(toon.keys())[0]
+        header_key = list(ultra.keys())[0]
         assert header_key.startswith("items[")
 
         # Extract count from header
@@ -601,7 +666,7 @@ class TestDataPreservation:
         assert set(fields) == {"id", "score", "kind"}
 
         # Extract rows
-        rows = toon[header_key]
+        rows = ultra[header_key]
         assert len(rows) == 2
 
         # Reconstruct first item
@@ -696,8 +761,8 @@ class TestEdgeCases:
 class TestSubgraphFormatting:
     """Tests for SSCG subgraph formatting across all 3 output formats."""
 
-    def test_subgraph_ultra_format_toon_conversion(self):
-        """Ultra format should TOON-format subgraph_nodes and subgraph_edges arrays."""
+    def test_subgraph_ultra_format_tabular_conversion(self):
+        """Ultra format should tabular-format subgraph_nodes and subgraph_edges arrays."""
         data = {
             "query": "graph storage",
             "results": [
@@ -730,24 +795,25 @@ class TestSubgraphFormatting:
 
         result = format_response(data, "ultra")
 
-        # Verify results array is TOON-formatted
-        assert "results[1]{chunk_id,kind,score}" in result
+        # Verify results array is tabular-formatted (field order matches insertion
+        # order in the source dict, not alphabetical)
+        assert "results[1]{chunk_id,score,kind}" in result
 
-        # Verify subgraph_nodes array is TOON-formatted (file is stripped since id contains path)
-        assert "subgraph_nodes[2]{id,kind,name}" in result
-        nodes_rows = result["subgraph_nodes[2]{id,kind,name}"]
+        # Verify subgraph_nodes array is tabular-formatted (file is stripped since id contains path)
+        assert "subgraph_nodes[2]{id,name,kind}" in result
+        nodes_rows = result["subgraph_nodes[2]{id,name,kind}"]
         assert len(nodes_rows) == 2
-        assert nodes_rows[0] == ["a.py:1-10:function:foo", "function", "foo"]
+        assert nodes_rows[0] == ["a.py:1-10:function:foo", "foo", "function"]
 
-        # Verify subgraph_edges array is TOON-formatted
-        assert "subgraph_edges[1]{line,rel,src,tgt}" in result
-        edges_rows = result["subgraph_edges[1]{line,rel,src,tgt}"]
+        # Verify subgraph_edges array is tabular-formatted
+        assert "subgraph_edges[1]{src,tgt,rel,line}" in result
+        edges_rows = result["subgraph_edges[1]{src,tgt,rel,line}"]
         assert len(edges_rows) == 1
         assert edges_rows[0] == [
-            5,
-            "calls",
             "a.py:1-10:function:foo",
             "b.py:5-15:function:bar",
+            "calls",
+            5,
         ]
 
         # Verify subgraph_order list is preserved (list of primitives)
@@ -913,7 +979,7 @@ class TestZeroResultContract:
         assert result["direct_callers"] == []
 
     def test_direct_callees_that_tabulates_to_nothing_still_present(self):
-        """Same gap as above, for toon format's tabular path: if every field
+        """Same gap as above, for ultra format's tabular path: if every field
         of every row is empty, `fields` ends up [], so no dense header and no
         sparse table are ever written for the key -- the post-pass restore
         must still add it back as []."""
@@ -922,7 +988,153 @@ class TestZeroResultContract:
             "direct_callees": [{"resolver_confidence": None}],
         }
 
-        result = _to_toon_format(data)
+        result = _to_ultra_format(data)
 
         assert "direct_callees" in result
         assert result["direct_callees"] == []
+
+
+class TestUltraByteIdentityGuard:
+    """Pins `ultra`'s exact output across the `_optimize_payload` extraction:
+    `_to_ultra_format` used to build its synthetic header key and dense/sparse
+    split inline; that logic now lives in the shared `_optimize_payload`
+    pre-pass, with `_to_ultra_format` doing only the header-key packaging on
+    top. These three cases were captured directly from the pre-refactor
+    implementation and must never change silently -- only a *deliberate*
+    change (e.g. insertion-order field sort, nested field groups) is allowed
+    to move these strings, and each such change must update this test
+    explicitly.
+    """
+
+    def test_dense_and_sparse_split(self):
+        """A field with <25% fill rate is split into a sibling `_sparse` map,
+        keyed rows for the dense header stay index-aligned with the source list."""
+        data = {
+            "results": [
+                {
+                    "chunk_id": "a.py:1-5:function:f",
+                    "kind": "function",
+                    "score": 0.9,
+                    "note": "x",
+                },
+                {"chunk_id": "b.py:1-5:function:g", "kind": "function", "score": 0.8},
+                {"chunk_id": "c.py:1-5:function:h", "kind": "function", "score": 0.7},
+                {"chunk_id": "d.py:1-5:function:i", "kind": "function", "score": 0.6},
+                {"chunk_id": "e.py:1-5:function:j", "kind": "function", "score": 0.5},
+            ]
+        }
+
+        result = _to_ultra_format(data)
+
+        assert result == {
+            "results[5]{chunk_id,kind,score}": [
+                ["a.py:1-5:function:f", "function", 0.9],
+                ["b.py:1-5:function:g", "function", 0.8],
+                ["c.py:1-5:function:h", "function", 0.7],
+                ["d.py:1-5:function:i", "function", 0.6],
+                ["e.py:1-5:function:j", "function", 0.5],
+            ],
+            "results_sparse": {"note": [[0, "x"]]},
+        }
+
+    def test_nested_dict_field_stays_compacted_not_tabulated(self):
+        """A dict-valued (not list-valued) field is compacted, never given a
+        tabular header -- tabulation only applies to arrays of dicts."""
+        data = {"meta": {"a": 1, "b": ""}, "name": "x"}
+
+        result = _to_ultra_format(data)
+
+        assert result == {"meta": {"a": 1}, "name": "x"}
+
+    def test_file_lines_pruned_when_chunk_id_present(self):
+        """`file`/`lines` are redundant with `chunk_id` and dropped from the header."""
+        data = {
+            "results": [
+                {"chunk_id": "a.py:1-5:f", "file": "a.py", "lines": "1-5", "score": 1.0}
+            ]
+        }
+
+        result = _to_ultra_format(data)
+
+        assert result == {"results[1]{chunk_id,score}": [["a.py:1-5:f", 1.0]]}
+
+
+class TestOptimizePayload:
+    """Tests for `_optimize_payload`, the pre-pass for the `ultra` format."""
+
+    def test_dense_fields_stay_a_list_of_dicts(self):
+        """Unlike `ultra`'s final header-key packaging, `_optimize_payload`
+        keeps a tabular-eligible array as a real list of dicts -- header-key
+        packaging (via `_try_tabular_field_spec`) is `_to_ultra_format`'s own
+        separate step on top of this pre-pass, not done here."""
+        data = {
+            "results": [
+                {"chunk_id": "a.py:1-5:f", "score": 0.9},
+                {"chunk_id": "b.py:1-5:f", "score": 0.8},
+            ]
+        }
+
+        result = _optimize_payload(data)
+
+        assert result == {
+            "results": [
+                {"chunk_id": "a.py:1-5:f", "score": 0.9},
+                {"chunk_id": "b.py:1-5:f", "score": 0.8},
+            ]
+        }
+
+    def test_sparse_split_unaffected_by_header_deferral(self):
+        """The sparse side-table is identical whether or not the dense
+        header key gets built -- only the dense side's shape changes."""
+        data = {
+            "results": [
+                {"chunk_id": "a.py:1:f", "score": 0.9, "note": "x"},
+                {"chunk_id": "b.py:1:f", "score": 0.8},
+                {"chunk_id": "c.py:1:f", "score": 0.7},
+                {"chunk_id": "d.py:1:f", "score": 0.6},
+                {"chunk_id": "e.py:1:f", "score": 0.5},
+            ]
+        }
+
+        result = _optimize_payload(data)
+
+        assert result["results_sparse"] == {"note": [[0, "x"]]}
+        assert "results" in result
+        assert all("note" not in row for row in result["results"])
+
+
+class TestTryTabularFieldSpec:
+    """`_try_tabular_field_spec` -- the tabular-eligibility detector
+    `_to_ultra_format` uses to build headers, including nested field groups
+    for uniform dict-valued columns (ADR-0078)."""
+
+    def test_returns_field_spec_string_and_flattened_rows(self):
+        arr = [
+            {"id": 1, "customer": {"name": "Ada", "country": "DK"}, "total": 99},
+            {"id": 2, "customer": {"name": "Bob", "country": "UK"}, "total": 149},
+        ]
+        result = _try_tabular_field_spec(arr)
+        assert result is not None
+        fields_str, rows = result
+        assert fields_str == "id,customer{name,country},total"
+        assert rows == [[1, "Ada", "DK", 99], [2, "Bob", "UK", 149]]
+
+    def test_none_when_ineligible(self):
+        # Mixed key sets across rows -- not tabular-eligible.
+        arr = [{"a": 1}, {"b": 2}]
+        assert _try_tabular_field_spec(arr) is None
+
+    def test_single_level_nested_group(self):
+        arr = [
+            {"id": 1, "customer": {"name": "Ada", "country": "DK"}, "total": 99},
+            {"id": 2, "customer": {"name": "Bob", "country": "UK"}, "total": 149},
+        ]
+        fields_str, rows = _try_tabular_field_spec(arr)
+        assert fields_str == "id,customer{name,country},total"
+        assert rows == [[1, "Ada", "DK", 99], [2, "Bob", "UK", 149]]
+
+    def test_unbounded_nesting_depth(self):
+        arr = [{"a": {"b": {"c": 1}}}, {"a": {"b": {"c": 2}}}]
+        fields_str, rows = _try_tabular_field_spec(arr)
+        assert fields_str == "a{b{c}}"
+        assert rows == [[1], [2]]
