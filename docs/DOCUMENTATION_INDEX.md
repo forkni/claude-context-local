@@ -16,7 +16,7 @@ Complete navigation hub for claude-context-local documentation.
     - [Interactive Scripts](#interactive-scripts)
     - [Batch Files](#batch-files)
   - [Git Automation](#git-automation)
-    - [Git Scripts](#git-scripts)
+    - [Current workflow entry points](#current-workflow-entry-points)
   - [Testing \& Validation](#testing--validation)
     - [Testing Tools (scripts/test/)](#testing-tools-scriptstest)
   - [Technical Implementation](#technical-implementation)
@@ -138,26 +138,19 @@ Git workflow automation and safety.
 | **[GIT_WORKFLOW.md](GIT_WORKFLOW.md)** | Troubleshooting and advanced operations |
 | **[PRE_COMMIT_HOOKS.md](PRE_COMMIT_HOOKS.md)** | Pre-commit hook configuration |
 
-### Git Scripts
+### Current workflow entry points
 
-**Directory Structure**:
+The current repository workflow uses the tracked Git commands, GitHub Actions,
+and helper scripts below. The previously documented `scripts/git/` wrapper
+directory is not part of this checkout.
 
-- **Shell scripts (.sh)**: `scripts/git/` - the only supported workflow scripts, run via Git Bash
-
-| Script | Purpose |
-| -------- | --------- |
-| `commit_enhanced.sh` | Enhanced commits with validation |
-| `merge_with_validation.sh` | Merge with comprehensive validation |
-| `check_lint.sh` | Lint validation (ruff) |
-| `fix_lint.sh` | Auto-fix lint issues (ruff) |
-| `validate_branches.sh` | Pre-merge validation |
-| `cherry_pick_commits.sh` | Cherry-pick specific commits |
-| `merge_docs.sh` | Documentation-only merge |
-| `rollback_merge.sh` | Emergency rollback |
-| `install_hooks.sh` | Install pre-commit hooks |
-| `push_validated.sh` | Push with CI-gate verification |
-| `create_pr.sh` | Create a pull request |
-| `create_release.sh` | Tag + publish a GitHub release |
+| Entry point | Purpose |
+| ----------- | ------- |
+| `.github/workflows/branch-protection.yml` | Runs Ruff, Pyrefly, and pre-commit validation in CI |
+| `.github/workflows/merge-development-to-main.yml` | Manually dispatched development-to-main merge with dry-run and backup options |
+| `scripts/lint/check_shell.sh` | Runs ShellCheck over tracked shell scripts |
+| `scripts/test/run_tests.sh` | Runs the project test suite from `.venv` |
+| `scripts/docs/update_toc.sh` | Updates configured Markdown table-of-contents files |
 
 ---
 

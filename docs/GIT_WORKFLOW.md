@@ -75,7 +75,7 @@ Automatically blocks commits containing local-only files:
 - **CI Enforcement**: GitHub Actions validates this policy on every push to main
 - **Automated Checks**: Unauthorized docs will fail CI/CD automatically
 - **Prevention**: Development-only docs are listed in `.gitattributes` with `merge=ours` strategy
-- **Validation**: Both `validate_branches.sh` and `merge_with_validation.sh` check this policy
+- **Validation**: `.github/workflows/branch-protection.yml` and `.github/workflows/merge-development-to-main.yml` enforce the current checks
 
 ### Development-Only Documentation
 
@@ -94,142 +94,50 @@ These files exist only on the development branch:
 
 These are automatically excluded from main branch via `.gitattributes` merge strategy.
 
-## 🚀 Workflow Scripts
+## 🚀 Current Workflow Entry Points
 
-**Directory Structure**:
+The current checkout does not contain the previously documented `scripts/git/`
+workflow-wrapper directory. Use the tracked commands and automation below
+instead of commands copied from older versions of this guide.
 
-- **Shell scripts (.sh)**: `scripts/git/` - the only supported workflow scripts
+### Local validation
 
-**Environment Compatibility**: All scripts are Bash (`.sh`). This project's shell is Git Bash
-(see the repo's `CLAUDE.md`), which runs `.sh` files natively on Windows, Linux, and macOS —
-there is no separate Windows `.bat` fallback.
-
-### Core Workflow Scripts (10 total)
-
-#### commit_enhanced - Enhanced Commit Workflow
+After installing the development dependencies, the local commands matching the
+branch-protection checks are:
 
 ```bash
-./scripts/git/commit_enhanced.sh "Your commit message"
+uv run ruff check --output-format=github .
+uv run ruff format --check .
+uv run pyrefly check
+uv run pre-commit run --all-files --show-diff-on-failure
+./scripts/lint/check_shell.sh
 ```
 
-**Features:**
+The shell helper scans the current `scripts/` tree. It is not a replacement
+for the Ruff, Pyrefly, or pre-commit checks.
 
-- Automatically excludes local-only files
-- Code quality checks (lint validation)
-- Branch-specific validations (no tests/ on main)
-- Conventional commit format checking
-- Interactive staging prompts
-- Shows preview before committing
+### Commits and pull requests
 
-#### check_lint - Code Quality Validation
+Use standard Git commands to create a commit, push the branch, and open a pull
+request:
 
 ```bash
-./scripts/git/check_lint.sh
+git add <files>
+git commit -m "docs: Describe the change"
+git push origin <branch>
+gh pr create --title "docs: Describe the change" --body "..."
 ```
 
-**Checks:**
+### Merge development into main
 
-- Ruff check (Python linting + import sorting)
-- Ruff format (code formatting consistency)
-- markdownlint (documentation quality)
+Run `.github/workflows/merge-development-to-main.yml` from the GitHub Actions
+interface. The manually dispatched workflow supports `create_backup` and
+`dry_run` inputs, verifies `.gitattributes`, merges `origin/development` into
+`main`, checks that the development history is present, and pushes `main` when
+not running as a dry run.
 
-**Configuration**: Uses pyproject.toml settings (automatically excludes .venv, _archive, all gitignored directories)
-
-**Note**: ShellCheck (bash script validation) is available separately via `scripts/lint/check_shell.sh`
-
-#### fix_lint - Auto-fix Linting Issues
-
-```bash
-./scripts/git/fix_lint.sh
-```
-
-**Fixes:**
-
-- Runs ruff check --fix → ruff format → markdownlint --fix
-- Auto-fixes ~90% of Python lint errors
-- Auto-fixes most markdown formatting issues
-- Suggests running check_lint to verify all issues resolved
-
-#### merge_with_validation - Safe Merge Workflow
-
-```bash
-./scripts/git/merge_with_validation.sh
-```
-
-**Features:**
-
-- Pre-merge validation (via validate_branches.sh)
-- Creates backup tags before merge
-- Automatic conflict resolution for modify/delete conflicts
-- Handles development-only file exclusion
-- Returns to original branch on error
-
-#### validate_branches - Pre-merge Validation
-
-```bash
-./scripts/git/validate_branches.sh
-```
-
-**Checks:**
-
-- Both branches exist
-- Current branch is development or main
-- No uncommitted changes
-- Branch relationship (development ahead of main by X commits)
-- Provides warnings if branches are out of sync
-
-#### install_hooks.sh - Hook Installation
-
-```bash
-./scripts/git/install_hooks.sh
-```
-
-**Installs:**
-
-- Pre-commit hook from `.githooks/pre-commit`
-- Linting validation
-- Privacy protection checks
-
-### Advanced/Safety Scripts (3)
-
-#### rollback_merge.sh - Emergency Merge Rollback
-
-```bash
-./scripts/git/rollback_merge.sh
-```
-
-**Options:**
-
-- Rollback to latest backup tag
-- Rollback to HEAD~1
-- Rollback to specific commit hash
-- Interactive confirmation required
-
-#### cherry_pick_commits.sh - Hotfix Workflow
-
-```bash
-./scripts/git/cherry_pick_commits.sh
-```
-
-**Features:**
-
-- Cherry-pick specific commits from development → main
-- Validates development-only file exclusions
-- Creates backup tags
-- Interactive commit selection
-
-#### merge_docs.sh - Documentation-Only Merge
-
-```bash
-./scripts/git/merge_docs.sh
-```
-
-**Features:**
-
-- Merges ONLY docs/ directory changes
-- Excludes development-only docs
-- Creates backup tags
-- Useful for documentation updates
+For local test execution, use `./scripts/test/run_tests.sh`. For the repository's
+configured Markdown table of contents, use `./scripts/docs/update_toc.sh`.
 
 ## 🤖 Claude Code GitHub Integration
 
@@ -290,32 +198,10 @@ git add <files>
 
 #### 2. `/run-merge` - Guided Merge Workflow
 
-**Purpose**: Safe merge workflow with validation and backup support
-
-**Merge Types**:
-
-- `full` - Full merge from development to main (default)
-- `docs` - Documentation-only merge
-
-**Usage**:
-
-```bash
-# Full merge workflow
-/run-merge full
-# Runs: ./scripts/git/merge_with_validation.sh
-
-# Documentation-only merge
-/run-merge docs
-# Runs: ./scripts/git/merge_docs.sh
-```
-
-**Safety Features**:
-
-- Pre-merge validation via `validate_branches.sh`
-- Automatic backup tags created
-- Conflict resolution handling
-- Post-merge verification
-- Rollback script available (`rollback_merge.sh`)
+Use the tracked `.github/workflows/merge-development-to-main.yml` workflow
+from GitHub Actions for the development-to-main merge. It exposes full and dry
+run behavior through `workflow_dispatch` inputs, creates an optional backup tag,
+verifies the merge, and pushes `main` only for a non-dry run.
 
 #### 3. `/validate-changes` - Pre-Commit Validation
 
@@ -433,110 +319,37 @@ ANTHROPIC_API_KEY=sk-ant-...
 | **Clean Commits** | Automatic checks ensure professional commit messages |
 | **Safe Merging** | Guided workflows with rollback support |
 
-## 🔄 Automated Workflows (Non-Interactive Mode)
+## 🔄 Automated Workflows
 
-### Overview
+### Continuous validation
 
-**For complete automated workflow orchestration by Claude**: See **[auto-git-workflow SKILL.md](../.claude/skills/auto-git-workflow/SKILL.md)** for comprehensive step-by-step instructions with detailed logging format.
-
-All workflow scripts support `--non-interactive` mode for individual script automation. These flags enable non-interactive execution with sensible defaults.
-
-### Usage Pattern
-
-**Command Format**:
+The current branch-protection workflow runs the repository's quality gates in
+GitHub Actions:
 
 ```bash
-# Commit workflow
-./scripts/git/commit_enhanced.sh --non-interactive "commit message"
-
-# Merge workflow
-./scripts/git/merge_with_validation.sh --non-interactive
+uv run ruff check --output-format=github .
+uv run ruff format --check .
+uv run pyrefly check
+uv run pre-commit run --all-files --show-diff-on-failure
 ```
 
-### Complete Automated Workflow
+These commands are also suitable for local validation after the development
+dependencies are installed. The workflow reports the individual gate results
+together rather than delegating them to a repository-local wrapper script.
 
-**User Request**: "Commit and push to development, then merge to main following GIT_WORKFLOW.md"
+### Merge automation
 
-**Claude Code Execution**:
-
-```bash
-# 1. Ensure on development branch
-git checkout development
-
-# 2. Commit with automatic logging
-./scripts/git/commit_enhanced.sh --non-interactive "feat: Your message here"
-
-# 3. Push to development remote
-git push origin development
-
-# 4. Merge to main with automatic logging
-./scripts/git/merge_with_validation.sh --non-interactive
-
-# 5. Push to main remote
-git push origin main
-```
-
-### Non-Interactive Behavior
-
-**commit_enhanced.sh --non-interactive**:
-
-- Auto-stages all changes (no "Stage all changes?" prompt)
-- Auto-fixes lint issues (no "Auto-fix?" prompt)
-- Accepts non-conventional commit messages (no format prompt)
-- Skips branch verification prompts
-- Skips final confirmation prompt
-- Creates log: `logs/commit_enhanced_TIMESTAMP.log`
-
-**merge_with_validation.sh --non-interactive**:
-
-- Executes full merge workflow automatically
-- Auto-resolves modify/delete conflicts
-- Creates backup tag: `pre-merge-backup-TIMESTAMP`
-- Creates log: `logs/merge_with_validation_TIMESTAMP.log`
-- No user interaction required
-
-### Logging Output
-
-**Log File Location**: `logs/workflow_TIMESTAMP.log`
-
-**Log Format** (matches `bash_scripts_commit_merge_20251005_185155.log`):
-
-- Header with workflow identification
-- Start time timestamp
-- Phase-by-phase execution tracking
-- File changes summary
-- Conflict resolution details (if applicable)
-- Backup tag information
-- End time and final status
-- Comprehensive audit trail
-
-**Example Log Structure**:
-
-```
-=== Enhanced Commit Workflow ===
-Start Time: 2025-10-05 20:30:45
-
-[Phase 1] Pre-commit validation...
-[Phase 2] Staging changes...
-[Phase 3] Code quality checks...
-[Phase 4] Creating commit...
-
-End Time: 2025-10-05 20:31:12
-STATUS: SUCCESS
-```
+The manually dispatched `.github/workflows/merge-development-to-main.yml`
+workflow updates `main` from `origin/development`. A dry run previews the
+changes and commits; a non-dry run can create a backup tag, performs the merge,
+verifies ancestry, and pushes `main`. Inspect the corresponding GitHub Actions
+run for command output and the merge summary.
 
 ### Verification
 
-After workflow completion, user can verify:
-
 ```bash
-# View log file
-cat logs/commit_enhanced_TIMESTAMP.log
-cat logs/merge_with_validation_TIMESTAMP.log
-
-# Verify git history
-git log --oneline -5
-git log --graph --oneline -10
+git status
+git log --oneline --graph -10
 ```
 
 ## 📋 Daily Workflow
@@ -551,7 +364,8 @@ git log --graph --oneline -10
 /validate-changes
 
 # When ready to commit:
-./scripts/git/commit_enhanced.sh "feat: Add new search functionality"
+git add <files>
+git commit -m "feat: Add new search functionality"
 ```
 
 ### 2. Creating Pull Requests
@@ -572,8 +386,7 @@ gh pr create --title "feat: ..." --body "..."
 ```bash
 # Use guided merge workflow
 /run-merge full
-# Or run directly:
-./scripts/git/merge_with_validation.sh
+# Or run `.github/workflows/merge-development-to-main.yml` from GitHub Actions
 
 # Both branches now have identical public content
 # Local files remain private
@@ -606,28 +419,17 @@ cd claude-context-local
 
 ## ⚡ Quick Commands Reference
 
-### Windows cmd.exe
+### Local command reference
 
 | Task | Command | Result |
 | ------ | --------- | --------- |
-| **Safe commit** | `./scripts/git/commit_enhanced.sh "message"` | Commits with lint checks and validations |
-| **Automated commit** | `./scripts/git/commit_enhanced.sh --non-interactive "message"` | Non-interactive commit with auto-staging and auto-fix |
-| **Check code quality** | `./scripts/git/check_lint.sh` | Validates code with ruff check/ruff format/markdownlint |
-| **Fix linting** | `./scripts/git/fix_lint.sh` | Auto-fixes linting issues (Python + markdown) |
-| **Merge to main** | `./scripts/git/merge_with_validation.sh` | Safe merge: development → main (auto-resolves test file conflicts) |
-| **Automated merge** | `./scripts/git/merge_with_validation.sh --non-interactive` | Non-interactive merge for automation |
-| **Docs-only merge** | `./scripts/git/merge_docs.sh` | Merge only documentation changes |
-| **Emergency rollback** | `./scripts/git/rollback_merge.sh` | Rollback last merge |
-
-**Note on merges**: `merge_with_validation.sh` automatically handles expected modify/delete conflicts for test files. Manual merges (`git merge development`) will require running `git rm tests/**` to resolve conflicts. See [Understanding Modify/Delete Conflicts](#expected-conflicts-manual-merge) for details.
-
-### Git Bash / Linux / macOS
-
-| Task | Command | Result |
-| ------ | --------- | --------- |
-| **Check code quality** | `./scripts/git/check_lint.sh` | Validates code with ruff check/ruff format/markdownlint |
-| **Fix linting** | `./scripts/git/fix_lint.sh` | Auto-fixes linting issues (Python + markdown) |
-| **Validate branches** | `./scripts/git/validate_branches.sh` | Check branch status before merge |
+| **Check code quality** | `uv run ruff check --output-format=github .` | Runs the Ruff lint gate used by CI |
+| **Check formatting** | `uv run ruff format --check .` | Checks Ruff formatting without changing files |
+| **Check types** | `uv run pyrefly check` | Runs the repository type check |
+| **Run pre-commit** | `uv run pre-commit run --all-files --show-diff-on-failure` | Runs configured repository hooks |
+| **Check shell scripts** | `./scripts/lint/check_shell.sh` | Runs ShellCheck over `scripts/` |
+| **Run tests** | `./scripts/test/run_tests.sh` | Runs pytest from `.venv` |
+| **Merge to main** | `.github/workflows/merge-development-to-main.yml` | Manual GitHub Actions merge workflow |
 | **Check status** | `git status` | Shows staged changes |
 | **View branches** | `git branch -a` | Lists all branches |
 
@@ -635,11 +437,11 @@ cd claude-context-local
 
 ### ✅ DO
 
-- Use `commit_enhanced.sh` for all commits (includes lint checks)
+- Run the branch-protection checks before committing
 - Keep CLAUDE.md and MEMORY.md updated locally
-- Use `merge_with_validation.sh` for releases
+- Use the tracked GitHub Actions merge workflow for releases
 - Backup local files before major changes
-- Run `check_lint.sh` before committing
+- Review `git diff` before committing
 
 ### ❌ NEVER
 
@@ -698,7 +500,7 @@ Local Machine:
 ├── _archive/ (764 historical files)
 └── Public code files
 
-           ↓ commit_enhanced.sh (with lint checks)
+           ↓ git add / git commit / git push
 
 Development Branch:
 ├── Core application code
@@ -708,7 +510,7 @@ Development Branch:
 ├── pytest.ini
 └── Configuration files
 
-           ↓ merge_with_validation.sh (merges to main)
+           ↓ merge-development-to-main.yml (GitHub Actions)
 
 Main Branch:
 ├── Core application code
@@ -803,117 +605,15 @@ This project follows [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PAT
 
 Check `pyproject.toml` for the current version number.
 
-## 📊 Workflow Logging (MANDATORY)
+## 📊 Workflow Output
 
-### Purpose
+Local validation commands print their results to the terminal. CI output,
+including the branch-protection gates, is available in the corresponding
+GitHub Actions run. The merge workflow also prints its merge summary and any
+backup tag it creates.
 
-ALL significant Git operations (commits, merges, releases) MUST be logged for:
-
-- Complete audit trail
-- Troubleshooting failed operations
-- Historical reference
-- Process improvement
-
-### Log Location
-
-**Directory**: `logs/` (project root)
-**Full Path**: `F:\RD_PROJECTS\COMPONENTS\claude-context-local\logs\`
-**Git Status**: ✅ Gitignored (local-only, never committed)
-
-### Log File Format
-
-**Execution Log**: `{workflow_type}_YYYYMMDD_HHMMSS.log`
-
-- Real-time command outputs
-- Timestamps for each phase
-- Error messages and warnings
-- Verification results
-
-**Analysis Report**: `{workflow_type}_analysis_YYYYMMDD_HHMMSS.md`
-
-- Executive summary
-- Timeline with durations
-- Files modified (with line counts)
-- Issues encountered and resolutions
-- Final status (SUCCESS/FAILED)
-
-### Examples
-
-**Release Workflow**:
-
-- Log: `logs/git_workflow_v0.4.2_release_20251005_190000.log`
-- Report: `logs/git_workflow_analysis_v0.4.2_20251005_190000.md`
-
-**Bash Scripts Creation**:
-
-- Log: `logs/bash_scripts_verification_20251005_182523.log`
-- Report: `logs/bash_scripts_analysis_20251005_182523.md`
-
-### Mandatory Workflow Steps
-
-#### Before Starting Any Workflow
-
-1. Create timestamped log file in `logs/`
-2. Initialize with workflow metadata (type, start time, objectives)
-
-#### During Workflow
-
-3. Redirect all command outputs to log file (`>> logs/workflow.log`)
-4. Document each phase with timestamps
-5. Capture all verification checks
-
-#### After Workflow Completion
-
-6. Generate comprehensive analysis report
-7. Document final status (success/failure)
-8. Include lessons learned and improvements
-
-### Integration Examples
-
-**Bash Script Logging** (check_lint.sh example):
-
-```bash
-# At start of workflow
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOGFILE="logs/lint_validation_${TIMESTAMP}.log"
-
-echo "=== Lint Validation Log ===" > "$LOGFILE"
-echo "Start Time: $(date)" >> "$LOGFILE"
-
-# During execution
-./scripts/git/check_lint.sh 2>&1 | tee -a "$LOGFILE"
-
-# At end
-echo "End Time: $(date)" >> "$LOGFILE"
-echo "Status: SUCCESS" >> "$LOGFILE"
-```
-
-**Bash Script Logging** (merge_with_validation.sh example):
-
-```bash
-# At start of workflow
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOGFILE="logs/merge_workflow_${TIMESTAMP}.log"
-
-echo "=== Merge Workflow Log ===" > "$LOGFILE"
-echo "Start Time: $(date)" >> "$LOGFILE"
-
-# Execute with logging
-./scripts/git/merge_with_validation.sh >> "$LOGFILE" 2>&1
-
-# Generate analysis report
-REPORTFILE="logs/merge_analysis_${TIMESTAMP}.md"
-```
-
-### Previous Examples
-
-See existing logs in `logs/` directory (created during workflow execution):
-
-- v0.4.1 release logs (execution + analysis)
-- Bash scripts verification logs
-- Commit workflow logs
-
-All follow the same structure and format.
+Use `git status` and `git log --oneline --graph -10` to inspect local repository
+state after committing or updating a branch.
 
 ## 📦 Test Data Management
 
@@ -932,33 +632,35 @@ All follow the same structure and format.
 
 ## ⚠️ Common Errors and Solutions
 
-### Error: Backslash-Style Script Paths Not Working in Git Bash
+### Error: A workflow command cannot be found
 
 **Symptom**: Running a script with a Windows-style backslash path fails with "command not found"
 
 **Example Error**:
 
 ```bash
-$ scripts\git\check_lint.sh
-bash: scripts\git\check_lint.sh: command not found
+$ ./scripts/lint/check_shell.sh
+No shell script is available at the requested path
 ```
 
 **Root Cause**:
 
 - Git Bash (MINGW64) treats `\` as an escape character, not a path separator
-- All workflow scripts in this repo are Bash (`.sh`) — there is no Windows `.bat` fallback
+- The current checkout has no `scripts/git/` wrapper directory
 
 **Solution**: Use forward-slash paths
 
 ```bash
-./scripts/git/check_lint.sh         # Lint validation
-./scripts/git/fix_lint.sh            # Auto-fix lint issues
-./scripts/git/validate_branches.sh   # Branch validation
+uv run ruff check --output-format=github .
+uv run ruff format --check .
+uv run pyrefly check
+uv run pre-commit run --all-files --show-diff-on-failure
+./scripts/lint/check_shell.sh
 
 # All scripts:
 # ✅ Execute natively in Git Bash
 # ✅ Use forward-slash paths (compatible with Windows executables)
-# ✅ Respect pyproject.toml configuration
+# ✅ Respect the repository's tracked configuration
 # ✅ Proper exit codes for automation
 ```
 
@@ -977,13 +679,8 @@ exclude = [".venv", "_archive", "build", "dist", "__pycache__", "tests/test_data
 # Ruff's built-in isort replaces standalone isort
 ```
 
-**Verification**:
-
-- All 3 bash scripts verified operational (2025-10-05)
-- Logs: `bash_scripts_verification_20251005_182523.log`, `bash_scripts_analysis_20251005_182523.md`
-- Location: `F:\RD_PROJECTS\COMPONENTS\claude-context-local_backup\logs\`
-
-**Prevention**: Always use .sh scripts when working in Git Bash environment
+Use forward-slash paths for the tracked shell helpers on Git Bash, Linux, and
+macOS. The helper scripts resolve their project root from their own location.
 
 ---
 
@@ -1043,8 +740,8 @@ Only these 8 docs are allowed in main branch: [list]
 
 **Prevention**:
 
-- validate_branches.sh now checks CI policy pre-merge ([9/9] check)
-- merge_with_validation.sh validates docs before completing merge ([6/7] check)
+- `.github/workflows/branch-protection.yml` runs the current CI checks
+- `.github/workflows/merge-development-to-main.yml` verifies the merge before pushing `main`
 
 ---
 
@@ -1071,11 +768,9 @@ git rm tests/integration/*.py tests/unit/*.py
 git commit --no-edit
 ```
 
-**Better Approach**: Use automated script to avoid manual resolution:
-
-```bash
-./scripts/git/merge_with_validation.sh  # Auto-resolves these conflicts
-```
+**Better Approach**: Run `.github/workflows/merge-development-to-main.yml`
+from GitHub Actions. It aborts when the merge command fails instead of leaving
+an unresolved local merge in progress.
 
 **Full explanation**: See [Understanding Modify/Delete Conflicts](#expected-conflicts-manual-merge)
 
@@ -1105,47 +800,8 @@ git rm tests/integration/*.py tests/unit/*.py
 git commit --no-edit
 ```
 
-**Prevention**: Use `merge_with_validation.sh` for automated conflict resolution.
-
-#### Script Error (Automated Merge Failed)
-
-If you used `merge_with_validation.sh` and it **fails to auto-resolve**:
-
-**Symptom**: Script reports conflicts but doesn't resolve them automatically
-
-**Example**:
-
-```
-⚠ Merge conflicts detected - analyzing...
-Found modify/delete conflicts for excluded files
-[Lists files but doesn't resolve them]
-❌ Some conflicts remain unresolved
-```
-
-**Root Cause**: Conflict resolution loop error (older script versions had this issue)
-
-**Solution**:
-
-1. Manual resolution:
-
-   ```bash
-   # For test files (exclude from main)
-   git rm tests/fixtures/sample_code.py tests/integration/*.py tests/unit/*.py
-
-   # For docs (check if allowed on main)
-   git add docs/ALLOWED_FILE.md  # If in CI policy
-   git rm docs/DEV_ONLY_FILE.md  # If NOT in CI policy
-
-   # Complete merge
-   git commit --no-edit
-   ```
-
-2. Script has been improved with:
-   - Temp file approach for better parsing
-   - Error checking for each file
-   - Verification after resolution
-
-**Prevention**: Update to latest script version with enhanced error handling
+**Prevention**: Run the tracked merge workflow with `dry_run` first when a
+preview is useful, then use a non-dry run after reviewing the proposed changes.
 
 ---
 
@@ -1153,7 +809,7 @@ Found modify/delete conflicts for excluded files
 
 **Symptom**:
 
-- Lint errors remain after running fix_lint.sh
+- Lint errors remain after running Ruff
 - Ruff reports "hidden fixes can be enabled with --unsafe-fixes"
 
 **Example**:
@@ -1162,15 +818,16 @@ Found modify/delete conflicts for excluded files
 144 hidden fixes can be enabled with the `--unsafe-fixes` option
 ```
 
-**Root Cause**: fix_lint.sh missing --unsafe-fixes flag
+**Root Cause**: Ruff's hidden fixes require an explicit `--unsafe-fixes` flag
 
-**Solution**: Script has been updated:
+**Solution**: Use the Ruff CLI flag explicitly when those fixes are intended:
 
 ```bash
-.venv/Scripts/ruff.exe check . --fix --unsafe-fixes
+uv run ruff check . --fix --unsafe-fixes
 ```
 
-**Prevention**: Script now includes --unsafe-fixes by default (91% auto-fix success rate)
+**Prevention**: Review the diff after any auto-fix and run the branch-protection
+checks before committing.
 
 ---
 
@@ -1202,7 +859,8 @@ Found modify/delete conflicts for excluded files
    git config --global merge.ours.driver true
    ```
 
-**Prevention**: validate_branches.sh checks merge.ours driver configuration ([6/9] check)
+**Prevention**: The tracked merge workflow configures and verifies the `ours`
+merge driver before merging.
 
 ---
 
@@ -1218,7 +876,7 @@ main
 # Expected: development
 ```
 
-**Root Cause**: User didn't verify current branch before running commit script
+**Root Cause**: User didn't verify the current branch before committing
 
 **Impact**:
 
@@ -1254,12 +912,7 @@ main
    git push origin development
    ```
 
-**Prevention**: commit_enhanced.sh now includes branch verification:
-
-- Shows current branch before commit
-- Requires user confirmation: "Is this the correct branch?"
-- Lists all available branches if user says no
-- Exits cleanly to allow branch switching
+**Prevention**: Check `git branch --show-current` before staging and committing.
 
 ---
 
@@ -1311,17 +964,12 @@ fi
 
 ### 📅 Historical Note: Windows Batch Era (2025-10-04)
 
-The workflow scripts (`merge_with_validation`, `commit_enhanced`, etc.) were originally
-implemented as Windows batch (`.bat`) files. During 2025-10-04, a v4 iteration of that batch
-implementation fixed two significant bugs: premature "merge completed" false positives (the
-completion check didn't validate that conflicts were actually resolved and staged) and batch
-command-parsing errors caused by multi-line commit messages and unescaped `for /f` loops. Both
-were resolved and verified (commit `e9d60c8`), and 13 related Ruff lint errors (`B007`, `B904`)
-were fixed in the same pass (commit `46dac62`).
-
-The batch implementation has since been fully replaced by the Bash (`.sh`) scripts documented
-throughout this guide — none of the `.bat`-specific parsing bugs above apply to the current
-scripts. This note is retained only as a historical record of the migration.
+Earlier revisions of this guide described local workflow-wrapper scripts and a
+Windows batch implementation. Those wrappers are not part of the current
+checkout; current validation and merge behavior is defined by the tracked
+GitHub Actions workflows and helper paths documented above. This note is
+retained only as historical context and is not an instruction to run those
+older commands.
 
 ---
 
@@ -1461,7 +1109,7 @@ All checks passed!
 
 - ✅ Use underscore prefix for unused variables
 - ✅ Always add `from e` when re-raising exceptions
-- ✅ Run `fix_lint.sh` before committing
+- ✅ Run the branch-protection Ruff and pre-commit checks before committing
 - ✅ Use `from None` only when suppression is intentional
 - ✅ Review Ruff suggestions during development
 
@@ -1471,37 +1119,35 @@ All checks passed!
 
 ## 🔍 Lint Workflow Best Practices
 
-### When to Run check_lint.sh vs fix_lint.sh
+### When to run validation
 
-**check_lint.sh** (Read-only validation):
+Run the same commands used by branch protection before committing changes:
 
-- Before committing changes
-- During code review
-- To check current code quality
-- **Does NOT modify files**
-
-**fix_lint.sh** (Auto-fix issues):
-
-- After making changes
-- When you want to clean up code
-- Before final commit
-- **Modifies files in place**
+- `uv run ruff check --output-format=github .`
+- `uv run ruff format --check .`
+- `uv run pyrefly check`
+- `uv run pre-commit run --all-files --show-diff-on-failure`
+- `./scripts/lint/check_shell.sh`
 
 **Recommended workflow**:
 
 ```bash
 # 1. Make your changes
-# 2. Auto-fix issues
-./scripts/git/fix_lint.sh
+# 2. Review and, if needed, apply an explicit Ruff fix
+uv run ruff check . --fix
 
 # 3. Review what was fixed
 git diff
 
 # 4. Final validation
-./scripts/git/check_lint.sh
+uv run ruff check --output-format=github .
+uv run ruff format --check .
+uv run pyrefly check
+uv run pre-commit run --all-files --show-diff-on-failure
 
 # 5. Commit if all checks pass
-./scripts/git/commit_enhanced.sh "fix: Your commit message"
+git add <files>
+git commit -m "fix: Describe the change"
 ```
 
 ### Understanding --unsafe-fixes
@@ -1626,10 +1272,7 @@ markdownlint-cli2 --version
 
 ```bash
 # Check markdown quality
-./scripts/git/check_lint.sh    # Includes markdownlint
-
-# Auto-fix markdown issues
-./scripts/git/fix_lint.sh      # Includes markdownlint --fix
+uv run pre-commit run markdownlint --all-files --show-diff-on-failure
 ```
 
 **Common markdown fixes**:
@@ -1660,7 +1303,7 @@ markdownlint-cli2 --version
 ./scripts/lint/check_shell.sh
 
 # Output shows pass/fail for each .sh file
-# Validates scripts in scripts/git/, scripts/lint/, scripts/test/, scripts/docs/
+# Validates tracked shell scripts under scripts/
 ```
 
 **What ShellCheck detects**:
@@ -1711,10 +1354,10 @@ result=$(command)
 
 **When new warnings appear**:
 
-1. Run `fix_lint.sh` first (auto-fixes ~90%)
+1. Run `uv run ruff check . --fix` first when an automatic fix is appropriate
 2. Review changes with `git diff`
 3. Manually fix remaining issues
-4. Verify with `check_lint.sh`
+4. Verify with the branch-protection commands in [Current Workflow Entry Points](#-current-workflow-entry-points)
 
 ### Error Code Categories
 

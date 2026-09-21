@@ -54,11 +54,11 @@ This project uses automated code quality tools:
 - **shellcheck**: Bash script validation
 
 ```bash
-# Check code style (includes Python, Markdown, and Shell scripts)
-./scripts/git/check_lint.sh
-
-# Auto-fix issues (Python and Markdown only)
-./scripts/git/fix_lint.sh
+# Run the same checks enforced by branch protection
+uv run ruff check --output-format=github .
+uv run ruff format --check .
+uv run pyrefly check
+uv run pre-commit run --all-files --show-diff-on-failure
 
 # Check shell scripts separately
 ./scripts/lint/check_shell.sh
