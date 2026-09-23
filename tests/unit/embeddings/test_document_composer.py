@@ -299,7 +299,9 @@ class TestComposeBranches:
     def test_compose_all_flags_on_includes_every_section_in_order(self, tmp_path):
         composer = EmbeddingDocumentComposer()
         chunk = _full_featured_chunk(tmp_path)
-        policy = EmbeddingDocumentPolicy()  # all 5 fields default True/10/5
+        policy = (
+            EmbeddingDocumentPolicy()
+        )  # all 6 fields at their EmbeddingConfig defaults
 
         result = composer.compose(chunk, policy)
 
@@ -379,10 +381,14 @@ class TestComposeBranches:
         self, tmp_path
     ):
         composer = EmbeddingDocumentComposer()
+        # Explicit body_truncation="head_tail_lines": since the 2026-09-23 A/B
+        # adoption, EmbeddingConfig.body_truncation defaults to "fill_budget",
+        # so this legacy-mode test can no longer rely on the policy default.
         policy = EmbeddingDocumentPolicy(
             enable_import_context=False,
             enable_class_context=False,
             enable_structural_header=False,
+            body_truncation="head_tail_lines",
         )
         content = "\n".join(f"line_{i}" for i in range(20))
         chunk = CodeChunk(

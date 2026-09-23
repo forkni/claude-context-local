@@ -199,7 +199,7 @@ class EmbeddingConfig:
         ),
     )
     body_truncation: str = field(
-        default="head_tail_lines",
+        default="fill_budget",
         metadata=spec(
             choices=("head_tail_lines", "fill_budget"),
             flat_alias="embedding_body_truncation",
@@ -207,16 +207,24 @@ class EmbeddingConfig:
             reader="embeddings/document_composer.py",
         ),
     )  # How EmbeddingDocumentComposer.compose() truncates an oversized chunk
-    # body. "head_tail_lines" (byte-identical default) caps at 20 head / 10
-    # tail *lines* regardless of remaining char budget -- for chunks with
-    # short average line length (prose-as-.py, dense one-statement-per-line
-    # code) this binds long before the budget does, wasting most of
-    # max_chars (diagnose /diagnose Item 1, 2026-09-23:
-    # tmp/diag_compose_truncation.py). "fill_budget" drops the line caps and
-    # fills head/tail by character budget instead (70% head / remainder
-    # tail). Default-off pending a pre-registered A/B against the 09-20 canon
-    # (evaluation/CANON_20260920_REBASELINE.md) -- see that diagnosis's plan
-    # for the adoption/drift gate.
+    # body. "head_tail_lines" (the old default) caps at 20 head / 10 tail
+    # *lines* regardless of remaining char budget -- for chunks with short
+    # average line length (prose-as-.py, dense one-statement-per-line code)
+    # this binds long before the budget does, wasting most of max_chars
+    # (diagnose /diagnose Item 1, 2026-09-23: tmp/diag_compose_truncation.py
+    # found 307/307 sampled oversized repo chunks composed to well under 0.8x
+    # their remaining budget, median 0.22x). "fill_budget" drops the line
+    # caps and fills head/tail by character budget instead (70% head /
+    # remainder tail). ADOPTED as the default 2026-09-23 after a
+    # pre-registered A/B against the 09-20 canon (both the adoption gate --
+    # no paired CI excluded 0 in the negative direction on MRR/recall@10/20
+    # across 63q/133q/f-via-similar, guard-rails PASS, pool_hit_rate
+    # non-decreasing on all 3 views -- and the drift gate vs
+    # evaluation/CANON_20260920_REBASELINE.md passed); see
+    # evaluation/CANON_20260923_REBASELINE.md for the full gate results.
+    # Pass "head_tail_lines" explicitly (config, flat alias, or
+    # CLAUDE_EMBEDDING_BODY_TRUNCATION) to restore the pre-2026-09-23 byte-
+    # identical legacy behavior.
 
     # Persistent content-hash embedding cache (Round 3)
     enable_chunk_cache: bool = field(
