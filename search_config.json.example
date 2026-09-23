@@ -113,7 +113,8 @@
     "max_complexity_cap": 30,
     "glsl_filter_td_prefix": true,
     "max_file_size_bytes": 25165824,
-    "enable_td_network_indexing": false
+    "enable_td_network_indexing": false,
+    "split_oversized_preamble": false
   },
   "ego_graph": {
     "enabled": true,

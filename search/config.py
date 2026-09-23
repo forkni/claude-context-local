@@ -1091,7 +1091,7 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (12 fields)."""
+    """Chunking algorithm settings (13 fields)."""
 
     # Large function splitting (cAST paper: AST-aware splitting improves Recall@5 +66%)
     enable_large_node_splitting: bool = field(
@@ -1208,6 +1208,26 @@ class ChunkingConfig:
             reader="chunking/language_registry.py",
         ),
     )
+
+    split_oversized_preamble: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="split_oversized_preamble",
+            env="CLAUDE_SPLIT_OVERSIZED_PREAMBLE",
+            reader="chunking/languages/base.py",
+        ),
+    )  # `_collect_module_preamble_chunks` emits every root-level statement
+    # run (import-time side effects, module constants, prose-as-.py files)
+    # as a single verbatim `module_preamble` chunk with no size check --
+    # unlike the function-split path, which applies max_chunk_lines /
+    # max_split_chars. A 1,034-line prose file therefore becomes one chunk,
+    # silently truncated by the embedding composer (Card B plan, 2026-09-23:
+    # 25 oversized preamble runs this repo, 28 in twozero-dev; packing at
+    # root sibling boundaries at the static max_split_chars threshold would
+    # take this repo from 3,071 to ~3,107 chunks). Default-off pending a
+    # pre-registered A/B against the 2026-09-23 canon
+    # (evaluation/CANON_20260923_REBASELINE.md) -- no golden-set gold sits
+    # in any affected run, so the effect is on pool composition only.
 
 
 @dataclass

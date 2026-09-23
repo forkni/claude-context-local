@@ -1099,7 +1099,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         # are never subject to synthetic-chunk demotion/exclusion logic
         # (search/graph_scoring_stage.py, search/centrality_ranker.py, etc.).
         chunks.extend(
-            self._collect_module_preamble_chunks(tree.root_node, source_bytes)
+            self._collect_module_preamble_chunks(tree.root_node, source_bytes, config)
         )
 
         # If no chunks found, create a single module-level chunk
@@ -1134,7 +1134,10 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
     )
 
     def _collect_module_preamble_chunks(
-        self, root_node: Any, source_bytes: bytes
+        self,
+        root_node: Any,
+        source_bytes: bytes,
+        config: ChunkingConfig | None = None,
     ) -> list[TreeSitterChunk]:
         """Collect contiguous root-level statement runs not covered by
         function/class/decorated_definition chunking (Fix A).
@@ -1174,6 +1177,11 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         Args:
             root_node: The tree-sitter root node (whole file).
             source_bytes: UTF-8-encoded source, for verbatim byte-range slicing.
+            config: Optional ChunkingConfig. When
+                ``config.split_oversized_preamble`` is on and a run exceeds
+                ``config.max_chunk_lines``, the run is packed into
+                size-bounded pieces at sibling boundaries (see
+                ``_preamble_groups``) instead of emitted as one chunk.
 
         Returns:
             One chunk per contiguous run that contains more than
@@ -1193,7 +1201,8 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                 (not seen_chunk and self._is_comment_only_run(trimmed))
                 or not self._is_boilerplate_run(trimmed)
             ):
-                self._append_preamble_chunk(trimmed, source_bytes, preamble_chunks)
+                for group in self._preamble_groups(trimmed, source_bytes, config):
+                    self._append_preamble_chunk(group, source_bytes, preamble_chunks)
             run_nodes.clear()
 
         for child in root_node.children:
@@ -1207,6 +1216,60 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         flush(None)
 
         return preamble_chunks
+
+    def _preamble_groups(
+        self,
+        nodes: list[Any],
+        source_bytes: bytes,
+        config: ChunkingConfig | None,
+    ) -> list[list[Any]]:
+        """Split an oversized preamble run into size-bounded pieces.
+
+        Gated identically to the function-split path: needs
+        ``config.enable_large_node_splitting`` on, the new
+        ``config.split_oversized_preamble`` opt-in on, and the run to exceed
+        ``config.max_chunk_lines``. Otherwise returns ``[nodes]`` unchanged
+        -- the pre-Card-B behavior of one verbatim chunk per run.
+
+        Uses the shared ``_pack_by_size`` packer at the *static*
+        ``max_split_chars`` threshold, never the adaptive one: P75 is a
+        distribution of function sizes, and at low complexity that produces
+        pieces far too small for prose-shaped preamble runs (see Card B
+        plan). Cuts are vetoed between a leading comment and the statement
+        it documents (``_preamble_may_cut_before``).
+        """
+        if (
+            config is None
+            or not config.enable_large_node_splitting
+            or not config.split_oversized_preamble
+        ):
+            return [nodes]
+        start_line = nodes[0].start_point[0] + 1
+        end_line = nodes[-1].end_point[0] + 1
+        if end_line - start_line + 1 <= config.max_chunk_lines:
+            return [nodes]
+        threshold = self._get_split_threshold(
+            config.split_size_method, config.max_chunk_lines, config.max_split_chars
+        )
+        return self._pack_by_size(
+            nodes,
+            source_bytes,
+            threshold,
+            config.split_size_method,
+            self._preamble_may_cut_before,
+        )
+
+    def _preamble_may_cut_before(self, prev: Any, node: Any) -> bool:
+        """Veto a cut between a leading comment and the statement it documents.
+
+        Grammar-agnostic (mirrors ``_is_boilerplate_run``'s ``"comment" in
+        prev.type`` check): true unless ``prev`` is a comment node
+        line-adjacent to ``node`` (no blank line between them), in which
+        case the comment stays attached to what it leads.
+        """
+        if "comment" not in prev.type:
+            return True
+        return node.start_point[0] > prev.end_point[0] + 1
 
     def _append_preamble_chunk(
         self,
