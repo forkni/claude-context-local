@@ -646,3 +646,41 @@ class TestMeasureActivationPerItem:
 
         assert result > 0.0, f"Expected activation measurement for device={device!r}"
         mock_model.encode.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _WARMUP_TEXT — peak-length invariant (diagnose /diagnose Item 2, 2026-09-23)
+# ---------------------------------------------------------------------------
+
+
+class TestWarmupTextPeakLengthInvariant:
+    """``_WARMUP_TEXT`` must stay at or above the real composed-document cap.
+
+    The 2026-09-23 diagnose loop (``tmp/diag_activation_probe.py``, plan
+    ``log-1462-observed-happy-haven.md`` Item 2) confirmed the probe is
+    peak-length by design (ADR-0007 #54, not a bug): probe tokens (2017) vs
+    real composed-doc max tokens (1651) = 1.22x, under the 1.3x
+    "probe is oversized" threshold. This locks that invariant so a future
+    edit can't silently shrink the probe below the real document cap and
+    under-size the activation measurement, which would risk OOM on real
+    peak-length chunks.
+    """
+
+    def test_warmup_text_at_least_as_long_as_compose_max_chars(self):
+        import inspect
+
+        from embeddings.document_composer import EmbeddingDocumentComposer
+        from embeddings.model_loader import _WARMUP_TEXT
+
+        max_chars_default = (
+            inspect.signature(EmbeddingDocumentComposer.compose)
+            .parameters["max_chars"]
+            .default
+        )
+
+        assert len(_WARMUP_TEXT) >= max_chars_default, (
+            f"_WARMUP_TEXT ({len(_WARMUP_TEXT)} chars) must stay >= the real "
+            f"composed-document char cap ({max_chars_default} chars) -- "
+            "trimming it shorter would under-size the activation probe below "
+            "real peak-length documents."
+        )

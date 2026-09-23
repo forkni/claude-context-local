@@ -28,8 +28,13 @@ from embeddings.model_cache import ModelCacheManager
 from search.config import get_search_config
 
 
-# Dummy text representative of a typical code chunk (~512 tokens).
+# Dummy text representative of a peak-length code chunk (~2017 tokens once
+# repeated x32 below, not ~512 -- see the trailing comment on that line).
 # Used during warmup activation measurement to estimate per-item VRAM cost.
+# Confirmed still correctly peak-length-sized, not oversized, by the 2026-09-23
+# diagnose loop (tmp/diag_activation_probe.py, plan log-1462-observed-happy-haven.md
+# Item 2): probe tokens (2017) vs real composed-doc max tokens (1651) = 1.22x,
+# under the 1.3x "probe is oversized" threshold.
 _WARMUP_TEXT = (
     "def process_data(self, input_data: list[str], max_length: int = 512) -> list[str]:\n"
     '    """Process and filter input data."""\n'
@@ -565,9 +570,12 @@ class ModelLoader:
             model = SentenceTransformer(model_source, **constructor_kwargs)
 
             # Warmup + per-item activation measurement.
-            # _measure_activation_per_item uses a representative ~512-token batch
-            # (not the old 4-token "warm-up" string) so the measurement reflects real
-            # workload and TorchDynamo compiles for a realistic shape.
+            # _measure_activation_per_item uses a representative ~2017-token batch
+            # (peak-length by design, not the old 4-token "warm-up" string) so the
+            # measurement reflects real peak-length workload and TorchDynamo
+            # compiles for a realistic shape. Confirmed still correctly sized vs
+            # real composed-doc peaks by the 2026-09-23 diagnose loop -- see
+            # _WARMUP_TEXT's comment above.
             # Method is a no-op on CPU (returns 0.0 early).
             self._measure_activation_per_item(model, resolved_device, batch_size=4)
 

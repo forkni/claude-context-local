@@ -53,6 +53,7 @@ class EmbeddingDocumentPolicy:
     max_import_lines: int = EmbeddingConfig.max_import_lines
     max_class_signature_lines: int = EmbeddingConfig.max_class_signature_lines
     enable_structural_header: bool = EmbeddingConfig.enable_structural_header
+    body_truncation: str = EmbeddingConfig.body_truncation
 
     @classmethod
     def from_config(cls, config: SearchConfig) -> EmbeddingDocumentPolicy:
@@ -68,6 +69,7 @@ class EmbeddingDocumentPolicy:
             max_import_lines=config.embedding.max_import_lines,
             max_class_signature_lines=config.embedding.max_class_signature_lines,
             enable_structural_header=config.embedding.enable_structural_header,
+            body_truncation=config.embedding.body_truncation,
         )
 
 
@@ -328,7 +330,15 @@ class EmbeddingDocumentComposer:
         else:
             # Smart truncation: try to keep function signature and important parts
             lines = chunk.content.split("\n")
-            if len(lines) > 3:
+            if len(lines) > 3 and policy.body_truncation == "fill_budget":
+                content_parts.append(
+                    self._fill_budget_truncate(lines, remaining_budget)
+                )
+            elif len(lines) > 3:
+                # "head_tail_lines" (default) -- byte-identical to the original,
+                # pre-knob behavior. Caps at 20 head / 10 tail *lines* regardless
+                # of how much of remaining_budget that leaves unused; see
+                # _fill_budget_truncate for the budget-driven alternative.
                 # Keep first few lines (signature) and last few lines (return/conclusion)
                 head_lines = []
                 tail_lines = []
@@ -370,3 +380,51 @@ class EmbeddingDocumentComposer:
                 )
 
         return "\n".join(content_parts)
+
+    def _fill_budget_truncate(self, lines: list[str], remaining_budget: int) -> str:
+        """``fill_budget`` truncation: head/tail split by character budget,
+        not the legacy 20-head/10-tail *line* caps (diagnose /diagnose Item 1,
+        2026-09-23: those caps bind long before the budget does for chunks
+        with short average line length -- see
+        ``EmbeddingConfig.body_truncation``). Head fills up to 70% of
+        ``remaining_budget``; tail fills whatever is left, minus the marker.
+
+        Unlike the legacy branch, ``current_length`` starts at 0 here, not at
+        ``context_len`` -- the caller already subtracted ``context_len`` when
+        computing ``remaining_budget``, so re-adding it here would double
+        count it (the legacy branch's pre-existing bug, left alone there to
+        keep it bit-identical).
+        """
+        marker_with_tail = "\n    # ... (truncated) ...\n"
+        marker_no_tail = "\n    # ... (truncated) ..."
+        head_budget = remaining_budget * 0.7
+
+        head_lines: list[str] = []
+        current_length = 0
+        for line in lines:
+            if current_length + len(line) + 1 > head_budget:
+                break
+            head_lines.append(line)
+            current_length += len(line) + 1
+
+        if not head_lines:
+            # A single line longer than the head budget can't be head/tail
+            # split at all -- fall back to plain character truncation of the
+            # whole body, same as the <=3-line path in compose().
+            content = "\n".join(lines)
+            return (
+                content[:remaining_budget] + "..."
+                if len(content) > remaining_budget
+                else content
+            )
+
+        remaining_space = remaining_budget - current_length - len(marker_with_tail)
+        tail_lines: list[str] = []
+        for line in reversed(lines[len(head_lines) :]):
+            if len("\n".join(tail_lines)) + len(line) + 1 > remaining_space:
+                break
+            tail_lines.insert(0, line)
+
+        if tail_lines:
+            return "\n".join(head_lines) + marker_with_tail + "\n".join(tail_lines)
+        return "\n".join(head_lines) + marker_no_tail

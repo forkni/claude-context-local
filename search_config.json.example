@@ -9,6 +9,7 @@
     "max_import_lines": 25,
     "max_class_signature_lines": 20,
     "enable_structural_header": true,
+    "body_truncation": "head_tail_lines",
     "enable_chunk_cache": true,
     "chunk_cache_max_entries": 0
   },

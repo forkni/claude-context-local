@@ -127,7 +127,7 @@ def spec(
 
 @dataclass
 class EmbeddingConfig:
-    """Embedding model configuration (11 fields)."""
+    """Embedding model configuration (12 fields)."""
 
     model_name: str = field(
         default="BAAI/bge-m3",
@@ -198,6 +198,25 @@ class EmbeddingConfig:
             reader="embeddings/document_composer.py",
         ),
     )
+    body_truncation: str = field(
+        default="head_tail_lines",
+        metadata=spec(
+            choices=("head_tail_lines", "fill_budget"),
+            flat_alias="embedding_body_truncation",
+            env="CLAUDE_EMBEDDING_BODY_TRUNCATION",
+            reader="embeddings/document_composer.py",
+        ),
+    )  # How EmbeddingDocumentComposer.compose() truncates an oversized chunk
+    # body. "head_tail_lines" (byte-identical default) caps at 20 head / 10
+    # tail *lines* regardless of remaining char budget -- for chunks with
+    # short average line length (prose-as-.py, dense one-statement-per-line
+    # code) this binds long before the budget does, wasting most of
+    # max_chars (diagnose /diagnose Item 1, 2026-09-23:
+    # tmp/diag_compose_truncation.py). "fill_budget" drops the line caps and
+    # fills head/tail by character budget instead (70% head / remainder
+    # tail). Default-off pending a pre-registered A/B against the 09-20 canon
+    # (evaluation/CANON_20260920_REBASELINE.md) -- see that diagnosis's plan
+    # for the adoption/drift gate.
 
     # Persistent content-hash embedding cache (Round 3)
     enable_chunk_cache: bool = field(

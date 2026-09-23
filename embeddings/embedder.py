@@ -95,10 +95,21 @@ def estimate_activation_gb_from_config(
                   = (2·hidden +   intermediate) · dtype_bytes   [standard FFN]
         peak_per_token = max(attn_peak, mlp_peak) + hidden·dtype_bytes
 
-    Validated against registered models with SAFETY=15, T_eff=1024
-    (F2LLM-v2-0.6B not yet profiled):
-        EmbeddingGemma-300M:  0.13 GB  (observed ~0.04 GB)   safe
-        Qwen3-Embed-0.6B:     0.26 GB  (observed  0.27 GB)   safe
+    Validated against registered models with SAFETY=15, T_eff=2048
+    (peak-length regime, matching ``t_eff`` below):
+        EmbeddingGemma-300M:  0.13 GB  (observed ~0.04 GB)                safe
+        Qwen3-Embed-0.6B:     0.26 GB  (observed 1.129 GB, peak-length
+                              x32 probe, 2026-09-23 -- the previously
+                              logged 0.27 GB dated from a shorter x8
+                              probe, a29f8965 2026-04-14, before the
+                              probe was lengthened x8->x32 for peak-length
+                              OOM safety, 33c3b12e/#54; not comparable)    safe
+        F2LLM-v2-0.6B:        (not formula-modeled here; observed 0.855 GB,
+                              peak-length x32 probe, 2026-09-23 -- landing
+                              on dynamic_batch_min=16 at this cost is
+                              expected on a 24 GB card, not a defect; see
+                              plan log-1462-observed-happy-haven.md Item 2,
+                              tmp/diag_activation_probe.py)                safe
 
     Args:
         config: HuggingFace PretrainedConfig (has .hidden_size, etc.)
@@ -371,9 +382,12 @@ def calculate_optimal_batch_size(
         Batch size clamped to [min_batch, max_batch]
 
     Examples:
-        >>> # RTX 4090 (24GB), Qwen3-0.6B, 0.27 GB/item measured
-        >>> calculate_optimal_batch_size(activation_gb_per_item=0.27, model_vram_gb=1.1)
-        53  # ~(16GB free × 0.8 × 0.82) / 0.27
+        >>> # RTX 4090 (24GB), F2LLM-v2-0.6B, 0.855 GB/item measured
+        >>> # (peak-length x32 probe, 2026-09-23 -- see embedder.py:98-101).
+        >>> # Landing on min_batch here is expected: the probe is
+        >>> # peak-length by design (ADR-0007 #54), not a bug.
+        >>> calculate_optimal_batch_size(activation_gb_per_item=0.855, model_vram_gb=1.1)
+        32  # ~(16GB free × 0.8 × 0.82) / 0.855 = 12, floored to min_batch default
     """
     if not torch or not torch.cuda.is_available():
         return min_batch  # CPU fallback

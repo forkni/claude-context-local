@@ -446,6 +446,132 @@ class TestComposeBranches:
 
         assert result == "a" * 10 + "..."
 
+    def test_body_over_budget_head_tail_lines_mode_matches_legacy_default(
+        self, tmp_path
+    ):
+        """The default policy must stay byte-identical to pre-knob behavior --
+        this is the same fixture/assertions as
+        test_body_over_budget_with_more_than_three_lines_uses_head_tail_truncation,
+        just spelling out ``body_truncation="head_tail_lines"`` explicitly."""
+        composer = EmbeddingDocumentComposer()
+        policy = EmbeddingDocumentPolicy(
+            enable_import_context=False,
+            enable_class_context=False,
+            enable_structural_header=False,
+            body_truncation="head_tail_lines",
+        )
+        content = "\n".join(f"line_{i}" for i in range(20))
+        chunk = CodeChunk(
+            file_path=str(tmp_path / "f.py"),
+            relative_path="f.py",
+            folder_structure=".",
+            chunk_type="function",
+            start_line=1,
+            end_line=20,
+            name="f",
+            parent_name=None,
+            docstring="",
+            content=content,
+            decorators=[],
+            imports=[],
+            complexity_score=1.0,
+            tags=[],
+            calls=[],
+            relationships=[],
+        )
+
+        result = composer.compose(chunk, policy, max_chars=60)
+
+        assert result == (
+            "line_0\nline_1\nline_2\nline_3\nline_4\n    # ... (truncated) ..."
+        )
+
+    def test_body_over_budget_fill_budget_mode_fills_remaining_budget(self, tmp_path):
+        """fill_budget must drop the 20-head/10-tail *line* caps and instead
+        fill by character budget: >=0.9x max_chars, <=max_chars, keeping the
+        first and last source lines plus the truncation marker."""
+        composer = EmbeddingDocumentComposer()
+        policy = EmbeddingDocumentPolicy(
+            enable_import_context=False,
+            enable_class_context=False,
+            enable_structural_header=False,
+            body_truncation="fill_budget",
+        )
+        # 1,000 lines of ~90 chars each -- far more than the legacy 20/10 line
+        # caps would ever keep, but well within a 6,000-char budget's reach.
+        lines = [f"line_{i:04d} " + ("x" * 80) for i in range(1000)]
+        content = "\n".join(lines)
+        chunk = CodeChunk(
+            file_path=str(tmp_path / "f.py"),
+            relative_path="f.py",
+            folder_structure=".",
+            chunk_type="function",
+            start_line=1,
+            end_line=1000,
+            name="f",
+            parent_name=None,
+            docstring="",
+            content=content,
+            decorators=[],
+            imports=[],
+            complexity_score=1.0,
+            tags=[],
+            calls=[],
+            relationships=[],
+        )
+        max_chars = 6000
+
+        result = composer.compose(chunk, policy, max_chars=max_chars)
+
+        assert len(result) <= max_chars
+        assert len(result) >= 0.9 * max_chars
+        assert "    # ... (truncated) ..." in result
+        assert result.startswith(lines[0])
+        assert result.rstrip("\n").endswith(lines[-1])
+        # Confirms the caps are really gone, not just relaxed: legacy would
+        # have kept at most 20 head lines here.
+        assert "line_0020 " in result
+
+    def test_body_over_budget_fill_budget_single_oversized_line_falls_back_to_char_truncation(
+        self, tmp_path
+    ):
+        """A single line longer than the head budget can't be head/tail split
+        -- fill_budget must fall back to plain character truncation instead
+        of producing an empty head."""
+        composer = EmbeddingDocumentComposer()
+        policy = EmbeddingDocumentPolicy(
+            enable_import_context=False,
+            enable_class_context=False,
+            enable_structural_header=False,
+            body_truncation="fill_budget",
+        )
+        # 4 lines (>3, so this reaches the head/tail path) but the first line
+        # alone already exceeds 0.7x of any remaining_budget under max_chars=60.
+        content = "\n".join(["z" * 100, "line_1", "line_2", "line_3"])
+        chunk = CodeChunk(
+            file_path=str(tmp_path / "f.py"),
+            relative_path="f.py",
+            folder_structure=".",
+            chunk_type="function",
+            start_line=1,
+            end_line=4,
+            name="f",
+            parent_name=None,
+            docstring="",
+            content=content,
+            decorators=[],
+            imports=[],
+            complexity_score=1.0,
+            tags=[],
+            calls=[],
+            relationships=[],
+        )
+
+        result = composer.compose(chunk, policy, max_chars=60)
+
+        assert "    # ... (truncated) ..." not in result
+        assert result == "z" * 50 + "..."
+
     def test_get_class_signature_truncates_at_closing_triple_quote_within_capped_lines(
         self, tmp_path
     ):
