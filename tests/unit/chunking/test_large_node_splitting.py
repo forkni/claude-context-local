@@ -239,6 +239,91 @@ class TestSplitLargeNode:
             assert chunk.metadata.get("split_block") is True
 
 
+class TestPackBySize:
+    """Direct tests for _pack_by_size, extracted from _split_large_node's
+    accumulation loop (base.py). Uses SimpleNamespace fake nodes over a
+    bytes buffer instead of real tree-sitter nodes, since the packer only
+    ever touches start_byte/end_byte/type."""
+
+    @pytest.fixture
+    def chunker(self):
+        try:
+            return PythonChunker()
+        except ValueError:
+            pytest.skip("tree-sitter-python not installed")
+
+    @staticmethod
+    def _fake_node(start_byte, end_byte, node_type="stmt"):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(start_byte=start_byte, end_byte=end_byte, type=node_type)
+
+    def test_empty_input_returns_no_groups(self, chunker):
+        groups = chunker._pack_by_size(
+            [],
+            b"",
+            threshold=10,
+            split_size_method="characters",
+            may_cut_before=lambda prev, node: True,
+        )
+        assert groups == []
+
+    def test_below_threshold_stays_one_group(self, chunker):
+        source = b"aaa bbb ccc"
+        nodes = [
+            self._fake_node(0, 3),
+            self._fake_node(4, 7),
+            self._fake_node(8, 11),
+        ]
+        groups = chunker._pack_by_size(
+            nodes,
+            source,
+            threshold=1000,
+            split_size_method="characters",
+            may_cut_before=lambda prev, node: True,
+        )
+        assert groups == [nodes]
+
+    def test_exact_cut_at_threshold(self, chunker):
+        source = b"aaa bbb"
+        n1 = self._fake_node(0, 3)
+        n2 = self._fake_node(4, 7)
+        # source[0:7] = "aaa bbb" -> non-whitespace chars = "aaabbb" = 6
+        groups = chunker._pack_by_size(
+            [n1, n2],
+            source,
+            threshold=6,
+            split_size_method="characters",
+            may_cut_before=lambda prev, node: True,
+        )
+        assert groups == [[n1], [n2]]
+
+    def test_predicate_vetoes_cut(self, chunker):
+        source = b"aaa bbb"
+        n1 = self._fake_node(0, 3)
+        n2 = self._fake_node(4, 7)
+        groups = chunker._pack_by_size(
+            [n1, n2],
+            source,
+            threshold=6,  # would cut per test_exact_cut_at_threshold
+            split_size_method="characters",
+            may_cut_before=lambda prev, node: False,
+        )
+        assert groups == [[n1, n2]]
+
+    def test_single_oversized_node_stays_one_group(self, chunker):
+        source = b"aaaaaaaaaa"
+        n1 = self._fake_node(0, 10)
+        groups = chunker._pack_by_size(
+            [n1],
+            source,
+            threshold=1,  # n1 alone already exceeds this
+            split_size_method="characters",
+            may_cut_before=lambda prev, node: True,
+        )
+        assert groups == [[n1]]
+
+
 class TestChunkCodeWithSplitting:
     """Test chunk_code() integration with large node splitting."""
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -767,42 +768,74 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         if not body_node:
             return []  # No body found, use default
 
-        chunks = []
-        current_nodes = []
-
         # Determine threshold based on method
         threshold = self._get_split_threshold(split_size_method, max_lines, max_chars)
 
-        for child in body_node.children:
-            # Check if adding this child would exceed threshold at a split boundary
-            if current_nodes and child.type in split_types:
-                # Calculate size with current child added
-                test_nodes = current_nodes + [child]
-                test_size = self._calculate_accumulated_size(
-                    test_nodes, source_bytes, split_size_method
-                )
+        groups = self._pack_by_size(
+            body_node.children,
+            source_bytes,
+            threshold,
+            split_size_method,
+            lambda _prev, child: child.type in split_types,
+        )
 
-                # If threshold exceeded, split BEFORE adding current child
-                if test_size >= threshold:
-                    chunk = self._create_split_chunk(
-                        signature, current_nodes, source_bytes, node, parent_info
-                    )
-                    chunks.append(chunk)
-                    current_nodes = [child]  # Start new chunk with current child
-                    continue
-
-            # Normal accumulation
-            current_nodes.append(child)
-
-        # Flush remaining nodes
-        if current_nodes:
-            chunk = self._create_split_chunk(
-                signature, current_nodes, source_bytes, node, parent_info
-            )
-            chunks.append(chunk)
+        chunks = [
+            self._create_split_chunk(signature, group, source_bytes, node, parent_info)
+            for group in groups
+        ]
 
         # Only split if actually multiple chunks
         return chunks if len(chunks) > 1 else []
+
+    def _pack_by_size(
+        self,
+        nodes: list[Any],
+        source_bytes: bytes,
+        threshold: int,
+        split_size_method: str,
+        may_cut_before: Callable[[Any, Any], bool],
+    ) -> list[list[Any]]:
+        """Greedily pack sibling nodes into size-bounded groups.
+
+        Accumulates `nodes` in order, cutting before a node only where
+        `may_cut_before(current_group[-1], node)` allows a cut AND adding
+        the node would bring the accumulated size to `threshold` or beyond.
+        A cut never splits a single oversized node -- it always starts a
+        new group with that node instead.
+
+        Args:
+            nodes: Sibling tree-sitter nodes to pack, in source order.
+            source_bytes: Source code bytes.
+            threshold: Size threshold from _get_split_threshold.
+            split_size_method: "lines" or "characters", passed to
+                _calculate_accumulated_size.
+            may_cut_before: Predicate(prev_node, node) -- whether a cut is
+                allowed immediately before `node`, given the last node
+                accumulated so far.
+
+        Returns:
+            List of non-empty node groups covering `nodes` in order.
+        """
+        groups: list[list[Any]] = []
+        current_nodes: list[Any] = []
+
+        for node in nodes:
+            if current_nodes and may_cut_before(current_nodes[-1], node):
+                test_nodes = current_nodes + [node]
+                test_size = self._calculate_accumulated_size(
+                    test_nodes, source_bytes, split_size_method
+                )
+                if test_size >= threshold:
+                    groups.append(current_nodes)
+                    current_nodes = [node]
+                    continue
+
+            current_nodes.append(node)
+
+        if current_nodes:
+            groups.append(current_nodes)
+
+        return groups
 
     def _get_split_threshold(
         self,
@@ -825,6 +858,36 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         elif method == "characters":
             return max_chars
         return max_lines  # default fallback
+
+    def _resolve_split_max_chars(
+        self,
+        node: Any,
+        config: ChunkingConfig,
+        repo_profile: RepoProfile | None,
+    ) -> int:
+        """Determine effective split threshold:
+        - "fixed" mode: use static max_split_chars from config
+        - "adaptive" mode: modulate based on P75 baseline + complexity
+        """
+        effective_max_chars = config.max_split_chars
+        if (
+            config.sizing_mode == "adaptive"
+            and repo_profile is not None
+            and repo_profile.p75_chars > 0
+        ):
+            complexity = self.get_node_complexity(node)
+            effective_max_chars = compute_adaptive_threshold(
+                complexity=complexity,
+                base_threshold=repo_profile.p75_chars,
+                max_complexity=repo_profile.max_complexity or config.max_complexity_cap,
+                multiplier_max=config.adaptive_multiplier_max,
+                multiplier_min=config.adaptive_multiplier_min,
+            )
+            logger.debug(
+                f"[ADAPTIVE] node CC={complexity}, P75={repo_profile.p75_chars}, "
+                f"threshold={effective_max_chars} (static={config.max_split_chars})"
+            )
+        return effective_max_chars
 
     def _calculate_accumulated_size(
         self,
@@ -946,28 +1009,9 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                     and node.type in ("function_definition", "decorated_definition")
                     and self._container_traversal_root(node) is None
                 ):
-                    # Determine effective split threshold:
-                    # - "fixed" mode: use static max_split_chars from config
-                    # - "adaptive" mode: modulate based on P75 baseline + complexity
-                    effective_max_chars = config.max_split_chars
-                    if (
-                        config.sizing_mode == "adaptive"
-                        and repo_profile is not None
-                        and repo_profile.p75_chars > 0
-                    ):
-                        complexity = self.get_node_complexity(node)
-                        effective_max_chars = compute_adaptive_threshold(
-                            complexity=complexity,
-                            base_threshold=repo_profile.p75_chars,
-                            max_complexity=repo_profile.max_complexity
-                            or config.max_complexity_cap,
-                            multiplier_max=config.adaptive_multiplier_max,
-                            multiplier_min=config.adaptive_multiplier_min,
-                        )
-                        logger.debug(
-                            f"[ADAPTIVE] node CC={complexity}, P75={repo_profile.p75_chars}, "
-                            f"threshold={effective_max_chars} (static={config.max_split_chars})"
-                        )
+                    effective_max_chars = self._resolve_split_max_chars(
+                        node, config, repo_profile
+                    )
 
                     split_chunks = self._split_large_node(
                         node,
