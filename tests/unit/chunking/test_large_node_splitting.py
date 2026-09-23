@@ -3,6 +3,7 @@
 import pytest
 
 from chunking.languages.python import PythonChunker
+from chunking.repo_profiler import RepoProfile
 from search.config import ChunkingConfig
 
 
@@ -537,3 +538,201 @@ class TestSplitBlockRelationshipExtraction:
 
         chunker._extract_phase3_relationships(chunk, tchunk, chunk_id)
         assert isinstance(chunk.relationships, list)
+
+
+class TestSplitBoundaryCharacterization:
+    """Pin exact split-block boundaries for fixed vs. adaptive `sizing_mode`.
+
+    Only languages that override `_get_block_boundary_types()` can split at
+    all -- the base default returns an empty set, and `_split_large_node`
+    bails immediately when `split_types` is empty (base.py:758-761). Today
+    that's Python and GLSL; C/C++/Rust/Go/C#/JS/TS never override it, so a
+    C `function_definition` is structurally unsplittable regardless of size.
+    These tests use Python and GLSL for that reason.
+
+    The adaptive-mode tests prove `base.py:953-971` (the
+    `compute_adaptive_threshold` branch) is actually live and produces
+    boundaries different from fixed mode for the same source -- not just
+    that the branch is reachable.
+    """
+
+    @staticmethod
+    def _make_python_source(num_loops: int = 8) -> str:
+        lines = ["def large_function(data):", "    result = []"]
+        for i in range(num_loops):
+            lines.append(f"    for item{i} in data:")
+            lines.append(f"        result.append(process{i}(item{i}))")
+        lines.append("    return result")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _make_glsl_source(num_ifs: int = 8) -> str:
+        lines = ["vec3 large_function(vec3 data) {", "    vec3 result = vec3(0.0);"]
+        for i in range(num_ifs):
+            lines.append(f"    if (data.x > {i}.0) {{")
+            lines.append(f"        result += process{i}(data);")
+            lines.append("    }")
+        lines.append("    return result;")
+        lines.append("}")
+        return "\n".join(lines)
+
+    @pytest.fixture
+    def python_chunker(self):
+        try:
+            return PythonChunker()
+        except ValueError:
+            pytest.skip("tree-sitter-python not installed")
+
+    @pytest.fixture
+    def glsl_chunker(self):
+        try:
+            from chunking.languages.glsl import GLSLChunker
+
+            return GLSLChunker()
+        except ValueError:
+            pytest.skip("tree-sitter-glsl not installed")
+
+    @staticmethod
+    def _split_boundaries(chunker, code, config, repo_profile=None):
+        chunks = chunker.chunk_code(code, config=config, repo_profile=repo_profile)
+        return [
+            (c.start_line, c.end_line) for c in chunks if c.node_type == "split_block"
+        ]
+
+    def test_python_fixed_mode_boundaries(self, python_chunker):
+        """Fixed sizing_mode pins exact split-block ranges (static max_split_chars)."""
+        code = self._make_python_source(8)
+        config = ChunkingConfig(
+            sizing_mode="fixed",
+            enable_large_node_splitting=True,
+            max_chunk_lines=5,
+            split_size_method="characters",
+            max_split_chars=60,
+        )
+        boundaries = self._split_boundaries(python_chunker, code, config)
+        assert boundaries == [
+            (2, 4),
+            (5, 6),
+            (7, 8),
+            (9, 10),
+            (11, 12),
+            (13, 14),
+            (15, 16),
+            (17, 19),
+        ]
+
+    def test_python_adaptive_mode_boundaries_differ_from_fixed(self, python_chunker):
+        """Adaptive sizing_mode produces different boundaries than fixed mode
+        for the identical source and max_chunk_lines."""
+        code = self._make_python_source(8)
+        repo_profile = RepoProfile(
+            function_count=20,
+            p25_chars=20,
+            p50_chars=30,
+            p75_chars=40,
+            p90_chars=60,
+            mean_chars=35,
+            max_complexity=10,
+        )
+        fixed_config = ChunkingConfig(
+            sizing_mode="fixed",
+            enable_large_node_splitting=True,
+            max_chunk_lines=5,
+            split_size_method="characters",
+            max_split_chars=60,
+        )
+        adaptive_config = ChunkingConfig(
+            sizing_mode="adaptive",
+            enable_large_node_splitting=True,
+            max_chunk_lines=5,
+            split_size_method="characters",
+            max_split_chars=60,  # ignored: repo_profile.p75_chars > 0 drives adaptive mode
+        )
+        fixed_boundaries = self._split_boundaries(python_chunker, code, fixed_config)
+        adaptive_boundaries = self._split_boundaries(
+            python_chunker, code, adaptive_config, repo_profile=repo_profile
+        )
+
+        assert adaptive_boundaries == [
+            (2, 2),
+            (3, 4),
+            (5, 6),
+            (7, 8),
+            (9, 10),
+            (11, 12),
+            (13, 14),
+            (15, 16),
+            (17, 19),
+        ]
+        assert adaptive_boundaries != fixed_boundaries
+
+    def test_glsl_fixed_mode_boundaries(self, glsl_chunker):
+        """Fixed sizing_mode pins exact split-block ranges for GLSL too --
+        the same _split_large_node accumulation loop, a different
+        boundary-type set (glsl.py:558-565)."""
+        code = self._make_glsl_source(8)
+        config = ChunkingConfig(
+            sizing_mode="fixed",
+            enable_large_node_splitting=True,
+            max_chunk_lines=5,
+            split_size_method="characters",
+            max_split_chars=60,
+        )
+        boundaries = self._split_boundaries(glsl_chunker, code, config)
+        assert boundaries == [
+            (1, 2),
+            (3, 5),
+            (6, 8),
+            (9, 11),
+            (12, 14),
+            (15, 17),
+            (18, 20),
+            (21, 23),
+            (24, 28),
+        ]
+
+    def test_glsl_adaptive_mode_boundaries_differ_from_fixed(self, glsl_chunker):
+        """Adaptive sizing_mode is live for GLSL as well (get_node_complexity
+        is overridden at glsl.py:468) and yields different boundaries."""
+        code = self._make_glsl_source(8)
+        repo_profile = RepoProfile(
+            function_count=20,
+            p25_chars=20,
+            p50_chars=30,
+            p75_chars=40,
+            p90_chars=60,
+            mean_chars=35,
+            max_complexity=10,
+        )
+        fixed_config = ChunkingConfig(
+            sizing_mode="fixed",
+            enable_large_node_splitting=True,
+            max_chunk_lines=5,
+            split_size_method="characters",
+            max_split_chars=60,
+        )
+        adaptive_config = ChunkingConfig(
+            sizing_mode="adaptive",
+            enable_large_node_splitting=True,
+            max_chunk_lines=5,
+            split_size_method="characters",
+            max_split_chars=60,
+        )
+        fixed_boundaries = self._split_boundaries(glsl_chunker, code, fixed_config)
+        adaptive_boundaries = self._split_boundaries(
+            glsl_chunker, code, adaptive_config, repo_profile=repo_profile
+        )
+
+        assert adaptive_boundaries == [
+            (1, 2),
+            (3, 5),
+            (6, 8),
+            (9, 11),
+            (12, 14),
+            (15, 17),
+            (18, 20),
+            (21, 23),
+            (24, 26),
+            (27, 28),
+        ]
+        assert adaptive_boundaries != fixed_boundaries
