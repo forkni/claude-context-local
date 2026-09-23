@@ -194,13 +194,28 @@ def _collect_error_line_ranges(root_node: Any) -> tuple[tuple[int, int], ...]:
         One `(start_line, end_line)` pair per node where
         `node.type == "ERROR"` (nested ERROR nodes included, like the error
         count this replaces).
+
+    Note:
+        `end_point` is *exclusive* — a node ending at `(row N, col 0)` has
+        no content on row N (that's the boundary, not the last character).
+        For a genuine multi-line span ending exactly at column 0, the true
+        last line with content is `end_point[0]`, not `end_point[0] + 1`;
+        using the latter fabricates a phantom line past the node's real
+        content (often past EOF entirely, when the ERROR node absorbs the
+        file's trailing newline).
     """
     ranges: list[tuple[int, int]] = []
     stack = [root_node]
     while stack:
         node = stack.pop()
         if node.type == "ERROR":
-            ranges.append((node.start_point[0] + 1, node.end_point[0] + 1))
+            start_row, end_row = node.start_point[0], node.end_point[0]
+            end_col = node.end_point[1]
+            # Exclusive boundary at col 0 -> inclusive last line is end_row itself.
+            end_line = (
+                end_row if (end_col == 0 and end_row > start_row) else end_row + 1
+            )
+            ranges.append((start_row + 1, end_line))
         stack.extend(node.children)
     return tuple(ranges)
 

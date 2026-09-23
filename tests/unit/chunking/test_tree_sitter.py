@@ -510,6 +510,35 @@ class TestParseFileSingleRead(TestCase):
             f"{[r.getMessage() for r in parse_error_records]}"
         )
 
+    def test_parse_error_trailing_newline_not_phantom_uncovered(self):
+        """Regression guard: tree-sitter's `end_point` is exclusive, so an
+        ERROR node spanning the file's trailing newline reports a line past
+        EOF as its end line. Before the inclusive-end-line fix, that
+        fabricated line failed `_uncovered_is_pure_trivia`'s range check and
+        escalated to a WARNING even though every real line was retained in
+        the module_preamble chunk."""
+        import logging
+
+        import chunking.tree_sitter as tsf
+
+        if "python" not in tsf.AVAILABLE_LANGUAGES:
+            self.skipTest("tree-sitter-python not installed")
+
+        file_path = Path(self.temp_dir) / "broken.py"
+        file_path.write_text("def f(:\n  x y\n")
+
+        with self.assertLogs("chunking.tree_sitter", level="DEBUG") as cm:
+            chunks = self.chunker.chunk_file(str(file_path))
+
+        assert chunks, "malformed-but-alnum content must still be retained"
+        parse_warn_records = [r for r in cm.records if "PARSE_WARN" in r.getMessage()]
+        assert parse_warn_records, "expected a [PARSE_WARN] outcome log"
+        assert all(r.levelno == logging.DEBUG for r in parse_warn_records), (
+            f"fully-retained content past a phantom trailing-newline line "
+            f"must not WARN: {[r.getMessage() for r in parse_warn_records]}"
+        )
+        assert any("retained" in r.getMessage() for r in parse_warn_records)
+
     def test_parse_error_alnum_garbage_also_retained_and_downgraded(self):
         """Garbage with alphanumeric content is rescued into a
         module_preamble chunk (unlike the punctuation-only run above), so it
@@ -616,3 +645,45 @@ class TestParseFileSingleRead(TestCase):
         assert len(warning) < 500, (
             f"expected a short truncated line, got {len(warning)} chars"
         )
+
+
+class TestCollectErrorLineRanges(TestCase):
+    """Direct unit coverage for `_collect_error_line_ranges`'s inclusive-end-
+    line fix: tree-sitter's `end_point` is exclusive, so an ERROR node
+    spanning to `(N, 0)` has no content on row N -- the previous
+    `end_point[0] + 1` fabricated a phantom trailing line past EOF."""
+
+    def test_multiline_error_node_end_line_is_inclusive(self):
+        from types import SimpleNamespace
+
+        from chunking.tree_sitter import _collect_error_line_ranges
+
+        node = SimpleNamespace(
+            type="ERROR", start_point=(0, 0), end_point=(4, 0), children=[]
+        )
+        assert _collect_error_line_ranges(node) == ((1, 4),)
+
+    def test_zero_width_error_node_end_line_unchanged(self):
+        """A zero-width ERROR node (start == end, same row/col) is not a
+        multi-line span with an exclusive trailing boundary -- it keeps the
+        existing `end_point[0] + 1` behavior."""
+        from types import SimpleNamespace
+
+        from chunking.tree_sitter import _collect_error_line_ranges
+
+        node = SimpleNamespace(
+            type="ERROR", start_point=(5, 0), end_point=(5, 0), children=[]
+        )
+        assert _collect_error_line_ranges(node) == ((6, 6),)
+
+    def test_same_row_error_node_end_line_unchanged(self):
+        """An ERROR node that starts and ends on the same row (mid-line
+        error recovery) keeps the existing behavior regardless of column."""
+        from types import SimpleNamespace
+
+        from chunking.tree_sitter import _collect_error_line_ranges
+
+        node = SimpleNamespace(
+            type="ERROR", start_point=(2, 3), end_point=(2, 10), children=[]
+        )
+        assert _collect_error_line_ranges(node) == ((3, 3),)

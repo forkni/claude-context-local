@@ -333,6 +333,50 @@ class TestFullPassFlag:
         cache.save(live, full_pass=True)
         assert cache.get_stats()["cache_size"] == 10  # min(max(2*2, floor=10), 50)
 
+    def test_partial_pass_byte_cap_floored_at_loaded_size(self, tmp_path, monkeypatch):
+        """Regression guard: a project big enough to hit the 32 MiB byte cap
+        (e.g. 23,748 chunks at 1024d -> 8160-entry cap) must not have an
+        incremental (full_pass=False) run collapse its cache down to that
+        cap. The cap only bounds *growth* beyond what was already on disk at
+        load time -- it must never evict entries the last full pass wrote.
+        """
+        monkeypatch.setattr(chunk_cache_module, "_AUTO_MIN_ENTRIES", 10)
+        cache_path = tmp_path / "chunk_embeddings.bin"
+        cache = ChunkEmbeddingCache(
+            cache_path, model_name="BAAI/bge-m3", dimension=4, provenance=_PROV
+        )
+        for i in range(50):
+            cache.put(f"{i:032d}", _vec(4, float(i)))
+        all_keys = {f"{i:032d}" for i in range(50)}
+        cache.save(all_keys, full_pass=True)
+
+        # Reopen (simulating the next indexing run), as an incremental pass
+        # would: _loaded_count must reflect the 50 entries just persisted.
+        cache = ChunkEmbeddingCache(
+            cache_path, model_name="BAAI/bge-m3", dimension=4, provenance=_PROV
+        )
+        assert cache.get_stats()["cache_size"] == 50
+        new_keys = {"a" * 32, "b" * 32}
+        for key in new_keys:
+            cache.put(key, _vec(4, 99.0))
+
+        # Byte cap sized to only 20 records -- far below the 50 already on
+        # disk. Without the loaded-size floor this collapses to 20.
+        monkeypatch.setattr(chunk_cache_module, "_AUTO_MAX_BYTES", 20 * 32)
+        cache.save(new_keys, full_pass=False)
+
+        assert cache.get_stats()["cache_size"] == 50, (
+            "partial-pass byte cap must not evict below the size loaded from disk"
+        )
+
+        # Reload once more to confirm the newly-put keys actually survived
+        # the eviction (not just that the count happens to match).
+        cache = ChunkEmbeddingCache(
+            cache_path, model_name="BAAI/bge-m3", dimension=4, provenance=_PROV
+        )
+        for key in new_keys:
+            assert cache.get(key) is not None, f"{key} should survive the partial pass"
+
 
 class TestGetStats:
     def test_hit_miss_counts(self, tmp_path):

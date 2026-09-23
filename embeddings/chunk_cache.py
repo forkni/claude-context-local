@@ -108,6 +108,11 @@ class ChunkEmbeddingCache:
         self._entries: OrderedDict[str, np.ndarray] = OrderedDict()
         self.hits = 0
         self.misses = 0
+        # Size of the cache as successfully loaded from disk (0 if missing
+        # or corrupt) -- floors the partial-pass byte cap in `_evict` so an
+        # incremental run can never shrink a cache below what the last full
+        # pass already wrote. Set by `load()`.
+        self._loaded_count = 0
         self.load()
 
     # -- key derivation -------------------------------------------------
@@ -153,6 +158,7 @@ class ChunkEmbeddingCache:
         cache problem must never fail an index.
         """
         self._entries = OrderedDict()
+        self._loaded_count = 0
         if not self._path.exists():
             return
         try:
@@ -204,6 +210,7 @@ class ChunkEmbeddingCache:
                 key = data[start : start + _KEY_BYTES].hex()
                 vec_bytes = data[start + _KEY_BYTES : start + record_size]
                 self._entries[key] = np.frombuffer(vec_bytes, dtype=np.float32).copy()
+            self._loaded_count = len(self._entries)
         except Exception as exc:  # noqa: BLE001 - fail-soft: any corruption starts an empty cache
             logger.info(
                 "Chunk embedding cache at %s unreadable (%s) — starting empty",
@@ -211,6 +218,7 @@ class ChunkEmbeddingCache:
                 exc,
             )
             self._entries = OrderedDict()
+            self._loaded_count = 0
 
     def save(self, live_keys: set[str], *, full_pass: bool = True) -> None:
         """Persist the cache to disk, atomically.
@@ -228,8 +236,9 @@ class ChunkEmbeddingCache:
                 eviction to target the entries-based cap derived from
                 ``len(live_keys)`` — correct only when ``live_keys`` really is
                 everything the project needs. ``False`` caps by the byte
-                ceiling alone, so a small partial-run ``live_keys`` cannot
-                collapse a cache built by prior full passes. See :meth:`_evict`.
+                ceiling, floored at the size loaded from disk, so a small
+                partial-run ``live_keys`` cannot collapse a cache built by
+                prior full passes. See :meth:`_evict`.
         """
         tmp = Path(str(self._path) + ".tmp")
         try:
@@ -279,10 +288,15 @@ class ChunkEmbeddingCache:
         only the handful of chunks that changed; naively applying the same
         formula would shrink a cache built by prior full passes down to
         roughly twice *that* handful. When ``full_pass=False`` the cap is
-        instead the byte ceiling alone, so a small partial-run ``live_keys``
-        only trims genuinely excess entries (oldest-first, via the
-        ``OrderedDict``'s LRU order), never the bulk of an already-populated
-        cache.
+        instead the byte ceiling, floored at the size loaded from disk at
+        construction time (``self._loaded_count``) — so a small partial-run
+        ``live_keys`` only trims genuinely excess entries (oldest-first, via
+        the ``OrderedDict``'s LRU order) *beyond* what the last full pass
+        already wrote, never below it. Without that floor, a project large
+        enough to hit the byte ceiling (e.g. 8,160 entries at 1024d) would
+        have every incremental run collapse its cache back down to the
+        ceiling, discarding everything above it and forcing a costly
+        re-embed on the next full pass.
         """
         if self._max_entries > 0:
             cap = self._max_entries
@@ -292,7 +306,7 @@ class ChunkEmbeddingCache:
             if full_pass:
                 cap = min(max(2 * len(live_keys), _AUTO_MIN_ENTRIES), byte_cap)
             else:
-                cap = byte_cap
+                cap = max(byte_cap, self._loaded_count)
         if len(self._entries) <= cap:
             return
         # OrderedDict iterates oldest-first; drop LRU non-live entries until
