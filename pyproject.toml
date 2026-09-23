@@ -156,7 +156,47 @@ evaluation = ["*.json", "*.md"]
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-09-14 (Stage-3 LSP resolver tier brought online: `uv sync --extra callgraph
+# Last audit: 2026-09-23 (`/deps-audit` — 185 packages. CVE set unchanged from 2026-09-14: same
+#             4 packages / 6 CVEs (torch, setuptools, sqlitedict, nltk). All three reopen
+#             conditions re-verified live: (1) setuptools 81.0.0/CVE-2026-59890 needs torch to
+#             relax setuptools<82 — torch 2.12.0 also declares <82, only 2.13.0 relaxes it;
+#             (2) torch 2.11.0+cu128/CVE-2025-3000 needs the cu128 wheel index to publish >=2.13.0
+#             — confirmed live, download.pytorch.org/whl/cu128/torch/ tops out at 2.11.0+cu128;
+#             (3) nltk CVE-2026-81726 needs >3.10.3 — PyPI latest is still 3.10.3, no upstream
+#             fix released. sqlitedict CVE-2024-35515 mitigation re-verified intact
+#             (search/metadata.py:65-70 passes encode=json.dumps/decode=json.loads). CUDA
+#             verified intact (torch 2.11.0+cu128, CUDA 12.8, RTX 4090). pip check clean
+#             throughout. Applied non-retrieval safe updates (35 packages, 3 batches):
+#             Batch 1 MCP/HTTP runtime — mcp+mcp-types 2.1.1->2.2.0, httpx2+httpcore2
+#             2.12.0->2.13.1, starlette 1.6.0->1.7.0, sse-starlette 3.4.8->3.4.11, uvicorn
+#             0.52.4->0.53.0, anyio 4.14.2->4.15.1, PyJWT 2.13.0->2.15.0, urllib3 2.7.0->2.8.0,
+#             idna 3.19->3.20; unit (4969) + fast_integration (108) green.
+#             Batch 2 transitive — multidict 6.7.1->6.9.1, yarl 1.24.5->1.25.1, propcache
+#             0.5.2->0.5.4, protobuf 7.36.1->7.36.2, googleapis-common-protos 1.75.2->1.75.3,
+#             GitPython 3.1.61->3.1.62, greenlet 3.5.5->3.5.6, SQLAlchemy 2.0.52->2.0.54,
+#             platformdirs 4.11.7->4.11.12, tqdm 4.70.0->4.70.1, wcwidth 0.8.3->0.9.1,
+#             pyparsing 3.3.2->3.3.3; unit (4969) green.
+#             Batch 3 dev tooling — ruff 0.16.5->0.16.8, pyrefly 1.2.0->1.3.1, basedpyright
+#             1.39.10->1.40.1, coverage 7.16.0->7.16.1, mutmut 3.7.0->3.8.0, syrupy 6.0.0->6.1.1,
+#             build 1.6.0->1.6.1, pyproject_hooks 1.2.0->1.3.3, virtualenv 21.7.8->21.11.1,
+#             python-discovery 1.6.0->1.6.1, pip-api 0.0.34->0.0.35, pipdeptree 4.2.3->4.2.5
+#             + nab-* 0.0.16->0.0.18 cluster, uv 0.12.5->0.12.18; unit (4969) green; lint clean
+#             (ruff 0.16.8 no new format changes on modified-only scope); pipdeptree 4.2.5 JSON
+#             schema confirmed compatible with summarize_audit.py (185 packages parsed). uv lock
+#             brought to match (pip first, lock to match — never the reverse); uv not lock-tracked.
+#             Deferred: retrieval-path (sentence-transformers 6.0.1->6.1.0, transformers
+#             5.16.1->5.17.0, tokenizers 0.23.1->0.23.2, huggingface_hub 1.26.1->1.32.0,
+#             faiss-cpu 1.15.0->1.15.1, scikit-learn 1.9.0->1.9.1, threadpoolctl, regex,
+#             narwhals — A/B gate owed per retrieval-substrate rule); genuinely blocked (torch
+#             own <2.12 cap + cu128 index, setuptools torch<82, tree-sitter own <0.26 ABI cap,
+#             fsspec own <=2025.10.0 cap, filelock 4.x virtualenv<4, mando radon<0.8, mpmath
+#             sympy<1.4, pydantic_core pydantic==pin); tiktoken 0.14.0 (benchmark-scripts only,
+#             no rationale to move). deptry DEP001: test-fixture local imports (not PyPI pkgs),
+#             no action; DEP002: security/transitive pin false positives (known, no action);
+#             DEP003: numpy/anyio/uvicorn imported directly without direct-dep declaration —
+#             noted but deferred to /improve-codebase-architecture. No retrieval-substrate moves
+#             -> no A/B gate owed; 2026-09-23 canon (0.8177/0.6527/0.8668) stays valid.
+# Previous audit: 2026-09-14 (Stage-3 LSP resolver tier brought online: `uv sync --extra callgraph
 #             --extra test --extra otel --extra lsp` installed `basedpyright==1.39.10` (2 packages,
 #             uv.lock unchanged — already pinned). `lsp_enabled` was already `true` in
 #             `search_config.json`; Stage 3 is gated solely on that flag, not on the `resolvers`
@@ -416,6 +456,7 @@ evaluation = ["*.json", "*.md"]
 #   nltk.download("stopwords", quiet=True) (search/bm25_index.py:34,36). Upstream fixes merged
 #   to develop (nltk/nltk#3757, #3759, #3813, 2026-08-18..28), post-dating the v3.10.3 tag.
 #   Reopen: when nltk publishes >3.10.3, raise the floor to it and re-run pip-audit.
+#   Re-verified 2026-09-23: PyPI latest still 3.10.3, no fix released.
 #   Dependabot #33 dismissed not_used. (Predecessor entry nltk CVE-2026-12243 — path traversal,
 #   incomplete fix of CVE-2025-14009 — no longer flags on 3.10.3 per OSV query 2026-09-02;
 #   closed by the >=3.10.3 floor, see the direct-dependency comment above.)
