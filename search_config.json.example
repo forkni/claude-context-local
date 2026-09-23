@@ -114,7 +114,7 @@
     "glsl_filter_td_prefix": true,
     "max_file_size_bytes": 25165824,
     "enable_td_network_indexing": false,
-    "split_oversized_preamble": false
+    "split_oversized_preamble": true
   },
   "ego_graph": {
     "enabled": true,

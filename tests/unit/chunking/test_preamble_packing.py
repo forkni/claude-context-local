@@ -63,7 +63,9 @@ class TestPreamblePackingGate:
 
     def test_knob_off_stays_one_chunk(self, chunker):
         code = _prose_marker_source(40)
-        chunks = chunker.chunk_code(code, config=ChunkingConfig())
+        chunks = chunker.chunk_code(
+            code, config=ChunkingConfig(split_oversized_preamble=False)
+        )
         preamble = [c for c in chunks if c.node_type == "module_preamble"]
         assert len(preamble) == 1
 
@@ -161,7 +163,9 @@ class TestPreamblePackingCrossLanguage:
         lines.append("int main(void) { return 0; }")
         code = "\n".join(lines) + "\n"
 
-        chunks_off = chunker.chunk_code(code, config=ChunkingConfig())
+        chunks_off = chunker.chunk_code(
+            code, config=ChunkingConfig(split_oversized_preamble=False)
+        )
         preamble_off = [c for c in chunks_off if c.node_type == "module_preamble"]
         assert len(preamble_off) == 1
 

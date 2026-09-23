@@ -1210,7 +1210,7 @@ class ChunkingConfig:
     )
 
     split_oversized_preamble: bool = field(
-        default=False,
+        default=True,
         metadata=spec(
             flat_alias="split_oversized_preamble",
             env="CLAUDE_SPLIT_OVERSIZED_PREAMBLE",
@@ -1221,13 +1221,14 @@ class ChunkingConfig:
     # as a single verbatim `module_preamble` chunk with no size check --
     # unlike the function-split path, which applies max_chunk_lines /
     # max_split_chars. A 1,034-line prose file therefore becomes one chunk,
-    # silently truncated by the embedding composer (Card B plan, 2026-09-23:
-    # 25 oversized preamble runs this repo, 28 in twozero-dev; packing at
-    # root sibling boundaries at the static max_split_chars threshold would
-    # take this repo from 3,071 to ~3,107 chunks). Default-off pending a
-    # pre-registered A/B against the 2026-09-23 canon
-    # (evaluation/CANON_20260923_REBASELINE.md) -- no golden-set gold sits
-    # in any affected run, so the effect is on pool composition only.
+    # silently truncated by the embedding composer. Packs oversized runs at
+    # root sibling boundaries at the static max_split_chars threshold (Card B
+    # plan, 2026-09-23: 25 oversized preamble runs this repo, 28 in
+    # twozero-dev). Default-on since 2026-09-23 after a pre-registered A/B
+    # against the 2026-09-23 canon passed all three gates (drift, adoption,
+    # determinism) -- no golden-set gold sits in any affected run, so the
+    # effect was on pool composition only; adopted on the correctness case
+    # plus a clean gate pass (evaluation/CANON_20260923_PREAMBLE_PACKING.md).
 
 
 @dataclass
