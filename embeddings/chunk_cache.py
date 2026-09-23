@@ -80,6 +80,7 @@ class ChunkEmbeddingCache:
         dimension: int,
         provenance: str,
         max_entries: int = 0,
+        project_entry_count: int = 0,
     ) -> None:
         """Initialize and immediately (best-effort) load the on-disk cache.
 
@@ -97,21 +98,29 @@ class ChunkEmbeddingCache:
                 vectors.
             max_entries: Eviction cap for :meth:`save`. ``0`` means auto —
                 see :meth:`_evict`.
+            project_entry_count: The current project's size (e.g. indexed
+                vector count), if the caller knows it. Floors the
+                partial-pass byte cap in :meth:`_evict` -- see
+                :attr:`_loaded_count` for why a floor is needed, and why
+                this is the more current source when available.
         """
         self._path = Path(cache_path)
         self._model_name = model_name
         self._dimension = dimension
         self._provenance = provenance
         self._max_entries = max_entries if max_entries > 0 else 0
+        self._project_entry_count = (
+            project_entry_count if project_entry_count > 0 else 0
+        )
         # Insertion order = LRU order (oldest first); get()/put() move the
         # touched key to the end. Mirrors QueryEmbeddingCache's OrderedDict use.
         self._entries: OrderedDict[str, np.ndarray] = OrderedDict()
         self.hits = 0
         self.misses = 0
         # Size of the cache as successfully loaded from disk (0 if missing
-        # or corrupt) -- floors the partial-pass byte cap in `_evict` so an
-        # incremental run can never shrink a cache below what the last full
-        # pass already wrote. Set by `load()`.
+        # or corrupt) -- fallback for the partial-pass byte cap in `_evict`
+        # when the caller couldn't supply `_project_entry_count` (e.g. no
+        # indexer available yet). Set by `load()`.
         self._loaded_count = 0
         self.load()
 
@@ -231,14 +240,14 @@ class ChunkEmbeddingCache:
 
         Args:
             full_pass: Whether *live_keys* is the authoritative set for the
-                whole project (a full index) or only a subset (an incremental
-                update, a module-summary refresh). ``True`` allows
-                eviction to target the entries-based cap derived from
-                ``len(live_keys)`` — correct only when ``live_keys`` really is
-                everything the project needs. ``False`` caps by the byte
-                ceiling, floored at the size loaded from disk, so a small
-                partial-run ``live_keys`` cannot collapse a cache built by
-                prior full passes. See :meth:`_evict`.
+                whole project (a full index) or only a subset (an
+                incremental update). ``True`` allows eviction to target the
+                entries-based cap derived from ``len(live_keys)`` — correct
+                only when ``live_keys`` really is everything the project
+                needs. ``False`` caps by the byte ceiling, floored at the
+                project's current size, so a small partial-run
+                ``live_keys`` cannot collapse a cache built by prior full
+                passes. See :meth:`_evict`.
         """
         tmp = Path(str(self._path) + ".tmp")
         try:
@@ -284,12 +293,14 @@ class ChunkEmbeddingCache:
         The entries-based cap (``2 * len(live_keys)``, floored at
         ``_AUTO_MIN_ENTRIES``) is only sound when ``live_keys`` is the
         authoritative set for the whole project — i.e. ``full_pass=True``. A
-        partial run (incremental update, module-summary refresh) touches
+        partial run (an incremental update) touches
         only the handful of chunks that changed; naively applying the same
         formula would shrink a cache built by prior full passes down to
         roughly twice *that* handful. When ``full_pass=False`` the cap is
-        instead the byte ceiling, floored at the size loaded from disk at
-        construction time (``self._loaded_count``) — so a small partial-run
+        instead the byte ceiling, floored at the project's current size
+        (``self._project_entry_count``, falling back to the size loaded
+        from disk at construction time, ``self._loaded_count``, when the
+        caller couldn't supply the former) — so a small partial-run
         ``live_keys`` only trims genuinely excess entries (oldest-first, via
         the ``OrderedDict``'s LRU order) *beyond* what the last full pass
         already wrote, never below it. Without that floor, a project large
@@ -306,7 +317,7 @@ class ChunkEmbeddingCache:
             if full_pass:
                 cap = min(max(2 * len(live_keys), _AUTO_MIN_ENTRIES), byte_cap)
             else:
-                cap = max(byte_cap, self._loaded_count)
+                cap = max(byte_cap, self._project_entry_count or self._loaded_count)
         if len(self._entries) <= cap:
             return
         # OrderedDict iterates oldest-first; drop LRU non-live entries until
@@ -334,8 +345,8 @@ class ChunkEmbeddingCache:
 # -- shared resolution helpers --------------------------------------------
 #
 # Module-level so every embed_chunks() call site (full index, incremental
-# update, module-summary refresh) resolves a cache the same fail-soft
-# way instead of each reimplementing it. Originally lived as private methods
+# update) resolves a cache the same fail-soft way instead of each
+# reimplementing it. Originally lived as private methods
 # on IndexWriteStage, which only ever wired the full-index path.
 
 
@@ -370,7 +381,9 @@ def resolve_embedding_provenance(embedder: Any) -> str:
     return "unavailable"
 
 
-def resolve_chunk_cache(storage_dir: Any, embedder: Any) -> ChunkEmbeddingCache | None:
+def resolve_chunk_cache(
+    storage_dir: Any, embedder: Any, indexer: Any = None
+) -> ChunkEmbeddingCache | None:
     """Resolve a run's persistent chunk-embedding cache, if enabled.
 
     Resolve lazily, per-run — never hold the result across runs — for two
@@ -379,6 +392,14 @@ def resolve_chunk_cache(storage_dir: Any, embedder: Any) -> ChunkEmbeddingCache 
     a cache captured once could outlive that rebind stale. Second, tests
     routinely construct a ``Mock`` indexer, so eagerly building a ``Path``
     from ``storage_dir`` at construction time would raise on a ``Mock``.
+
+    ``indexer``, when supplied, sources ``project_entry_count`` from its
+    ``ntotal`` (:attr:`search.indexer.CodeIndexManager.ntotal`) so the cache
+    knows the project's current size at construction time. Reading it is
+    itself fail-soft and independent of the outer fail-soft below: a
+    ``Mock`` or any other value that isn't a plain int just yields ``0``
+    (the cache then falls back to its own loaded-from-disk count) rather
+    than aborting cache resolution entirely.
 
     Fail-soft: disabled by config, a missing/non-path ``storage_dir``, or
     any other error while resolving all return ``None`` — ``embed_chunks``
@@ -392,6 +413,11 @@ def resolve_chunk_cache(storage_dir: Any, embedder: Any) -> ChunkEmbeddingCache 
         if not embedding_cfg.enable_chunk_cache:
             return None
 
+        try:
+            project_entry_count = int(getattr(indexer, "ntotal", 0) or 0)
+        except (TypeError, ValueError):
+            project_entry_count = 0
+
         cache_path = Path(storage_dir) / "chunk_embeddings.bin"
         return ChunkEmbeddingCache(
             cache_path=cache_path,
@@ -399,6 +425,7 @@ def resolve_chunk_cache(storage_dir: Any, embedder: Any) -> ChunkEmbeddingCache 
             dimension=embedding_cfg.dimension,
             provenance=resolve_embedding_provenance(embedder),
             max_entries=embedding_cfg.chunk_cache_max_entries,
+            project_entry_count=project_entry_count,
         )
     except Exception:  # noqa: BLE001 - fail-soft: a cache problem must never fail an index
         logger.warning(

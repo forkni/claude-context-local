@@ -418,7 +418,9 @@ class TestIncrementalIndexer:
             result = indexer.incremental_index(str(self.project_path), "test_project")
 
         assert result.success is True
-        mock_resolve.assert_called_once_with("/fake/storage_dir", self.mock_embedder)
+        mock_resolve.assert_called_once_with(
+            "/fake/storage_dir", self.mock_embedder, self.mock_indexer
+        )
         call_kwargs = self.mock_embedder.embed_chunks.call_args.kwargs
         assert call_kwargs["cache"] is sentinel_cache
         assert call_kwargs["cache_full_pass"] is False

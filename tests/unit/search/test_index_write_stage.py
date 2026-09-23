@@ -1064,6 +1064,50 @@ class TestResolveChunkCache:
         assert cache is not None
         assert cache._path == tmp_path / "chunk_embeddings.bin"
 
+    def test_indexer_ntotal_flows_into_cache_project_entry_count(self, tmp_path):
+        """A real indexer.ntotal reaches the cache as project_entry_count --
+        the size source _evict's partial-pass floor now prefers over the
+        count loaded from disk."""
+        from search.config import EmbeddingConfig
+
+        chunk = _make_chunk()
+        embed_result = Mock()
+        embed_result.metadata = {}
+        embedder = Mock()
+        embedder.embed_chunks.return_value = [embed_result]
+
+        indexer = Mock()
+        indexer.storage_dir = tmp_path
+        indexer.ntotal = 4321
+        indexer.resync_if_desynced.return_value = (False, 0)
+
+        stage = IndexWriteStage(
+            embedder=embedder,
+            indexer=indexer,
+            snapshot_manager=Mock(),
+            build_metadata_fn=Mock(return_value={"project_name": "test"}),
+            clear_gpu_fn=Mock(),
+        )
+
+        mock_cfg = Mock()
+        mock_cfg.embedding = EmbeddingConfig(enable_chunk_cache=True)
+
+        with patch("search.config.get_search_config", return_value=mock_cfg):
+            result = stage.run(
+                all_chunks=[chunk],
+                project_name="p",
+                dag=Mock(),
+                all_files=[],
+                supported_files=[],
+                start_time=time.time(),
+                repo_profile=None,
+            )
+
+        assert result.success is True
+        cache = embedder.embed_chunks.call_args.kwargs.get("cache")
+        assert cache is not None
+        assert cache._project_entry_count == 4321
+
     def test_provenance_unavailable_sentinel_for_mock_embedder(self, tmp_path):
         """embedder=Mock() auto-generates get_embedding_provenance() as a
         callable returning a Mock, not a str. The isinstance guard in

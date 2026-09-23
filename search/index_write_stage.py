@@ -346,7 +346,9 @@ class IndexWriteStage:
         shared with the incremental embed site so both resolve a cache the
         same fail-soft way.
         """
-        return resolve_chunk_cache(self._indexer.storage_dir, self._embedder)
+        return resolve_chunk_cache(
+            self._indexer.storage_dir, self._embedder, self._indexer
+        )
 
     def inject_call_edges(self, project_path: str) -> InjectionStats:
         """Resolve this run's collaborators and run the resolver pipeline.

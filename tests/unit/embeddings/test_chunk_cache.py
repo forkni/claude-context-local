@@ -377,6 +377,45 @@ class TestFullPassFlag:
         for key in new_keys:
             assert cache.get(key) is not None, f"{key} should survive the partial pass"
 
+    def test_partial_pass_cap_prefers_project_entry_count_over_loaded_size(
+        self, tmp_path, monkeypatch
+    ):
+        """project_entry_count, when supplied, floors the partial-pass byte
+        cap instead of _loaded_count -- it's the more current source (e.g.
+        CodeIndexManager.ntotal at cache-resolution time): a full pass
+        between the load that set _loaded_count and this save can change
+        the project's size, and _loaded_count alone could never reflect
+        that. Deliberately set below the 50 entries on disk so the two
+        floors disagree and this proves precedence, not just consistency.
+        """
+        monkeypatch.setattr(chunk_cache_module, "_AUTO_MIN_ENTRIES", 10)
+        cache_path = tmp_path / "chunk_embeddings.bin"
+        cache = ChunkEmbeddingCache(
+            cache_path, model_name="BAAI/bge-m3", dimension=4, provenance=_PROV
+        )
+        for i in range(50):
+            cache.put(f"{i:032d}", _vec(4, float(i)))
+        all_keys = {f"{i:032d}" for i in range(50)}
+        cache.save(all_keys, full_pass=True)
+
+        cache = ChunkEmbeddingCache(
+            cache_path,
+            model_name="BAAI/bge-m3",
+            dimension=4,
+            provenance=_PROV,
+            project_entry_count=30,
+        )
+        assert cache.get_stats()["cache_size"] == 50
+
+        monkeypatch.setattr(chunk_cache_module, "_AUTO_MAX_BYTES", 5 * 32)
+        live = {f"{0:032d}"}
+        cache.save(live, full_pass=False)
+
+        assert cache.get_stats()["cache_size"] == 30, (
+            "partial-pass cap should floor at project_entry_count (30), not "
+            "the larger _loaded_count (50)"
+        )
+
 
 class TestGetStats:
     def test_hit_miss_counts(self, tmp_path):
