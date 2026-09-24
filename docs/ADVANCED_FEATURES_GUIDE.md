@@ -964,10 +964,12 @@ and `evaluation/BASELINE_20260801.md`.
 
 **Key advantages**:
 
-- **131K context window** - handles much larger documents than typical cross-encoder rerankers
-  (commonly capped around 8K tokens)
-- **Listwise reranking** - scores all documents together for better relative ranking
-- **Better on long code** - 16x larger context allows full function bodies
+- **131K model context window** - handles much larger documents than typical cross-encoder
+  rerankers (commonly capped around 8K tokens), while CCL still applies a separate packed-window
+  budget to bound attention memory
+- **Listwise reranking** - scores the candidate window together for better relative ranking
+- **Single-block window by default** - adaptively trims document text to keep the full candidate
+  count in one listwise block instead of silently reducing `top_k_candidates`
 
 **Configuration**:
 
@@ -979,6 +981,26 @@ set CLAUDE_RERANKER_MODEL=jinaai/jina-reranker-v3
 from search.neural_reranker import create_reranker
 reranker = create_reranker("jinaai/jina-reranker-v3")
 ```
+
+For Jina v3, the packed-window controls are construction-time settings in `search_config.json`
+(restart or rebuild the searcher after changing them):
+
+```json
+{
+  "reranker": {
+    "listwise_packed_token_budget": 8192,
+    "listwise_window_fit": "truncate"
+  }
+}
+```
+
+- `listwise_packed_token_budget` (default `8192`, range `2048`–`32768`) caps the packed prompt's
+  token budget for one listwise block. This bounds token-dense windows that could otherwise exhaust
+  GPU memory.
+- `listwise_window_fit` defaults to `"truncate"`: document text is trimmed adaptively so the
+  candidate count is preserved in one block. `"split"` is the escape hatch that allows Jina's
+  multi-block path when needed; it is not the default because cross-block scoring can change the
+  global ranking.
 
 **VRAM Usage**: ~1.2GB
 
