@@ -195,7 +195,10 @@ try:
                 return name.partition(".")[0] in ANON_SCOPE_NAMES
 
             anon = [n for n in self.call_position_names if is_anon(n)]
-            anon.sort(key=lambda n: n.get_name().count("."), reverse=True)
+            anon.sort(
+                key=lambda n: n.get_name().count("."),  # type: ignore[attr-defined]
+                reverse=True,
+            )
             for n in anon:
                 parent = self.get_parent_node(n)
                 if parent is None or parent is n:

@@ -337,7 +337,9 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
                     handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                     # pyrefly: ignore [unbound-name]
                     mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    # pyrefly: ignore [unsupported-operation]
                     real_used_gb = round(mem_info.used / (1024**3), 2)
+                    # pyrefly: ignore [unsupported-operation]
                     real_free_gb = round(mem_info.free / (1024**3), 2)
                 except Exception as exc:  # noqa: BLE001 - resilience: optional per-device VRAM query, degrade to None
                     logger.debug(
