@@ -210,6 +210,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Cross-process reindex race deleted every metadata row while FAISS/BM25 saved on top of the
+  empty store** (2026-09-25 twozero-dev incident, H1) — a CLI force-full reindex held
+  `metadata.db` open while the MCP server's own auto-reindex raced it on the same storage
+  directory; `CodeIndexManager.preflight_clear()`'s pre-probe `MetadataStore.clear()` (added by
+  the 2026-08-31 ADR-0025 amendment) committed a `DELETE FROM` on all 31,332 rows *before* the
+  rename probe ran, so when the probe then failed with `WinError 32` (the CLI still held the
+  handle), the server aborted the clear as designed but the rows were already gone — the CLI
+  finished its run and saved FAISS/BM25/graph on top of the now-empty metadata store, only
+  catching it at its own post-index consistency check (`Metadata database size (0) !=
+  chunk_ids length (31332)`). Fixed on two levels: (1) `preflight_clear()` reordered to probe
+  before any destructive step — the pre-probe `clear()` is dropped entirely, and deletion now
+  happens only via the rename + `clear_index()`'s existing unlink, so a failed probe is a true
+  no-op again (Windows-only fix — POSIX renames succeed silently under an open handle); (2) a new
+  cross-process `search/index_write_lock.py` (`filelock.FileLock`, OS-level, `timeout=0`,
+  auto-released if the holder dies) wraps `IncrementalIndexer.incremental_index()` — the single
+  chokepoint shared by CLI force-full reindex, MCP `index_directory`, and auto-reindex — so a
+  second writer now fails fast with `IndexWriteLockHeld` instead of racing the first at all, on
+  any platform. A cheap `is_index_write_locked()` pre-gate in
+  `SearchOrchestrator._maybe_reindex` skips building a `HybridSearcher` (which maps
+  `code_vectors.mmap`) once the lock is already known to be held. New direct dependency
+  `filelock>=3.32,<4` (already locked transitively). See the 2026-09-25 amendment to
+  `docs/adr/0025-clear-index-directory-in-place.md`.
 - **pyan tier silently zeroed on every index since 2026-09-02** — `f5acd585` migrated
   `chunking/relationships/external_call_graph.py`'s `_TrackedVisitor.postprocess()` to pyan3
   2.8's postprocessor pipeline (`cull_inherited` dropped, `cull_subsumed` added), but the venv

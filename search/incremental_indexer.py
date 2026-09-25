@@ -33,6 +33,7 @@ from utils.otel_attributes import (
 from utils.timing import timed
 
 from .config import get_active_project_storage_dir, get_search_config
+from .index_write_lock import IndexWriteLockHeldError, index_write_lock
 from .index_write_stage import IncrementalIndexResult, IndexWriteStage
 from .indexer import CodeIndexManager as Indexer
 from .parallel_chunker import ParallelChunker
@@ -240,6 +241,18 @@ class IncrementalIndexer:
     ) -> IncrementalIndexResult:
         """Perform incremental indexing of a project.
 
+        Wrapped in the project's inter-process index write lock
+        (search/index_write_lock.py) whenever a real storage directory can
+        be resolved (see ``_index_storage_dir``) -- a bare CodeIndexManager
+        or HybridSearcher in production, but ``None`` for most unit-test
+        doubles, which then run unlocked exactly as before this lock was
+        added. If another process already holds the lock (e.g. a
+        concurrent CLI force-full reindex racing this call's own
+        auto-reindex), this returns a clean failure instead of racing it --
+        see the 2026-09-25 twozero-dev incident, where that exact race let
+        a concurrent clear commit mid-write and corrupt the index (ADR-0025
+        amendment, docs/adr/0025-clear-index-directory-in-place.md).
+
         Args:
             project_path: Path to project
             project_name: Optional project name
@@ -254,6 +267,38 @@ class IncrementalIndexer:
         if project_name is None:
             project_name = Path(project_path).name
 
+        storage_dir = self._index_storage_dir()
+        if storage_dir is None:
+            return self._incremental_index_body(
+                project_path, project_name, force_full, start_time
+            )
+
+        try:
+            with index_write_lock(storage_dir):
+                return self._incremental_index_body(
+                    project_path, project_name, force_full, start_time
+                )
+        except IndexWriteLockHeldError as e:
+            logger.warning(f"[INDEX_LOCK] Skipping index for {project_name}: {e}")
+            return self._zero_result(start_time, success=False, error=str(e))
+
+    def _incremental_index_body(
+        self,
+        project_path: str,
+        project_name: str,
+        force_full: bool,
+        start_time: float,
+    ) -> IncrementalIndexResult:
+        """The actual indexing work, run inside incremental_index's held lock.
+
+        Split out of ``incremental_index`` so the lock acquisition wraps
+        this whole method -- including the recovery path at the bottom --
+        without an awkward nested try/except mixing ``IndexWriteLockHeldError``
+        (a control-flow signal from the OUTER lock acquisition, which must
+        propagate to the caller of ``incremental_index`` unchanged) with
+        this method's own broad ``except Exception`` recovery net, which
+        must never catch it.
+        """
         try:
             # Check if we should do full index
             if force_full or not self.snapshot_manager.has_snapshot(project_path):
@@ -511,6 +556,28 @@ class IncrementalIndexer:
 
     _RECOVERY_MARKER_NAME = "index_recovery_failed.marker"
 
+    def _index_storage_dir(self) -> Path | None:
+        """Resolve the index storage directory for ``self.indexer``.
+
+        Reused by ``_recovery_marker_path`` (recovery-marker file location)
+        and by ``incremental_index`` (inter-process write lock, see
+        ``search/index_write_lock.py``). Reuses ``_consistency_target`` to
+        resolve to a CodeIndexManager regardless of whether ``self.indexer``
+        is a HybridSearcher (production) or a bare CodeIndexManager (most
+        tests).
+
+        Returns:
+            The storage directory, or ``None`` when no target resolved or
+            it's an unconfigured test double (e.g. a bare ``Mock()`` with no
+            ``storage_dir`` set) — either way there is no real directory to
+            write a marker into or lock.
+        """
+        target = self._consistency_target()
+        storage_dir = getattr(target, "storage_dir", None)
+        if not isinstance(storage_dir, (str, os.PathLike)):
+            return None
+        return Path(storage_dir)
+
     def _recovery_marker_path(self) -> Path | None:
         """Resolve the recovery-marker path in the index storage directory.
 
@@ -519,19 +586,11 @@ class IncrementalIndexer:
         ``self`` resets every call and can never bound anything — a marker
         file on disk is what actually survives across the request boundary
         that previously produced 62 consecutive recovery attempts.
-
-        Reuses ``_consistency_target`` to resolve to a CodeIndexManager
-        regardless of whether ``self.indexer`` is a HybridSearcher
-        (production) or a bare CodeIndexManager (most tests).
         """
-        target = self._consistency_target()
-        storage_dir = getattr(target, "storage_dir", None)
-        if not isinstance(storage_dir, (str, os.PathLike)):
-            # None (no target resolved) or an unconfigured test double
-            # (e.g. a bare Mock() with no storage_dir set) — either way
-            # there is no real directory to write a marker into.
+        storage_dir = self._index_storage_dir()
+        if storage_dir is None:
             return None
-        return Path(storage_dir) / self._RECOVERY_MARKER_NAME
+        return storage_dir / self._RECOVERY_MARKER_NAME
 
     def _attempt_recovery(
         self,

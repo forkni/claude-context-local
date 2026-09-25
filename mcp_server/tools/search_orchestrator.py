@@ -21,6 +21,7 @@ from mcp_server.config_schema import arg
 from mcp_server.enricher_specs import ENRICHER_SPECS
 from mcp_server.search_factory import get_searcher
 from mcp_server.services import get_config, get_state
+from mcp_server.storage_manager import get_project_storage_dir
 from mcp_server.tools import responses, result_view
 from mcp_server.tools.searcher_view import SearcherView
 from search.config import (
@@ -33,6 +34,7 @@ from search.config import (
 from search.effective_config import build_effective_config
 from search.exceptions import DimensionMismatchError
 from search.graph_scoring_stage import GraphScoringStage
+from search.index_write_lock import is_index_write_locked
 from search.intent_classifier import IntentClassifier, IntentDecision, QueryIntent
 
 
@@ -328,27 +330,45 @@ class SearchOrchestrator:
                     _is_index_stale, current_project, plan.max_age_minutes
                 )
                 if stale:
-                    # Exclusive write lock: drains readers already in _search
-                    # (run under the read lock in run()) before reindexing runs,
-                    # and blocks new readers from starting until the index-file
-                    # rewrite completes.
-                    # _check_auto_reindex is blocking (can run a full incremental
-                    # reindex + HybridSearcher construction), so offload to a thread.
-                    # It re-checks staleness internally (needs_reindex), so two
-                    # requests that both saw "stale" here don't double-reindex.
-                    async with get_state().get_reindex_rwlock(current_project).write():
-                        reindexed, _ = await asyncio.to_thread(
-                            _check_auto_reindex,
-                            current_project,
-                            plan.max_age_minutes,
+                    # Cheap cross-process pre-gate: skip building a HybridSearcher
+                    # (maps code_vectors.mmap, could itself contend with a
+                    # concurrent writer's save) when another process already
+                    # holds the index write lock -- e.g. a CLI force-full
+                    # reindex racing this auto-reindex. See the 2026-09-25
+                    # twozero-dev incident and search/index_write_lock.py.
+                    # incremental_index() below would fail the same way on its
+                    # own lock acquisition, but only after paying that
+                    # HybridSearcher/embedder cost first.
+                    storage_dir = get_project_storage_dir(current_project) / "index"
+                    if is_index_write_locked(storage_dir):
+                        logger.info(
+                            f"[AUTO_REINDEX] skipped for {current_project} — "
+                            "another process holds the index write lock"
                         )
-                        # Reset inside the write lock so no reader can ever grab
-                        # the stale searcher between reindex and reset (holds by
-                        # analysis today — __aexit__ never suspends — but keep
-                        # the invariant structural, not incidental).
-                        if reindexed:
-                            get_state().reset_searcher()
-                            reindexed_flag = True
+                    else:
+                        # Exclusive write lock: drains readers already in _search
+                        # (run under the read lock in run()) before reindexing runs,
+                        # and blocks new readers from starting until the index-file
+                        # rewrite completes.
+                        # _check_auto_reindex is blocking (can run a full incremental
+                        # reindex + HybridSearcher construction), so offload to a thread.
+                        # It re-checks staleness internally (needs_reindex), so two
+                        # requests that both saw "stale" here don't double-reindex.
+                        async with (
+                            get_state().get_reindex_rwlock(current_project).write()
+                        ):
+                            reindexed, _ = await asyncio.to_thread(
+                                _check_auto_reindex,
+                                current_project,
+                                plan.max_age_minutes,
+                            )
+                            # Reset inside the write lock so no reader can ever grab
+                            # the stale searcher between reindex and reset (holds by
+                            # analysis today — __aexit__ never suspends — but keep
+                            # the invariant structural, not incidental).
+                            if reindexed:
+                                get_state().reset_searcher()
+                                reindexed_flag = True
             except DimensionMismatchError as e:
                 return responses.dimension_mismatch(e)
 

@@ -178,3 +178,76 @@ recovery already owns.
 The decision itself is unaffected. What changed is the same lesson as the amendment above,
 applied to the metadata side instead of the FAISS side: a documented two-party contract needs an
 enforced post-condition, not just a comment describing the intended handoff.
+
+## Amendment (2026-09-25): the 08-31 fix's own destructive pre-probe clear turned a cross-process race into permanent data loss (H1)
+
+The 2026-08-31 amendment above added `MetadataStore.clear()` — a committed `DELETE FROM` — as a
+step inside `preflight_clear()`, running *before* `reset()` and the rename probe, specifically so
+row-emptiness would not depend on the file-unlink step succeeding. That traded one bug for a
+worse one: the probe's whole contract is "a failed probe is a clean no-op", but with the clear
+moved ahead of it, a failed probe left every row already deleted and committed regardless.
+
+This is exactly what happened on `twozero-dev`. A CLI force-full reindex started at 10:23:43 and
+held `metadata.db` open for the run. `start_mcp_server.cmd` POSTs `/cleanup` to the running MCP
+server first, but that only releases the server's own resources — it does not suspend the
+server's auto-reindex. At 10:27:50 a concurrent `search_code` call on the same project triggered
+exactly that: `[AUTO_REINDEX]` saw a stale snapshot, called `IndexSynchronizer.clear_index` →
+`preflight_clear()` → `MetadataStore.clear()` (committed, all 31,332 rows gone) → `reset()` →
+`probe_metadata_deletable()`, which then failed the rename with `WinError 32` because the CLI
+process still held the file open. The server aborted the clear as designed — but the rows were
+already gone. The CLI process never observed any of this; it went on to finish chunking and
+embedding, saved FAISS/BM25/graph (31,332 vectors each) on top of the now-empty metadata store,
+and only caught the damage at its own post-index consistency check five minutes later
+(`Metadata database size (0) != chunk_ids length (31332)`). Three alternative hypotheses (a TD
+network file-set change, a silently swallowed `add_embeddings` commit, and a stale read against a
+different store) were each falsified against the timestamped log and `stats.json` evidence before
+settling on this one.
+
+Two independent defects had to combine for this failure, and both needed fixing:
+
+1. **Ordering.** `preflight_clear()` deleted before it probed. Fixed by dropping the pre-probe
+   `MetadataStore.clear()` entirely and relying on the rename (the probe itself) plus
+   `clear_index()`'s existing unlink of the renamed `.deleting` file to do the actual deletion —
+   the same "live DB wins over stale `.deleting` debris" fix and zero-rows post-condition from
+   the 08-31 amendment already guarantee an empty store once the probe *succeeds*, so the
+   destructive pre-probe clear was never load-bearing for correctness, only for harm on the
+   failure path. See `CodeIndexManager.preflight_clear()`'s docstring (`search/indexer.py:858`)
+   for the in-code version of this rationale. This is a Windows-only fix: on POSIX, a rename over
+   an open file handle succeeds silently regardless of who else holds it, so the reorder alone
+   does not close the race there.
+2. **No inter-process mutual exclusion.** The only lock guarding an index storage directory was
+   the MCP server's in-process `_AsyncRWLock` (`mcp_server/state.py::get_reindex_rwlock`) —
+   nothing stopped a CLI indexer process and the server's own auto-reindex from writing the same
+   `metadata.db`/FAISS/BM25 files at the same time in the first place. Fixed with a new
+   `search/index_write_lock.py`: `index_write_lock(storage_dir)` wraps a `filelock.FileLock`
+   (OS-level, `timeout=0`, auto-released if the holder dies) around
+   `IncrementalIndexer.incremental_index()` — the single chokepoint shared by CLI force-full
+   reindex, MCP `index_directory`, and auto-reindex — so a second writer fails fast with
+   `IndexWriteLockHeld` instead of racing the first at all, on any platform. A cheap
+   `is_index_write_locked()` pre-gate was also added to `SearchOrchestrator._maybe_reindex`
+   (`mcp_server/tools/search_orchestrator.py`) so a stale-index search skips building a
+   `HybridSearcher` — which maps `code_vectors.mmap` and could itself contend with the other
+   process's save — once the lock is already known to be held, rather than paying that cost only
+   to fail at `incremental_index`'s own lock acquisition moments later.
+
+The decision itself — object identity stays stable, mutate in place — remains unaffected. What
+changed is the same lesson as both amendments above, extended one level further: a two-party
+"probe, then destroy" contract is not actually two-party if the destructive half can run before
+the probe succeeds, and a single-process contract is not enough once the same storage directory
+has more than one process capable of writing to it. Every prior amendment to this ADR was a
+single-process race (a stray handle from an earlier `CodeIndexManager` instance in the *same*
+process); this is the first that required real cross-process exclusion.
+
+### Follow-up (deferred, not part of this fix)
+
+- Admin paths that bypass `incremental_index` — `handle_clear_index`, `handle_delete_project`,
+  `tools/safe_clear_index.py` — do not yet take the write lock. Handed to
+  `/improve-codebase-architecture`.
+- `IncrementalIndexer._full_index` saves the snapshot before validating and keeps it on
+  validation failure, so a failed full index can still look "current" to `needs_reindex` if there
+  happen to be no pending changes. Invalidating or rolling back the snapshot on validation failure
+  is deferred to the same follow-up.
+- The CLI's `/cleanup` call only releases the server's resources; it does not ask the server to
+  pause auto-reindex for the target project. The write lock now makes that unnecessary for
+  correctness, but a clearer skip message earlier in the CLI run (rather than the server silently
+  losing the race) would still be a usability improvement.
