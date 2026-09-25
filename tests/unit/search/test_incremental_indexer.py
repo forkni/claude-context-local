@@ -360,7 +360,7 @@ class TestIncrementalIndexer:
         assert result.chunks_removed == 10  # 2 files * 5 chunks each
         assert result.chunks_added == 2
 
-    def test_add_new_chunks_passes_partial_pass_cache_to_embedder(self):
+    def test_add_new_chunks_passes_partial_pass_cache_to_embedder(self, tmp_path):
         """_add_new_chunks must resolve the chunk cache and forward cache_full_pass=False.
 
         Regression guard for Fix 3: this embed site previously ran cold every
@@ -371,8 +371,14 @@ class TestIncrementalIndexer:
         The embed call now runs through IndexWriteStage.embed_and_attach_metadata
         (shared with the full-index path), so resolve_chunk_cache is patched at
         its call site in search.index_write_stage, not search.incremental_indexer.
+
+        storage_dir must be a real, writable directory: incremental_index now
+        takes index_write_lock(storage_dir) around its whole body (H1), which
+        mkdir()s it -- a literal "/fake/..." path is unwritable on Linux CI
+        (filesystem root) even though it happened to succeed on Windows.
         """
-        self.mock_indexer.storage_dir = "/fake/storage_dir"
+        fake_storage_dir = str(tmp_path / "fake_storage_dir")
+        self.mock_indexer.storage_dir = fake_storage_dir
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
@@ -419,7 +425,7 @@ class TestIncrementalIndexer:
 
         assert result.success is True
         mock_resolve.assert_called_once_with(
-            "/fake/storage_dir", self.mock_embedder, self.mock_indexer
+            fake_storage_dir, self.mock_embedder, self.mock_indexer
         )
         call_kwargs = self.mock_embedder.embed_chunks.call_args.kwargs
         assert call_kwargs["cache"] is sentinel_cache
