@@ -856,28 +856,35 @@ class CodeIndexManager:
         return is_valid, issues
 
     def preflight_clear(self) -> Path:
-        """Empty the metadata store in place, then verify metadata.db is
-        actually deletable before the caller destroys FAISS/graph state.
+        """Verify metadata.db is actually deletable before the caller
+        destroys any rows or other index state (FAISS/graph).
 
-        ``MetadataStore.clear()`` runs first, when there is anything to
-        clear, and deletes every row while the connection is still open --
-        row-emptiness no longer depends on the file-unlink step below
-        succeeding (that step can silently no-op, as it did when a stale
-        ``.deleting`` sibling previously shadowed the live DB). It is
-        skipped when ``metadata.db`` has never been created (nothing has
-        ever been opened or written): opening a store just to clear rows
-        that don't exist would create a fresh empty DB as a side effect,
-        which is both wasted work and, on Windows, one more file that has
-        to round-trip through SQLite's WAL machinery before the probe below
-        even runs. ``MetadataStore.reset()`` then closes the current SQLite
-        handle (releasing the Windows file lock) without replacing the
+        ``MetadataStore.reset()`` closes the current SQLite handle
+        (releasing the Windows file lock) without replacing the
         ``MetadataStore`` object -- identity stays stable per ADR-0025, so
         no caller needs re-wiring (``_batch_ops._metadata_store`` still
-        points at the same, now-reset, instance).
+        points at the same, now-reset, instance). Force garbage collection
+        runs before the probe because a lingering Python-side reference is
+        exactly what would otherwise make it raise spuriously.
 
-        Force garbage collection runs before the probe because a lingering
-        Python-side reference is exactly what would otherwise make it raise
-        spuriously.
+        Row deletion happens only in ``clear_index()``, after this probe
+        succeeds -- never here. A prior version of this method cleared every
+        row (``MetadataStore.clear()``, a committed ``DELETE FROM``) BEFORE
+        probing deletability, on the theory that row-emptiness shouldn't
+        depend on the file-unlink step below succeeding. That inverted the
+        failure mode it was meant to fix: a failed probe (e.g. a live
+        SQLite handle held by a concurrent process on Windows) left the
+        rows already gone while the file itself, and the caller, believed
+        the whole clear was a no-op. This is exactly what happened in the
+        2026-09-25 twozero-dev incident -- a CLI force-full reindex held
+        metadata.db open while the running MCP server's auto-reindex raced
+        it, cleared every row, then aborted on WinError 32 with an
+        already-empty store. The "live DB wins over a stale ``.deleting``
+        sibling" fix in ``probe_metadata_deletable`` and this method's own
+        zero-rows post-condition in ``clear_index()`` already guarantee an
+        empty store once the probe *succeeds*, so a destructive pre-probe
+        clear was never actually load-bearing for correctness -- only for
+        harm on the failure path.
 
         Idempotent and safe to call twice in one clear chain -- see
         ``probe_metadata_deletable``'s own docstring.
@@ -885,8 +892,6 @@ class CodeIndexManager:
         Returns:
             The path metadata.db now lives at post-probe.
         """
-        if self.metadata_path.exists():
-            self._metadata_store.clear()
         self._metadata_store.reset()
 
         import gc
