@@ -14,6 +14,7 @@ deleted.
 
 import os
 import pickle
+import sys
 from pathlib import Path
 
 import faiss
@@ -22,6 +23,7 @@ import pytest
 
 from search.faiss_index import FaissVectorIndex
 from search.indexer import CodeIndexManager, probe_metadata_deletable
+from search.metadata import MetadataStore
 from search.mmap_vectors import MmapVectorStorage
 
 
@@ -145,6 +147,66 @@ class TestClearIndexFailsFastOnLockedMetadata:
             "the clear is a no-op, not a half-clear"
         )
         assert stats.exists(), "stats.json must survive an aborted clear too"
+
+        # The row itself must survive, not just the file. preflight_clear()
+        # used to call MetadataStore.clear() (DELETE FROM, committed) BEFORE
+        # probing deletability, so a failed probe still left an empty-but-
+        # present metadata.db — the file existed but the row was already
+        # gone. This is the exact 2026-09-25 twozero-dev incident: the
+        # server's auto-reindex hit a locked metadata.db held by a
+        # concurrent CLI force-full reindex, aborted on WinError 32, but had
+        # already deleted every row by then.
+        manager.metadata_store.close()
+        reopened = MetadataStore(str(metadata_db))
+        try:
+            assert len(reopened) == 1, (
+                "a failed probe must leave metadata.db's rows intact, not "
+                "just the file — clear() must not run before the probe "
+                "succeeds"
+            )
+        finally:
+            reopened.close()
+
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="reproduces a Windows-only file-lock failure mode (os.replace "
+        "succeeds against an open handle on POSIX)",
+    )
+    def test_clear_index_survives_a_real_locked_handle_from_another_process(
+        self, tmp_path
+    ):
+        """Same defect as the monkeypatched test above, but reproduced with a
+        real live SQLite handle instead of a patched os.replace — the actual
+        production failure mode (a second process, here a second
+        MetadataStore instance, holding metadata.db open) rather than a
+        simulated one.
+        """
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+        manager.metadata_store.set("a.py:1-2:function:f", 0, {"relative_path": "a.py"})
+        manager.metadata_store.commit()
+        metadata_db = storage_dir / "metadata.db"
+        assert metadata_db.exists()
+
+        # A second, independent handle on the same metadata.db — standing in
+        # for the concurrent process that held the file open in production.
+        other_handle = MetadataStore(str(metadata_db))
+        other_handle.get("a.py:1-2:function:f")  # force the connection open
+        try:
+            with pytest.raises(OSError):
+                manager.clear_index()
+
+            assert metadata_db.exists(), (
+                "a failed probe must leave metadata.db exactly where it was"
+            )
+            assert len(other_handle) == 1, (
+                "the row must survive a probe failure against a real "
+                "locked handle, not just a monkeypatched one"
+            )
+        finally:
+            other_handle.close()
 
     # A metadata.db that exists but can't be opened as SQLite at all (as
     # opposed to a valid-but-locked one) is deliberately not covered by a
