@@ -157,7 +157,7 @@ class TestClearIndexFailsFastOnLockedMetadata:
         # concurrent CLI force-full reindex, aborted on WinError 32, but had
         # already deleted every row by then.
         manager.metadata_store.close()
-        reopened = MetadataStore(str(metadata_db))
+        reopened = MetadataStore(metadata_db)
         try:
             assert len(reopened) == 1, (
                 "a failed probe must leave metadata.db's rows intact, not "
@@ -192,7 +192,7 @@ class TestClearIndexFailsFastOnLockedMetadata:
 
         # A second, independent handle on the same metadata.db — standing in
         # for the concurrent process that held the file open in production.
-        other_handle = MetadataStore(str(metadata_db))
+        other_handle = MetadataStore(metadata_db)
         other_handle.get("a.py:1-2:function:f")  # force the connection open
         try:
             with pytest.raises(OSError):
