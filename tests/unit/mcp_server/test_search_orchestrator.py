@@ -318,6 +318,57 @@ class TestExecuteHappyPath:
         mock_reindex.assert_not_called()
 
 
+class TestExecuteIndexWriteLockPreGate:
+    """_maybe_reindex's cheap pre-gate (search/index_write_lock.py) must skip
+    _check_auto_reindex entirely when another process already holds the
+    project's index write lock -- e.g. a CLI force-full reindex racing this
+    auto-reindex, the 2026-09-25 twozero-dev incident. Without the gate,
+    _check_auto_reindex would still build a HybridSearcher (mapping
+    code_vectors.mmap) and only fail once incremental_index's own lock
+    acquisition does, after paying that cost."""
+
+    @pytest.mark.asyncio
+    async def test_locked_index_skips_check_auto_reindex(self):
+        plan = _make_plan(auto_reindex=True)
+        searcher = _make_ready_searcher()
+        with (
+            _patch_execute() as (_, mock_gs),
+            patch(
+                "mcp_server.tools.search_orchestrator.is_index_write_locked",
+                return_value=True,
+            ),
+            patch(
+                "mcp_server.tools.search_handlers._check_auto_reindex"
+            ) as mock_reindex,
+        ):
+            mock_gs.return_value = searcher
+            result = await _run_execute(SearchOrchestrator(), plan)
+        mock_reindex.assert_not_called()
+        assert isinstance(result, ExecutionOutcome)
+        assert result.reindexed is False
+
+    @pytest.mark.asyncio
+    async def test_unlocked_index_still_reaches_check_auto_reindex(self):
+        """Sanity check the gate above isn't vacuous: with the lock free,
+        the same stale-index path reaches _check_auto_reindex as before."""
+        plan = _make_plan(auto_reindex=True)
+        searcher = _make_ready_searcher()
+        with (
+            _patch_execute() as (_, mock_gs),
+            patch(
+                "mcp_server.tools.search_orchestrator.is_index_write_locked",
+                return_value=False,
+            ),
+            patch(
+                "mcp_server.tools.search_handlers._check_auto_reindex",
+                return_value=(False, None),
+            ) as mock_reindex,
+        ):
+            mock_gs.return_value = searcher
+            await _run_execute(SearchOrchestrator(), plan)
+        mock_reindex.assert_called_once()
+
+
 class TestExecuteConfigIsolation:
     """The mutable_config() lazy-deepcopy inside _execute must never write to the singleton."""
 
