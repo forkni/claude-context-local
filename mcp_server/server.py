@@ -842,6 +842,25 @@ if __name__ == "__main__":
             async def handle_mcp(scope: Any, receive: Any, send: Any) -> None:
                 await session_manager.handle_request(scope, receive, send)
 
+            # Legacy SSE transport (GET /sse + POST /messages/) served alongside
+            # /mcp for clients that don't speak StreamableHTTP yet (e.g. Antigravity
+            # IDE's `serverUrl` config). Both transports share this process, so the
+            # embedding model and index state are loaded once.
+            from mcp.server.sse import SseServerTransport
+
+            sse_transport = SseServerTransport("/messages/")
+
+            async def handle_sse(scope: Any, receive: Any, send: Any) -> None:
+                async with sse_transport.connect_sse(scope, receive, send) as (
+                    read_stream,
+                    write_stream,
+                ):
+                    await server.run(
+                        read_stream,
+                        write_stream,
+                        server.create_initialization_options(),
+                    )
+
             # Cleanup endpoint - trigger resource cleanup via HTTP
             async def handle_cleanup(request: Any) -> JSONResponse:
                 """HTTP endpoint to trigger resource cleanup.
@@ -1024,6 +1043,7 @@ if __name__ == "__main__":
 
             # Top-level ASGI app: routes /mcp directly to StreamableHTTP before
             # Starlette routing sees it (avoids the 307 redirect described above).
+            # The legacy SSE paths are dispatched the same way for the same reason.
             # Lifespan events fall through to starlette_app which owns the context.
             async def asgi_app(scope: Any, receive: Any, send: Any) -> None:
                 if scope.get("type") == "http":
@@ -1031,11 +1051,18 @@ if __name__ == "__main__":
                     if path == "/mcp" or path.startswith("/mcp/"):
                         await handle_mcp(scope, receive, send)
                         return
+                    if path == "/sse":
+                        await handle_sse(scope, receive, send)
+                        return
+                    if path in ("/messages", "/messages/"):
+                        await sse_transport.handle_post_message(scope, receive, send)
+                        return
                 await starlette_app(scope, receive, send)
 
             # Run server with Windows-specific event loop handling
             logger.info(f"Starting HTTP server on {args.host}:{args.port}")
             logger.info(f"HTTP endpoint: http://{args.host}:{args.port}/mcp")
+            logger.info(f"Legacy SSE endpoint: http://{args.host}:{args.port}/sse")
             logger.info(f"Cleanup endpoint: http://{args.host}:{args.port}/cleanup")
             logger.info(
                 f"Config reload endpoint: http://{args.host}:{args.port}/reload_config"

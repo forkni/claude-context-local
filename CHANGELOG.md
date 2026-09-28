@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Legacy SSE transport served alongside StreamableHTTP** (`mcp_server/server.py`) — the
+  `--transport http` server now also exposes `GET /sse` + `POST /messages/` (via
+  `SseServerTransport`) next to `/mcp`, so SSE-only clients such as Antigravity IDE
+  (`"serverUrl": "http://localhost:8765/sse"`) can connect again. Previously `/sse` returned 404
+  and those clients failed with `session not found` on `initialize`. Both transports share one
+  process, so the embedding model and index state load once.
+
 - **`MCP_TOOL_ALLOWLIST` narrows `list_tools` advertisement to a named subset**, independent of
   and composable with the existing `MCP_EXPOSE_ADVANCED_TOOLS` tier gate. Set it to a
   comma-separated list of tool names (unknown names are ignored, not an error) to restrict what a
