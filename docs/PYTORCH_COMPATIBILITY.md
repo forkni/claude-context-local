@@ -6,7 +6,7 @@ This document explains PyTorch version requirements and compatibility for claude
 
 ## Version Requirements
 
-### Minimum Versions
+### Model Compatibility Floors
 
 - **PyTorch 2.6.0+** - Required for BGE-M3 (the default model, security fixes)
 - **PyTorch 2.4.0+** - Minimum for EmbeddingGemma-300m
@@ -16,6 +16,14 @@ These floors apply to the current 4-model registry (BGE-M3, EmbeddingGemma-300m,
 Qwen3-0.6B, F2LLM-v2-0.6B) — none of the models added since this guide was written
 raise the minimum versions above. (`CodeRankEmbed` and `GTE-ModernBERT-base` were
 removed from `MODEL_REGISTRY` in v0.23.0.)
+
+### Project Dependency Ranges
+
+The installable dependency contract is declared in `pyproject.toml`:
+
+- **PyTorch >=2.11.0, <2.12.0**
+- **transformers >=5.14.1, <6**
+- **sentence-transformers >=5.7.0**
 
 ### Recommended (and Enforced) Versions
 
@@ -27,8 +35,8 @@ removed from `MODEL_REGISTRY` in v0.23.0.)
 ### CUDA Index Selection (`pyproject.toml`)
 
 Unlike older PyTorch releases (which shipped a single `cu118` build compatible with all CUDA
-12.x drivers), this project pins `torch`/`torchvision`/`torchaudio` to an **explicit CUDA-12.8
-wheel index** via `[tool.uv.sources]`:
+12.x drivers), this project pins `torch` to an **explicit CUDA-12.8 wheel index** via
+`[tool.uv.sources]`:
 
 ```toml
 [[tool.uv.index]]
@@ -72,7 +80,7 @@ uv sync
 
 ```batch
 # Fall back to the legacy cu124 index
-uv pip install torch==2.11.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+uv pip install torch==2.11.* --index-url https://download.pytorch.org/whl/cu124
 
 # Result: PyTorch 2.11.x+cu124
 ```
@@ -84,9 +92,9 @@ uv pip install torch==2.11.* torchvision torchaudio --index-url https://download
 ```toml
 [project]
 dependencies = [
+    "sentence-transformers>=5.7.0",
     "torch>=2.11.0,<2.12.0",
-    "torchvision>=0.21.0",
-    "torchaudio>=2.6.0",
+    "transformers>=5.14.1,<6",
 ]
 ```
 
@@ -100,7 +108,7 @@ introduced the original `<2.9.0` ceiling, lifted 2026-08-06, see `docs/adr/0033-
   `@torch.compile(dynamic=True)` decorator hit a `torch.inductor` `AssertionError` on PyTorch
   2.9.x/Windows. That rationale is now empirically dead on both legs: the GTE-ModernBERT
   **embedder** it protected was deleted from `MODEL_REGISTRY` in commit `24f6b8c` (2026-07-31),
-  and the pinned `transformers>=5.3.0` floor **removed ModernBERT's `reference_compile` path
+  and the pinned `transformers>=5.14.1,<6` floor **removed ModernBERT's `reference_compile` path
   entirely** (`grep torch.compile` over `transformers/models/modernbert/*.py` in the installed
   package returns nothing). The project itself never calls `torch.compile` — the only `_dynamo`
   hit in the codebase is a log suppressor (`mcp_server/server.py:207`), and nine benchmark logs
@@ -195,7 +203,7 @@ Reason: Different embedding dimensions are incompatible
 **Fix:** Switch to the legacy `cu124` index for this one dependency:
 
 ```batch
-.venv\Scripts\uv.exe pip install torch==2.11.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
+.venv\Scripts\uv.exe pip install torch==2.11.* --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
 ```
 
 ### "torch.cuda.is_available() returns False"
@@ -213,7 +221,7 @@ Reason: Different embedding dimensions are incompatible
 .venv\Scripts\python.exe -c "import torch; print(torch.__version__)"
 
 # If shows "2.11.x+cpu", reinstall with CUDA
-.venv\Scripts\uv.exe pip install torch==2.11.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
+.venv\Scripts\uv.exe pip install torch==2.11.* --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
 ```
 
 ## Verification Commands

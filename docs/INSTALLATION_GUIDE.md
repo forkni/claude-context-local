@@ -523,13 +523,14 @@ pip install -e ".[test]"
 
 - **Required range**: `torch>=2.11.0,<2.12.0` — pinned in `pyproject.toml`, installed automatically by `uv sync`
 - **Reason**:
-  - BGE-M3 (default model) needs PyTorch >= 2.6.0; EmbeddingGemma-300m needs >= 2.4.0 (transformers >= 4.51.3) — `>=2.11.0` covers both floors
+  - `pyproject.toml` is the source of truth for the project's supported dependency range
+  - `uv.lock` currently resolves PyTorch 2.11.0 (or 2.11.0+cu128 on Linux/Windows)
   - The `<2.12.0` ceiling reflects the pinned `cu128` wheel index's current maximum, not a known regression — see `docs/PYTORCH_COMPATIBILITY.md` for the full rationale and CVE tracking
 - **CUDA Compatibility**: `pyproject.toml` pins an explicit `cu128` wheel index (default; required for RTX 50-series, also works on older Ampere/Ada cards) with a `cu124` index kept as a manual fallback for older drivers
 - **Compatible Versions**:
   - PyTorch: `>=2.11.0,<2.12.0`
-  - transformers: 4.51.3+ (4.56.0-Embedding-Gemma-preview for EmbeddingGemma)
-  - sentence-transformers: 5.1.0+
+  - transformers: `>=5.14.1,<6`
+  - sentence-transformers: `>=5.7.0`
 
 ### Installation Commands
 
@@ -540,13 +541,13 @@ pip install -e ".[test]"
 uv sync
 ```
 
-> **Note**: This project only uses `torch` directly. `torchvision` and `torchaudio` are included for PyTorch ecosystem compatibility but are not actively used by the codebase.
+> **Note**: This project declares `torch` directly. `torchvision` and `torchaudio` are not project dependencies and are not required by the codebase.
 
 #### pip Method (Fallback)
 
 ```bash
 # CUDA 12.8 build (primary index)
-pip install "torch>=2.11.0,<2.12.0" torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+pip install "torch>=2.11.0,<2.12.0" --index-url https://download.pytorch.org/whl/cu128
 ```
 
 ### CUDA Index URLs
@@ -609,16 +610,18 @@ After installation, validate that all critical dependencies meet minimum version
 # Run version validation
 .venv\Scripts\python.exe -m utils.version_check
 
-# Expected output:
-# [OK] torch==2.8.0+cu128
-# [OK] transformers==4.47.1
-# [OK] sentence-transformers==3.4.1
-# [OK] numpy==2.2.4
-# [OK] faiss-cpu==1.9.0.post1
+# Example output for Python 3.11 on Linux/Windows (from the current uv.lock):
+# [OK] torch==2.11.0+cu128
+# [OK] transformers==5.16.1
+# [OK] sentence-transformers==6.0.1
+# [OK] numpy==2.4.6
+# [OK] faiss-cpu==1.15.0
 # All 5 critical dependencies validated successfully
 ```
 
 **What Gets Validated:**
+
+The validator's compatibility floors are lower than the project install ranges above; `pyproject.toml` remains the source of truth for a fresh installation.
 
 | Package | Minimum Version | Purpose |
 | --------- | ---------------- | --------- |
