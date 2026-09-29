@@ -373,21 +373,54 @@ class IntentClassifier:
 
         anchors_section = self._anchor_config.get("anchors", {})
         self._anchor_embeddings = {}
-        for intent_key, queries in anchors_section.items():
-            vecs: list[np.ndarray] = []
-            for q in queries:
+
+        batch_succeeded = False
+        if hasattr(self._embedder, "embed_queries_batch") and callable(
+            self._embedder.embed_queries_batch
+        ):
+            flattened: list[tuple[str, str]] = [
+                (intent_key, q)
+                for intent_key, queries in anchors_section.items()
+                for q in queries
+            ]
+            if flattened:
                 try:
-                    vec = self._embedder.embed_query(q)
-                    if vec is not None and len(vec) > 0:
-                        norm = float(np.linalg.norm(vec))
-                        if norm > 0:
-                            vecs.append(vec / norm)
-                except Exception as exc:  # noqa: BLE001 - resilience: per-anchor embed failure skipped, others continue
-                    logger.debug(
-                        f"[INTENT-SEM] Failed to embed anchor '{q[:40]}': {exc}"
+                    all_queries = [q for _, q in flattened]
+                    batch_vecs = self._embedder.embed_queries_batch(all_queries)
+                    for (intent_key, _), vec in zip(
+                        flattened, batch_vecs, strict=False
+                    ):
+                        if vec is not None and len(vec) > 0:
+                            norm = float(np.linalg.norm(vec))
+                            if norm > 0:
+                                self._anchor_embeddings.setdefault(
+                                    intent_key, []
+                                ).append(vec / norm)
+                    batch_succeeded = True
+                except Exception as exc:  # noqa: BLE001 - resilience: fallback to sequential
+                    logger.warning(
+                        f"[INTENT-SEM] Batch anchor embedding failed, falling back to sequential: {exc}"
                     )
-            if vecs:
-                self._anchor_embeddings[intent_key] = vecs
+                    self._anchor_embeddings = {}
+            else:
+                batch_succeeded = True
+
+        if not batch_succeeded:
+            for intent_key, queries in anchors_section.items():
+                vecs: list[np.ndarray] = []
+                for q in queries:
+                    try:
+                        vec = self._embedder.embed_query(q)
+                        if vec is not None and len(vec) > 0:
+                            norm = float(np.linalg.norm(vec))
+                            if norm > 0:
+                                vecs.append(vec / norm)
+                    except Exception as exc:  # noqa: BLE001 - resilience: per-anchor embed failure skipped, others continue
+                        logger.debug(
+                            f"[INTENT-SEM] Failed to embed anchor '{q[:40]}': {exc}"
+                        )
+                if vecs:
+                    self._anchor_embeddings[intent_key] = vecs
         logger.debug(
             f"[INTENT-SEM] Loaded anchor embeddings for "
             f"{len(self._anchor_embeddings)} intents"

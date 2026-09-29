@@ -940,3 +940,71 @@ class TestSemanticIntentClassification:
         # Should not raise; falls back to keyword scores
         decision = classifier.classify("where is QueryRouter defined")
         assert decision.intent == QueryIntent.LOCAL
+
+    def test_anchor_embeddings_uses_batch_when_available(self):
+        """_load_anchor_embeddings must use embed_queries_batch in a single call when available."""
+        import numpy as np
+
+        class _BatchMockEmbedder:
+            model_name = "mock-batch-model"
+
+            def __init__(self):
+                self.batch_calls: list[list[str]] = []
+                self.single_calls: list[str] = []
+
+            def embed_query(self, text: str):
+                self.single_calls.append(text)
+                return np.ones(64, dtype=np.float32)
+
+            def embed_queries_batch(self, queries: list[str]):
+                self.batch_calls.append(queries)
+                arr = np.ones((len(queries), 64), dtype=np.float32)
+                return arr / np.linalg.norm(arr, axis=1, keepdims=True)
+
+        embedder = _BatchMockEmbedder()
+        classifier = IntentClassifier(
+            enable_logging=False,
+            embedder=embedder,
+            semantic_enabled=True,
+        )
+        decision = classifier.classify("how does search work")
+        assert decision is not None
+        assert len(embedder.batch_calls) == 1
+        # The 62 anchor queries were embedded in one batch call
+        assert len(embedder.batch_calls[0]) >= 50
+        # Only the query itself was embedded via embed_query
+        assert embedder.single_calls == ["how does search work"]
+        assert classifier._anchor_embeddings is not None
+        assert len(classifier._anchor_embeddings) > 0
+        for _intent_key, vecs in classifier._anchor_embeddings.items():
+            for v in vecs:
+                assert abs(float(np.linalg.norm(v)) - 1.0) < 1e-4
+
+    def test_anchor_embeddings_batch_fallback_on_error(self):
+        """If embed_queries_batch raises, _load_anchor_embeddings must fall back to embed_query."""
+        import numpy as np
+
+        class _FallbackMockEmbedder:
+            model_name = "mock-fallback-model"
+
+            def __init__(self):
+                self.single_calls: list[str] = []
+
+            def embed_query(self, text: str):
+                self.single_calls.append(text)
+                return np.ones(64, dtype=np.float32)
+
+            def embed_queries_batch(self, queries: list[str]):
+                raise RuntimeError("Batch embedding error")
+
+        embedder = _FallbackMockEmbedder()
+        classifier = IntentClassifier(
+            enable_logging=False,
+            embedder=embedder,
+            semantic_enabled=True,
+        )
+        decision = classifier.classify("how does search work")
+        assert decision is not None
+        assert len(embedder.single_calls) > 0
+        assert classifier._anchor_embeddings is not None
+        assert len(classifier._anchor_embeddings) > 0
