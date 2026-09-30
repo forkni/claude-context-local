@@ -883,3 +883,67 @@ class TestFaissVectorIndexRemovePositions:
         # create() also calls move_to_gpu(); the restore is the extra call.
         assert len(moves) == 2
         index.close()
+
+
+class TestIndexKindFollowsSize:
+    """The flat/IVF decision has one owner and is re-made at every rebuild."""
+
+    DIM = 8
+    LIMIT = 50  # monkeypatched IVF_MIN_VECTORS so tests stay small and fast
+
+    @pytest.fixture(autouse=True)
+    def _low_ivf_threshold(self, monkeypatch):
+        from search import faiss_index
+
+        monkeypatch.setattr(faiss_index, "IVF_MIN_VECTORS", self.LIMIT)
+
+    def _built(self, tmp_path, n: int, kind: str) -> FaissVectorIndex:
+        rng = np.random.RandomState(5)
+        index = FaissVectorIndex(tmp_path / "code.index")
+        index.create(self.DIM, kind)
+        index.add(
+            rng.randn(n, self.DIM).astype(np.float32), [f"chunk_{i}" for i in range(n)]
+        )
+        return index
+
+    def test_index_kind_for_boundary(self):
+        from search.faiss_index import index_kind_for
+
+        assert index_kind_for(self.LIMIT) == "flat"
+        assert index_kind_for(self.LIMIT + 1) == "ivf"
+
+    def test_default_threshold_is_ten_thousand(self, monkeypatch):
+        from search import faiss_index
+
+        monkeypatch.undo()
+        assert faiss_index.index_kind_for(10000) == "flat"
+        assert faiss_index.index_kind_for(10001) == "ivf"
+
+    def test_rebuild_keeps_ivf_when_still_large(self, tmp_path):
+        index = self._built(tmp_path, 200, "ivf")
+
+        assert index.remove_positions({0, 1, 2})
+
+        assert type(index.index).__name__ == "IndexIVFFlat"
+        assert index.ntotal == 197
+        assert index.index.nprobe == min(16, index.index.nlist)
+        index.reconstruct(0)  # direct map present after the rebuild
+        index.close()
+
+    def test_rebuild_promotes_grown_flat_index_to_ivf(self, tmp_path):
+        index = self._built(tmp_path, 200, "flat")
+
+        assert index.remove_positions({0})
+
+        assert type(index.index).__name__ == "IndexIVFFlat"
+        assert index.ntotal == 199
+        index.close()
+
+    def test_rebuild_demotes_ivf_that_shrank_below_threshold(self, tmp_path):
+        index = self._built(tmp_path, 200, "ivf")
+
+        assert index.remove_positions(set(range(0, 160)))
+
+        assert type(index.index).__name__ == "IndexFlatIP"
+        assert index.ntotal == 40
+        index.close()

@@ -28,7 +28,7 @@ import contextlib
 
 from embeddings.embedder import EmbeddingResult
 from search.batch_operations import BatchOperations
-from search.faiss_index import FaissVectorIndex
+from search.faiss_index import FaissVectorIndex, index_kind_for
 from search.filters import FilterEngine
 from search.graph_integration import GraphIntegration
 from search.metadata import MetadataStore
@@ -236,9 +236,7 @@ class CodeIndexManager:
 
         # Initialize index if needed
         if self.index is None:
-            # Default to flat index for better recall - only use IVF for very large datasets
-            index_type = "ivf" if num_new_vectors > 10000 else "flat"
-            self.create_index(embedding_dim, index_type)
+            self.create_index(embedding_dim, index_kind_for(num_new_vectors))
 
         # Prepare embeddings and metadata
         embeddings = np.array([result.embedding for result in embedding_results])

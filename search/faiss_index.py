@@ -39,6 +39,22 @@ MMAP_THRESHOLD = 10000
 # not persisted usefully: indexes already on disk were saved with nprobe=1).
 IVF_NPROBE = 16
 
+# Above this many vectors the dense index is IVF (approximate, faster scan);
+# at or below it, flat (exact). Measured: flat stays fast and exact well past
+# 10K on this hardware, so IVF only pays off for very large indexes.
+IVF_MIN_VECTORS = 10000
+
+
+def index_kind_for(vector_count: int) -> str:
+    """Index kind ("flat" or "ivf") for an index holding ``vector_count`` vectors.
+
+    The single owner of the flat/IVF decision. Consulted wherever the dense
+    index is (re)created from a known vector set: the first batch into an empty
+    index and every rebuild (a removal pass), so the kind follows size rather
+    than the size of whichever batch happened to arrive first.
+    """
+    return "ivf" if vector_count > IVF_MIN_VECTORS else "flat"
+
 
 def get_available_memory() -> dict[str, int]:
     """Get available system and GPU memory in bytes.
@@ -571,11 +587,6 @@ class FaissVectorIndex:
         # Fallback: FAISS reconstruct
         return self._index.reconstruct(int(idx))
 
-    @staticmethod
-    def _kind_for_rebuild(vector_count: int) -> str:
-        """Index kind to use when the dense index is recreated from its vectors."""
-        return "flat"
-
     def remove_positions(self, positions_to_remove: set[int]) -> bool:
         """Drop the vectors at ``positions_to_remove`` by rebuilding the index.
 
@@ -616,9 +627,7 @@ class FaissVectorIndex:
         was_on_gpu = self._on_gpu
 
         self.clear()
-        self.create(
-            embeddings_array.shape[1], self._kind_for_rebuild(len(embeddings_array))
-        )
+        self.create(embeddings_array.shape[1], index_kind_for(len(embeddings_array)))
         self.add(embeddings_array, chunk_ids_to_keep)
 
         if was_on_gpu:
