@@ -6,7 +6,11 @@ This document explains PyTorch version requirements and compatibility for claude
 
 ## Version Requirements
 
-### Minimum Versions
+### Model Compatibility Floors
+
+These are the floors the *models* need. The versions a fresh install actually gets are set by
+`pyproject.toml` (the source of truth for the `torch`, `transformers`, and `sentence-transformers`
+ranges) and `uv.lock`, and are intentionally not copied here.
 
 - **PyTorch 2.6.0+** - Required for BGE-M3 (the default model, security fixes)
 - **PyTorch 2.4.0+** - Minimum for EmbeddingGemma-300m
@@ -27,7 +31,7 @@ removed from `MODEL_REGISTRY` in v0.23.0.)
 ### CUDA Index Selection (`pyproject.toml`)
 
 Unlike older PyTorch releases (which shipped a single `cu118` build compatible with all CUDA
-12.x drivers), this project pins `torch`/`torchvision`/`torchaudio` to an **explicit CUDA-12.8
+12.x drivers), this project pins `torch` to an **explicit CUDA-12.8
 wheel index** via `[tool.uv.sources]`:
 
 ```toml
@@ -72,7 +76,7 @@ uv sync
 
 ```batch
 # Fall back to the legacy cu124 index
-uv pip install torch==2.11.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+uv pip install torch==2.11.* --index-url https://download.pytorch.org/whl/cu124
 
 # Result: PyTorch 2.11.x+cu124
 ```
@@ -85,10 +89,10 @@ uv pip install torch==2.11.* torchvision torchaudio --index-url https://download
 [project]
 dependencies = [
     "torch>=2.11.0,<2.12.0",
-    "torchvision>=0.21.0",
-    "torchaudio>=2.6.0",
 ]
 ```
+
+`torchvision` and `torchaudio` are not project dependencies and are not required by the codebase.
 
 ### Why `<2.12.0`?
 
@@ -100,7 +104,7 @@ introduced the original `<2.9.0` ceiling, lifted 2026-08-06, see `docs/adr/0033-
   `@torch.compile(dynamic=True)` decorator hit a `torch.inductor` `AssertionError` on PyTorch
   2.9.x/Windows. That rationale is now empirically dead on both legs: the GTE-ModernBERT
   **embedder** it protected was deleted from `MODEL_REGISTRY` in commit `24f6b8c` (2026-07-31),
-  and the pinned `transformers>=5.3.0` floor **removed ModernBERT's `reference_compile` path
+  and the pinned `transformers>=5.3.0` floor (since raised; see `pyproject.toml`) **removed ModernBERT's `reference_compile` path
   entirely** (`grep torch.compile` over `transformers/models/modernbert/*.py` in the installed
   package returns nothing). The project itself never calls `torch.compile` — the only `_dynamo`
   hit in the codebase is a log suppressor (`mcp_server/server.py:207`), and nine benchmark logs
@@ -195,7 +199,7 @@ Reason: Different embedding dimensions are incompatible
 **Fix:** Switch to the legacy `cu124` index for this one dependency:
 
 ```batch
-.venv\Scripts\uv.exe pip install torch==2.11.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
+.venv\Scripts\uv.exe pip install torch==2.11.* --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
 ```
 
 ### "torch.cuda.is_available() returns False"
@@ -213,7 +217,7 @@ Reason: Different embedding dimensions are incompatible
 .venv\Scripts\python.exe -c "import torch; print(torch.__version__)"
 
 # If shows "2.11.x+cpu", reinstall with CUDA
-.venv\Scripts\uv.exe pip install torch==2.11.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
+.venv\Scripts\uv.exe pip install torch==2.11.* --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
 ```
 
 ## Verification Commands
