@@ -71,8 +71,7 @@ class TestBatchOperations(TestCase):
 
         # Verify
         self.assertEqual(result, 2)  # Should remove 2 chunks from file1.py
-        self.mock_faiss_index.clear.assert_called_once()
-        self.mock_faiss_index.create.assert_called_once_with(768, "flat")
+        self.mock_faiss_index.remove_positions.assert_called_once_with({0, 2})
         self.mock_metadata_store.delete.assert_called()
 
     def test_remove_files_no_matching_chunks(self):
@@ -117,6 +116,7 @@ class TestBatchOperations(TestCase):
 
         self.mock_faiss_index.index = Mock()
         self.mock_faiss_index.index.ntotal = 2
+        self.mock_faiss_index.remove_positions.return_value = False
 
         clear_callback = Mock()
 
@@ -128,93 +128,6 @@ class TestBatchOperations(TestCase):
         self.assertEqual(result, 2)
         clear_callback.assert_called_once()
 
-    def test_rebuild_index_without_partial(self):
-        """Test rebuilding index with some chunks removed."""
-        chunk_ids = [
-            "file1.py:1-10:function:func1",
-            "file2.py:1-10:function:func2",
-            "file3.py:1-10:function:func3",
-        ]
-
-        # Remove position 1 (file2.py)
-        positions_to_remove = {1}
-
-        # Mock reconstruct to return different embeddings
-        def mock_reconstruct(pos):
-            return np.ones(768, dtype=np.float32) * pos
-
-        self.mock_faiss_index.reconstruct.side_effect = mock_reconstruct
-        self.mock_faiss_index.is_on_gpu = False
-
-        new_embeddings, new_chunk_ids = self.batch_ops._rebuild_index_without(
-            positions_to_remove, chunk_ids
-        )
-
-        # Verify
-        self.assertIsNotNone(new_embeddings)
-        self.assertIsNotNone(new_chunk_ids)
-        self.assertEqual(len(new_chunk_ids), 2)  # Should have 2 chunks left
-        self.assertIn("file1.py:1-10:function:func1", new_chunk_ids)
-        self.assertIn("file3.py:1-10:function:func3", new_chunk_ids)
-        self.assertNotIn("file2.py:1-10:function:func2", new_chunk_ids)
-
-        # Should clear and recreate index
-        self.mock_faiss_index.clear.assert_called_once()
-        self.mock_faiss_index.create.assert_called_once_with(768, "flat")
-        self.mock_faiss_index.add.assert_called_once()
-
-    def test_rebuild_index_without_all_chunks(self):
-        """Test rebuilding when all chunks are removed."""
-        chunk_ids = ["file1.py:1-10:function:func1", "file2.py:1-10:function:func2"]
-
-        # Remove all positions
-        positions_to_remove = {0, 1}
-
-        new_embeddings, new_chunk_ids = self.batch_ops._rebuild_index_without(
-            positions_to_remove, chunk_ids
-        )
-
-        # Should return None when all chunks removed
-        self.assertIsNone(new_embeddings)
-        self.assertIsNone(new_chunk_ids)
-
-    def test_rebuild_index_without_gpu_preservation(self):
-        """Test that GPU state is preserved during rebuild."""
-        chunk_ids = ["file1.py:1-10:function:func1", "file2.py:1-10:function:func2"]
-
-        positions_to_remove = {1}
-
-        self.mock_faiss_index.reconstruct.return_value = np.ones(768, dtype=np.float32)
-        self.mock_faiss_index.is_on_gpu = True  # Index was on GPU
-
-        self.batch_ops._rebuild_index_without(positions_to_remove, chunk_ids)
-
-        # Should move back to GPU after rebuild
-        self.mock_faiss_index.move_to_gpu.assert_called_once()
-
-    def test_rebuild_index_without_failed_reconstruction(self):
-        """Test rebuild handles failed embedding reconstruction."""
-        chunk_ids = ["file1.py:1-10:function:func1", "file2.py:1-10:function:func2"]
-
-        positions_to_remove = {0}
-
-        # First reconstruction succeeds, but we're removing it
-        # Second reconstruction fails
-        def mock_reconstruct(pos):
-            if pos == 1:
-                raise Exception("Reconstruction failed")
-            return np.ones(768, dtype=np.float32)
-
-        self.mock_faiss_index.reconstruct.side_effect = mock_reconstruct
-
-        new_embeddings, new_chunk_ids = self.batch_ops._rebuild_index_without(
-            positions_to_remove, chunk_ids
-        )
-
-        # Should return None because no valid embeddings to keep
-        self.assertIsNone(new_embeddings)
-        self.assertIsNone(new_chunk_ids)
-
     def test_remove_files_error_handling(self):
         """Test error handling during batch removal."""
         chunk_ids = ["file1.py:1-10:function:func1"]
@@ -223,10 +136,10 @@ class TestBatchOperations(TestCase):
             "metadata": {"file_path": "file1.py"}
         }
 
-        # Force an error during rebuild (all reconstructions fail)
+        # Nothing rebuildable remains (e.g. all reconstructions fail)
         self.mock_faiss_index.index = Mock()
         self.mock_faiss_index.index.ntotal = 1
-        self.mock_faiss_index.reconstruct.side_effect = Exception("Test error")
+        self.mock_faiss_index.remove_positions.return_value = False
 
         clear_callback = Mock()
 

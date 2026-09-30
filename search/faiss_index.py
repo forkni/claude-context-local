@@ -571,6 +571,60 @@ class FaissVectorIndex:
         # Fallback: FAISS reconstruct
         return self._index.reconstruct(int(idx))
 
+    @staticmethod
+    def _kind_for_rebuild(vector_count: int) -> str:
+        """Index kind to use when the dense index is recreated from its vectors."""
+        return "flat"
+
+    def remove_positions(self, positions_to_remove: set[int]) -> bool:
+        """Drop the vectors at ``positions_to_remove`` by rebuilding the index.
+
+        Reads every kept vector back, recreates the index and re-adds them,
+        restoring GPU placement. Unreconstructable vectors are skipped (and
+        logged) like the legacy per-vector loop did.
+
+        Args:
+            positions_to_remove: Index positions to exclude.
+
+        Returns:
+            True if the index was rebuilt with the remaining vectors; False if
+            nothing remained (all removed or none reconstructable). On False the
+            index is left untouched and the caller owns the index clear.
+        """
+        positions_to_keep = [
+            i for i in range(len(self._chunk_ids)) if i not in positions_to_remove
+        ]
+        if not positions_to_keep:
+            return False
+
+        embeddings_to_keep = []
+        chunk_ids_to_keep = []
+        for pos in positions_to_keep:
+            try:
+                embeddings_to_keep.append(self.reconstruct(int(pos)))
+                chunk_ids_to_keep.append(self._chunk_ids[pos])
+            except Exception as e:  # noqa: BLE001 - resilience: skip unreconstructable embedding, continue rebuild
+                self._logger.warning(
+                    f"Failed to reconstruct embedding at position {pos}: {e}"
+                )
+
+        if not embeddings_to_keep:
+            self._logger.warning("No valid embeddings to keep, clearing index")
+            return False
+
+        embeddings_array = np.array(embeddings_to_keep, dtype=np.float32)
+        was_on_gpu = self._on_gpu
+
+        self.clear()
+        self.create(
+            embeddings_array.shape[1], self._kind_for_rebuild(len(embeddings_array))
+        )
+        self.add(embeddings_array, chunk_ids_to_keep)
+
+        if was_on_gpu:
+            self.move_to_gpu()
+        return True
+
     def clear(self) -> None:
         """Clear the index and reset state."""
         # Explicitly delete GPU index if on GPU

@@ -4,8 +4,6 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-import numpy as np
-
 from utils.path_utils import normalize_path, path_matches
 
 
@@ -108,11 +106,11 @@ class BatchOperations:
                 self._faiss_index.index is not None
                 and self._faiss_index.index.ntotal > 0
             ):
-                new_embeddings, new_chunk_ids = self._rebuild_index_without(
-                    set(chunks_to_remove_positions), chunk_ids
+                rebuilt = self._faiss_index.remove_positions(
+                    set(chunks_to_remove_positions)
                 )
 
-                if new_embeddings is not None and new_chunk_ids is not None:
+                if rebuilt:
                     # Index was successfully rebuilt
                     self._logger.info(
                         f"Rebuilt FAISS index: {self._faiss_index.ntotal} vectors "
@@ -172,67 +170,3 @@ class BatchOperations:
                         f"Failed to clear index after batch removal failure: {clear_error}"
                     )
             raise
-
-    def _rebuild_index_without(
-        self, positions_to_remove: set[int], chunk_ids: list[str]
-    ) -> tuple[np.ndarray | None, list[str] | None]:
-        """Rebuild FAISS index excluding specific positions.
-
-        This method reconstructs the FAISS index by:
-        1. Extracting embeddings at positions we want to keep
-        2. Clearing the old index
-        3. Creating a new index
-        4. Adding back the kept embeddings
-
-        Args:
-            positions_to_remove: Set of positions to exclude
-            chunk_ids: Current list of chunk IDs
-
-        Returns:
-            Tuple of (new_embeddings, new_chunk_ids) or (None, None) if all removed
-        """
-        # Get positions to keep (all except those being removed)
-        positions_to_keep = [
-            i for i in range(len(chunk_ids)) if i not in positions_to_remove
-        ]
-
-        if not positions_to_keep:
-            # All chunks being removed
-            return None, None
-
-        # Reconstruct embeddings for chunks we want to keep
-        embeddings_to_keep = []
-        chunk_ids_to_keep = []
-        for pos in positions_to_keep:
-            try:
-                embedding = self._faiss_index.reconstruct(int(pos))
-                embeddings_to_keep.append(embedding)
-                chunk_ids_to_keep.append(chunk_ids[pos])
-            except Exception as e:  # noqa: BLE001 - resilience: skip unreconstructable embedding, continue rebuild
-                self._logger.warning(
-                    f"Failed to reconstruct embedding at position {pos}: {e}"
-                )
-                continue
-
-        if not embeddings_to_keep:
-            # No valid embeddings to keep
-            self._logger.warning("No valid embeddings to keep, clearing index")
-            return None, None
-
-        # Save current state
-        embeddings_array = np.array(embeddings_to_keep, dtype=np.float32)
-        embedding_dim = embeddings_array.shape[1]
-        was_on_gpu = self._faiss_index.is_on_gpu
-
-        # Clear old index and create new one
-        self._faiss_index.clear()
-        self._faiss_index.create(embedding_dim, "flat")
-
-        # Add kept embeddings and chunk IDs
-        self._faiss_index.add(embeddings_array, chunk_ids_to_keep)
-
-        # Restore GPU state if needed
-        if was_on_gpu:
-            self._faiss_index.move_to_gpu()
-
-        return embeddings_array, chunk_ids_to_keep

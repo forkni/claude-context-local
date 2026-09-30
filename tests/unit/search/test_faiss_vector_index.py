@@ -808,3 +808,78 @@ class TestFaissVectorIndexDimensionValidation:
             distances, indices = index.search(query, k=5)
             assert len(distances) == 5
             assert len(indices) == 5
+
+
+class TestFaissVectorIndexRemovePositions:
+    """remove_positions() rebuilds the index without the dropped vectors."""
+
+    DIM = 8
+
+    def _built(self, tmp_path, n: int = 6) -> tuple[FaissVectorIndex, np.ndarray]:
+        rng = np.random.RandomState(3)
+        embeddings = rng.randn(n, self.DIM).astype(np.float32)
+        index = FaissVectorIndex(tmp_path / "code.index")
+        index.create(self.DIM, "flat")
+        index.add(embeddings, [f"chunk_{i}" for i in range(n)])
+        return index, embeddings
+
+    def test_partial_removal_keeps_vectors_and_order(self, tmp_path):
+        index, embeddings = self._built(tmp_path)
+
+        assert index.remove_positions({1, 4}) is True
+
+        assert index.chunk_ids == ["chunk_0", "chunk_2", "chunk_3", "chunk_5"]
+        assert index.ntotal == 4
+        assert type(index.index).__name__ == "IndexFlatIP"
+        for new_pos, old_pos in enumerate((0, 2, 3, 5)):
+            expected = embeddings[old_pos] / np.linalg.norm(embeddings[old_pos])
+            np.testing.assert_allclose(index.reconstruct(new_pos), expected, atol=1e-5)
+        index.close()
+
+    def test_removing_everything_returns_false_and_leaves_index(self, tmp_path):
+        index, _ = self._built(tmp_path, n=3)
+
+        assert index.remove_positions({0, 1, 2}) is False
+
+        assert index.ntotal == 3
+        assert len(index.chunk_ids) == 3
+        index.close()
+
+    def test_unreconstructable_vectors_are_skipped(self, tmp_path, monkeypatch):
+        index, _ = self._built(tmp_path, n=3)
+
+        def fail_on_two(idx):
+            if idx == 2:
+                raise RuntimeError("boom")
+            return np.ones(self.DIM, dtype=np.float32)
+
+        monkeypatch.setattr(index, "reconstruct", fail_on_two)
+
+        assert index.remove_positions({0}) is True
+
+        assert index.chunk_ids == ["chunk_1"]
+        index.close()
+
+    def test_no_reconstructable_vectors_returns_false(self, tmp_path, monkeypatch):
+        index, _ = self._built(tmp_path, n=3)
+
+        def always_fail(idx):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(index, "reconstruct", always_fail)
+
+        assert index.remove_positions({0}) is False
+        assert index.ntotal == 3
+        index.close()
+
+    def test_gpu_placement_is_restored(self, tmp_path, monkeypatch):
+        index, _ = self._built(tmp_path)
+        moves = []
+        monkeypatch.setattr(index, "move_to_gpu", lambda: moves.append(True) or True)
+        index._on_gpu = True
+
+        assert index.remove_positions({0}) is True
+
+        # create() also calls move_to_gpu(); the restore is the extra call.
+        assert len(moves) == 2
+        index.close()
