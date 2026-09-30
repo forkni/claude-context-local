@@ -33,6 +33,12 @@ except ImportError:
 # Mmap auto-threshold: Only use mmap for indices >10K vectors (performance benefit)
 MMAP_THRESHOLD = 10000
 
+# IVF clusters probed per query. IndexIVFFlat defaults to nprobe=1 (1% of a
+# 100-list index), which starves dense recall -- e.g. 4 hits for k=60 on a
+# 21,910-vector index. Applied on create() and on every load() (the value is
+# not persisted usefully: indexes already on disk were saved with nprobe=1).
+IVF_NPROBE = 16
+
 
 def get_available_memory() -> dict[str, int]:
     """Get available system and GPU memory in bytes.
@@ -207,10 +213,27 @@ class FaissVectorIndex:
 
         self._chunk_ids = []
         self._on_gpu = False
+        self._configure_ivf()
         self._logger.info(f"Created {index_type} index with dimension {dimension}")
 
         # Move to GPU if available
         self.move_to_gpu()
+
+    def _configure_ivf(self) -> None:
+        """Make an IVF index reconstructable and widen its search (no-op for flat).
+
+        ``IndexIVFFlat`` cannot ``reconstruct(i)`` without a direct map, and
+        defaults to ``nprobe=1``. The direct map is the FAISS-side fallback for
+        ``reconstruct()`` whenever the mmap vector storage is absent or
+        discarded as stale; a no-op if the loaded index already carries one.
+        Must run before ``move_to_gpu()`` (the GPU wrapper has no such knobs).
+        """
+        ivf = faiss.try_extract_index_ivf(self._index)
+        if ivf is None:
+            return
+        if ivf.direct_map.type == faiss.DirectMap.NoMap:
+            ivf.make_direct_map()
+        ivf.nprobe = min(IVF_NPROBE, ivf.nlist)
 
     def close(self) -> None:
         """Release the mmap handle without deleting any files.
@@ -270,6 +293,8 @@ class FaissVectorIndex:
                         return False
                 except (RuntimeError, AttributeError, KeyError) as e:
                     self._logger.debug(f"Could not validate index dimension: {e}")
+
+            self._configure_ivf()
 
             # Move to GPU if available
             self.move_to_gpu()
@@ -390,6 +415,17 @@ class FaissVectorIndex:
                     self._logger.info(
                         f"Saved mmap storage: {self._index.ntotal} vectors to {self._mmap_path}"
                     )
+
+                    # Re-attach: close() above dropped this instance's own
+                    # mapping, and without one reconstruct() falls through to
+                    # FAISS reconstruct() -- which an IVF index could not serve
+                    # (direct map not initialized) until the next restart,
+                    # breaking multi-hop hop-2 after every in-process reindex.
+                    # Same stale-generation guard as load().
+                    if mmap_storage.load() and mmap_storage.count == vector_count:
+                        self._mmap_storage = mmap_storage
+                    else:
+                        mmap_storage.close()
                 except OSError as e:
                     self._logger.warning(f"Failed to save mmap vectors: {e}")
             else:

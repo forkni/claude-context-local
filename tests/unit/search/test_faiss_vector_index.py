@@ -566,6 +566,124 @@ class TestFaissVectorIndexClear:
             instance1.close()
 
 
+class TestFaissVectorIndexIVFReconstruct:
+    """reconstruct() on IVF indexes across the server's save/load lifecycle.
+
+    Regression: ``save()`` at or above MMAP_THRESHOLD released this instance's
+    mmap mapping (``close()``) and rewrote the file through a local
+    ``MmapVectorStorage`` without re-attaching it. ``reconstruct()`` then fell
+    through to FAISS ``reconstruct()``, which an ``IndexIVFFlat`` cannot serve
+    without a direct map ("direct map not initialized") -- so multi-hop hop-2
+    expansion failed on every IVF project after any in-process reindex, until
+    the server restarted. Flat indexes were unaffected (no direct map needed).
+    """
+
+    DIM = 8
+    N = 400  # IVF trains 10 centroids at DIM=8; needs >= 10 vectors
+
+    @pytest.fixture(autouse=True)
+    def _low_mmap_threshold(self, monkeypatch):
+        """Keep the mmap path reachable with small, fast indexes."""
+        from search import faiss_index
+
+        monkeypatch.setattr(faiss_index, "MMAP_THRESHOLD", 100)
+
+    def _embeddings(self) -> tuple[np.ndarray, list[str]]:
+        rng = np.random.RandomState(7)
+        return (
+            rng.randn(self.N, self.DIM).astype(np.float32),
+            [f"chunk_{i}" for i in range(self.N)],
+        )
+
+    def _assert_reconstructs(self, index: FaissVectorIndex, source: np.ndarray):
+        """reconstruct() returns the L2-normalized stored vector at any position."""
+        for pos in (0, self.N // 2, self.N - 1):
+            expected = source[pos] / np.linalg.norm(source[pos])
+            np.testing.assert_allclose(index.reconstruct(pos), expected, atol=1e-5)
+
+    def test_reconstruct_after_fresh_ivf_save(self, tmp_path):
+        """create -> add -> save -> reconstruct in the same process."""
+        embeddings, chunk_ids = self._embeddings()
+        index = FaissVectorIndex(tmp_path / "code.index")
+        index.create(self.DIM, "ivf")
+        index.add(embeddings, chunk_ids)
+        index.save()
+
+        self._assert_reconstructs(index, embeddings)
+        index.close()
+
+    def test_reconstruct_after_load_then_save(self, tmp_path):
+        """The live server's lifecycle: load from disk, then a reindex saves."""
+        embeddings, chunk_ids = self._embeddings()
+        seed = FaissVectorIndex(tmp_path / "code.index")
+        seed.create(self.DIM, "ivf")
+        seed.add(embeddings, chunk_ids)
+        seed.save()
+        seed.close()
+
+        server = FaissVectorIndex(tmp_path / "code.index")
+        assert server.load()
+        self._assert_reconstructs(server, embeddings)
+
+        server.save()  # auto-reindex / incremental reindex writes again
+
+        self._assert_reconstructs(server, embeddings)
+        server.close()
+
+    def test_save_reattaches_mmap_storage(self, tmp_path):
+        """After an at-or-above-threshold save the instance maps its own file."""
+        embeddings, chunk_ids = self._embeddings()
+        index = FaissVectorIndex(tmp_path / "code.index")
+        index.create(self.DIM, "flat")
+        index.add(embeddings, chunk_ids)
+        index.save()
+
+        assert index._mmap_storage is not None
+        assert index._mmap_storage.is_loaded
+        assert index._mmap_storage.count == index.ntotal
+        index.close()
+
+    def test_ivf_reconstruct_without_mmap_uses_direct_map(self, tmp_path, monkeypatch):
+        """With no mmap (below threshold), IVF still reconstructs via FAISS."""
+        from search import faiss_index
+
+        monkeypatch.setattr(faiss_index, "MMAP_THRESHOLD", 10**9)  # no mmap at all
+        embeddings, chunk_ids = self._embeddings()
+        index = FaissVectorIndex(tmp_path / "code.index")
+        index.create(self.DIM, "ivf")
+        index.add(embeddings, chunk_ids)
+        index.save()
+        assert index._mmap_storage is None
+
+        self._assert_reconstructs(index, embeddings)
+
+        reloaded = FaissVectorIndex(tmp_path / "code.index")
+        assert reloaded.load()
+        assert reloaded._mmap_storage is None
+        self._assert_reconstructs(reloaded, embeddings)
+
+    def test_load_sets_ivf_nprobe(self, tmp_path):
+        """Indexes persisted with nprobe=1 must be searched wider after load()."""
+        import faiss
+
+        from search import faiss_index
+
+        embeddings, chunk_ids = self._embeddings()
+        index = FaissVectorIndex(tmp_path / "code.index")
+        index.create(self.DIM, "ivf")
+        index.add(embeddings, chunk_ids)
+        index.save()
+        index.close()
+
+        reloaded = FaissVectorIndex(tmp_path / "code.index")
+        assert reloaded.load()
+
+        ivf = faiss.try_extract_index_ivf(reloaded.index)
+        assert ivf is not None
+        assert ivf.nprobe == min(faiss_index.IVF_NPROBE, ivf.nlist)
+        reloaded.close()
+
+
 class TestFaissVectorIndexBatchOperations:
     """Tests for batch operations."""
 
