@@ -843,9 +843,10 @@ if __name__ == "__main__":
                 await session_manager.handle_request(scope, receive, send)
 
             # Legacy SSE transport (GET /sse + POST /messages/) served alongside
-            # /mcp for clients that don't speak StreamableHTTP yet (e.g. Antigravity
-            # IDE's `serverUrl` config). Both transports share this process, so the
-            # embedding model and index state are loaded once.
+            # /mcp for clients that only speak legacy SSE. StreamableHTTP clients
+            # (including Claude Code and Antigravity's Go MCP connector) connect
+            # to /mcp (or POST /sse fallback). Both transports share this process,
+            # so the embedding model and index state are loaded once.
             from mcp.server.sse import SseServerTransport
 
             sse_transport = SseServerTransport("/messages/")
@@ -1052,6 +1053,11 @@ if __name__ == "__main__":
                         await handle_mcp(scope, receive, send)
                         return
                     if path == "/sse":
+                        # If a client sends POST to /sse, it is speaking StreamableHTTP
+                        # with an endpoint configured as /sse. Route to handle_mcp.
+                        if scope.get("method") == "POST":
+                            await handle_mcp(scope, receive, send)
+                            return
                         await handle_sse(scope, receive, send)
                         return
                     if path in ("/messages", "/messages/"):
