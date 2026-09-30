@@ -228,6 +228,8 @@ class FaissVectorIndex:
         discarded as stale; a no-op if the loaded index already carries one.
         Must run before ``move_to_gpu()`` (the GPU wrapper has no such knobs).
         """
+        if faiss is None or self._index is None:
+            return
         ivf = faiss.try_extract_index_ivf(self._index)
         if ivf is None:
             return
