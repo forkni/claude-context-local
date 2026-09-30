@@ -30,7 +30,7 @@ keywords = [
 dependencies = [
     "aiohttp>=3.14.3",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1); CVE-2026-59881 (3.14.2); CVE-2026-69243 (3.14.2); CVE-2026-69244 (3.14.3)
     "cryptography>=50.0.0",  # Security: PYSEC-2026-35/36 (DNS name-constraint bypass, buffer overflow); CVE-2026-69247 (50.0.0). Defer GHSA-537c (OpenSSL wheel, needs 48.x major bump).
-    "faiss-cpu>=1.15.0",
+    "faiss-cpu>=1.15.1",
     "filelock>=3.32,<4",  # Inter-process index write lock (search/index_write_lock.py). Already locked transitively at 3.32.5; <4 cap per virtualenv's own constraint (see audit comment below).
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=1.26.1",  # transformers>=5.3.0 requires >=1.3.0,<2
@@ -42,18 +42,18 @@ dependencies = [
     "psutil>=7.2.1",
     "pydantic-settings>=2.14.2",  # Security: GHSA-4xgf-cpjx-pc3j (symlink follow in secrets_dir)
     "pygments>=2.20.0",  # Security: CVE-2026-4539 (ReDoS in AdlLexer)
-    "pyjwt>=2.13.0",  # Security: 9 CVEs incl CVE-2026-32597 crit-header, CVE-2026-48522..48526
+    "pyjwt>=2.15.1",  # Security: 9 CVEs incl CVE-2026-32597 crit-header, CVE-2026-48522..48526
     "python-dotenv>=1.2.3",  # Security: Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
     "python-multipart>=0.0.32",  # Security: CVE-2026-40347/42561/53538/53539/53540 (multipart DoS)
     "rank-bm25>=0.2.2",
     "requests>=2.34.2",  # Security: CVE-2026-25645 (predictable temp filename in extract_zipped_paths)
     "rich>=14.3.3",
-    "sentence-transformers>=5.7.0",
+    "sentence-transformers>=6.1.0",
     "sqlitedict>=2.1.0",
     "starlette>=1.6.0",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
-    "tiktoken>=0.12.0",
+    "tiktoken>=0.14.0",
     "torch>=2.11.0,<2.12.0",  # Security: 2.11.0 closes 7 of 8 tracked CVEs incl. CVE-2025-3001/CVE-2026-24747 weights_only unpickler bypasses and CVE-2026-4538 (pt2 loader deserialization, PYSEC-2026-139, last_affected=2.10.0 per OSV) (2026-08-06). Old <2.9.0 ceiling's "ModernBERT torch.compile" rationale lapsed: the GTE-ModernBERT embedder it protected was deleted in 24f6b8c, and transformers>=5.3.0 removed ModernBERT's reference_compile path entirely.
-    "transformers>=5.14.1,<6",  # Security: >=5.3.0 fixes CVE-2026-4372 (config.json RCE) & CVE-2026-1839 (Trainer RCE); <6 pre-major.
+    "transformers>=5.17.0,<6",  # Security: >=5.3.0 fixes CVE-2026-4372 (config.json RCE) & CVE-2026-1839 (Trainer RCE); <6 pre-major.
     "tree-sitter>=0.25.0,<0.26",  # ABI: no tree-sitter-* grammar package supports the 0.26 ABI yet (max on PyPI is 0.25.0); loading grammars raises OverflowError under 0.26
     "tree-sitter-c>=0.24.2",
     "tree-sitter-c-sharp>=0.23.5",
@@ -100,7 +100,7 @@ test = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "pytest-mock>=3.15.1",
+    "pytest-mock>=3.16.0",
     "pytest-repeat>=0.9.4",
     "pytest-randomly>=3.15.0",  # Phase 2: order-randomisation; exposes hidden ordering deps
     "pytest-xdist>=3.6.0",      # Phase 2/CI: parallel test execution (-n auto)
@@ -108,15 +108,15 @@ test = [
     "pytest-timeout>=2.3.0",     # Phase 13.2.a: per-test timeout (thread method, Windows-safe)
 ]
 dev = [
-    "ruff>=0.16.3",
+    "ruff>=0.16.9",
     "pip-audit>=2.10.1",
     "pip-licenses>=5.5.5",
     "pipdeptree>=4.2.0",  # 4.0.0 replaced the Python engine with a Rust extension (nab-python); --json/-o json output verified schema-identical, safe to float
     "pre-commit>=4.6.2",
-    "pyrefly>=1.2.0",
+    "pyrefly>=1.3.2",
     "mutmut>=3.7.0",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
     "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
-    "gitpython>=3.1.59",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
+    "gitpython>=3.2.0",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
     "deptry>=0.25.1",  # /deps-audit Phase 1.7: dependency-usage hygiene check; declared to match what summarize_audit.py installs into this venv
     "radon>=6.0.1",  # Phase 14.2: cyclomatic complexity / maintainability-index reporting (harden-test-suite skill Phase 3.5)
     "crap4py>=0.1.1",  # Phase 14.2: coverage x complexity (CRAP) stop-condition metric; consumes coverage.py's lcov output (0.1.1 is the latest PyPI release as of 2026-08-20, not the plan's assumed >=1.0.0)
@@ -157,7 +157,24 @@ evaluation = ["*.json", "*.md"]
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-09-23 (`/deps-audit` — 185 packages. CVE set unchanged from 2026-09-14: same
+# Last audit: 2026-09-30 (`/deps-audit` — 185 packages. CVE set unchanged: same 4 packages / 6 CVEs
+#             (torch, setuptools, sqlitedict, nltk). Deferred in audit_reports/deferred-cves-2026-09-30.md.
+#             Reopening conditions re-verified live: setuptools blocked by torch<82 constraint; torch
+#             pinned to cu128 wheel index; nltk 3.10.3 has no upstream fix; sqlitedict 2.1.0 has no
+#             upstream fix (mitigation intact). Applied Option A (Tier 1 dev/tooling + Tier 2 server/
+#             utilities) and Option B (Tier 3 retrieval/ML stack) updates:
+#             Tier 1 dev tooling — ruff 0.16.8->0.16.9, pyrefly 1.3.1->1.3.2, uv 0.12.18->0.12.21,
+#             coverage 7.16.1->7.16.2, pytest-mock 3.15.1->3.16.0, virtualenv 21.11.1->21.14.1.
+#             Tier 2 utilities — GitPython 3.1.62->3.2.0, PyJWT 2.15.0->2.15.1, SQLAlchemy
+#             2.0.54->2.1.1, sse-starlette 3.4.11->3.5.0, tiktoken 0.13.0->0.14.0, uvicorn
+#             0.53.0->0.54.0.
+#             Tier 3 retrieval/ML — faiss-cpu 1.15.0->1.15.1, sentence-transformers 6.0.1->6.1.0,
+#             transformers 5.16.1->5.17.0.
+#             Verification: pip check clean; full unit test suite green (4,957 passed, 2 skipped);
+#             embedding/search/MCP test suite green (2,855 passed); live MCP server StreamableHTTP
+#             transport (port 8765) get_index_status and search_code verified functional on RTX 4090
+#             (codefuse-ai/F2LLM-v2-0.6B bf16). uv.lock updated to match.
+# Previous audit: 2026-09-23 (`/deps-audit` — 185 packages. CVE set unchanged from 2026-09-14: same
 #             4 packages / 6 CVEs (torch, setuptools, sqlitedict, nltk). All three reopen
 #             conditions re-verified live: (1) setuptools 81.0.0/CVE-2026-59890 needs torch to
 #             relax setuptools<82 — torch 2.12.0 also declares <82, only 2.13.0 relaxes it;
