@@ -947,3 +947,35 @@ class TestIndexKindFollowsSize:
         assert type(index.index).__name__ == "IndexFlatIP"
         assert index.ntotal == 40
         index.close()
+
+
+class TestFaissVectorIndexDescribe:
+    """describe() reports the live kind and IVF search parameters."""
+
+    DIM = 8
+
+    def _index(self, tmp_path, kind: str, n: int = 200) -> FaissVectorIndex:
+        rng = np.random.RandomState(9)
+        index = FaissVectorIndex(tmp_path / "code.index")
+        index.create(self.DIM, kind)
+        index.add(
+            rng.randn(n, self.DIM).astype(np.float32), [f"c{i}" for i in range(n)]
+        )
+        return index
+
+    def test_no_index(self, tmp_path):
+        assert FaissVectorIndex(tmp_path / "code.index").describe() == {
+            "index_kind": None
+        }
+
+    def test_flat(self, tmp_path):
+        assert self._index(tmp_path, "flat").describe() == {"index_kind": "flat"}
+
+    def test_ivf_reports_nlist_and_nprobe(self, tmp_path):
+        from search.faiss_index import IVF_NPROBE
+
+        info = self._index(tmp_path, "ivf").describe()
+
+        assert info["index_kind"] == "ivf"
+        assert info["ivf_nlist"] == 10  # min(100, max(10, 8 // 8))
+        assert info["ivf_nprobe"] == min(IVF_NPROBE, info["ivf_nlist"])

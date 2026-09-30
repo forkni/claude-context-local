@@ -587,6 +587,24 @@ class FaissVectorIndex:
         # Fallback: FAISS reconstruct
         return self._index.reconstruct(int(idx))
 
+    def describe(self) -> dict[str, Any]:
+        """Report the live index kind and IVF search parameters.
+
+        Returns ``index_kind`` ("flat", "ivf", or None when no index exists),
+        plus ``ivf_nlist``/``ivf_nprobe`` for IVF indexes (None if FAISS cannot
+        expose them, e.g. a GPU-resident index).
+        """
+        if self._index is None:
+            return {"index_kind": None}
+        if "IVF" not in type(self._index).__name__:
+            return {"index_kind": "flat"}
+        ivf = faiss.try_extract_index_ivf(self._index) if faiss is not None else None
+        return {
+            "index_kind": "ivf",
+            "ivf_nlist": ivf.nlist if ivf is not None else None,
+            "ivf_nprobe": ivf.nprobe if ivf is not None else None,
+        }
+
     def remove_positions(self, positions_to_remove: set[int]) -> bool:
         """Drop the vectors at ``positions_to_remove`` by rebuilding the index.
 

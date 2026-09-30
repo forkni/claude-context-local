@@ -667,6 +667,7 @@ class CodeIndexManager:
             "index_size": self.ntotal if self.index else 0,
             "embedding_dimension": self.index.d if self.index else 0,
             "index_type": type(self.index).__name__ if self.index else "None",
+            **self._faiss_index.describe(),
         }
 
         # Add file and folder statistics
@@ -716,17 +717,25 @@ class CodeIndexManager:
             json.dump(stats, f, indent=2)
 
     def get_stats(self) -> dict[str, Any]:
-        """Get index statistics."""
+        """Get index statistics.
+
+        The snapshot on disk is overlaid with the live index kind and IVF
+        parameters when the index is already loaded (never forces a load), so
+        indexes saved before those fields existed still report them.
+        """
         if self.stats_path.exists():
             with open(self.stats_path) as f:
-                return json.load(f)
+                stats = json.load(f)
         else:
-            return {
+            stats = {
                 "total_chunks": 0,
                 "index_size": 0,
                 "embedding_dimension": 0,
                 "files_indexed": 0,
             }
+        if self._faiss_index.index is not None:
+            stats.update(self._faiss_index.describe())
+        return stats
 
     def get_index_size(self) -> int:
         """Get the number of chunks in the index."""
