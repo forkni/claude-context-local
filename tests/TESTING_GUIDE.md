@@ -1517,7 +1517,9 @@ pytest tests/ --cov=. --cov-branch
 
 This section previously showed a fictional `.git/hooks/pre-commit` that ran pytest + a
 coverage threshold. No hook in `.githooks/` (this project's real, installed hooks — see
-`scripts/git/install_hooks.sh`) runs pytest or checks coverage; that example never matched
+`scripts/git/install_hooks.sh`, a maintainer-local script — `scripts/git/` is gitignored and
+absent from a fresh clone, where `pre-commit install` is the tracked equivalent) runs pytest
+or checks coverage; that example never matched
 what actually runs locally, and duplicated a gate CI already owns (`branch-protection.yml`
 via `pyproject.toml`'s `fail_under`). The real `.githooks/pre-commit` blocks local-only
 files (`CLAUDE.md`, `MEMORY.md`, etc.) from being committed — a different, narrower job.

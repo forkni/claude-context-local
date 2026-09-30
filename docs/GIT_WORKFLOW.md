@@ -14,6 +14,7 @@ This repository uses a **Local-First Privacy Model** where certain development f
 | **MEMORY.md** | ~5KB | Session memory and notes | 🔴 Local Only |
 | **_archive/** | 7.3MB (764 files) | Historical TouchDesigner documentation | 🔴 Local Only |
 | **benchmark_results/** | Variable | Generated test data and results | 🔴 Local Only |
+| **scripts/git/** | ~20 scripts | Maintainer-local git/lint/merge wrappers (see [Workflow Scripts](#-workflow-scripts)) | 🔴 Local Only |
 
 **Total saved from repository: ~7.4MB + 764 files**
 
@@ -43,6 +44,7 @@ Since you're the sole developer, we use a simplified two-tier approach:
 # Local-only content (NEVER commit to ANY branch)
 _archive/
 benchmark_results/
+scripts/git
 CLAUDE.md
 MEMORY.md
 ```
@@ -96,9 +98,21 @@ These are automatically excluded from main branch via `.gitattributes` merge str
 
 ## 🚀 Workflow Scripts
 
+> **Maintainer-local tooling.** `scripts/git/` is gitignored (see above), so it is **not present
+> in a fresh clone**. The wrappers documented below are the maintainer's own workflow. Contributors
+> should use the tracked equivalents:
+>
+> | Task | Tracked command |
+> | ---- | --------------- |
+> | Lint + format | `ruff check .` and `ruff format --check .` |
+> | All pre-commit hooks | `pre-commit run --all-files` |
+> | Shell script lint | `./scripts/lint/check_shell.sh` |
+> | Tests | `./scripts/test/run_tests.sh tests/unit/ -x -q` |
+> | Merge development → main | the manually dispatched `merge-development-to-main.yml` workflow |
+
 **Directory Structure**:
 
-- **Shell scripts (.sh)**: `scripts/git/` - the only supported workflow scripts
+- **Shell scripts (.sh)**: `scripts/git/` (maintainer-local) - the only supported workflow scripts
 
 **Environment Compatibility**: All scripts are Bash (`.sh`). This project's shell is Git Bash
 (see the repo's `CLAUDE.md`), which runs `.sh` files natively on Windows, Linux, and macOS —

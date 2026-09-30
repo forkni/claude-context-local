@@ -142,7 +142,9 @@ Git workflow automation and safety.
 
 **Directory Structure**:
 
-- **Shell scripts (.sh)**: `scripts/git/` - the only supported workflow scripts, run via Git Bash
+- **Shell scripts (.sh)**: `scripts/git/` - the only supported workflow scripts, run via Git Bash.
+  This directory is gitignored and **maintainer-local** (absent from a fresh clone); see
+  [GIT_WORKFLOW.md](GIT_WORKFLOW.md) for the tracked equivalents.
 
 | Script | Purpose |
 | -------- | --------- |

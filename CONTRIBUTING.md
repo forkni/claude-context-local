@@ -54,15 +54,20 @@ This project uses automated code quality tools:
 - **shellcheck**: Bash script validation
 
 ```bash
-# Check code style (includes Python, Markdown, and Shell scripts)
-./scripts/git/check_lint.sh
+# Python lint + format check
+ruff check .
+ruff format --check .
 
-# Auto-fix issues (Python and Markdown only)
-./scripts/git/fix_lint.sh
+# All pre-commit hooks
+pre-commit run --all-files
 
-# Check shell scripts separately
+# Check shell scripts
 ./scripts/lint/check_shell.sh
 ```
+
+The maintainer also uses wrapper scripts in `scripts/git/` (`check_lint.sh`, `fix_lint.sh`).
+That directory is gitignored and **maintainer-local**, so it is not in a fresh clone; the commands
+above are the tracked equivalents.
 
 ### Pre-commit Hooks (Optional)
 

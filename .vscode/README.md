@@ -39,8 +39,7 @@ When you save a Python file (`Ctrl+S`):
 
 All using the same rules as:
 
-- `scripts/git/check_lint.bat`
-- `scripts/git/fix_lint.bat`
+- `scripts/git/check_lint.sh` and `scripts/git/fix_lint.sh` (maintainer-local, gitignored)
 - GitHub Actions CI
 
 ## Documentation
