@@ -158,6 +158,15 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         {"class_definition", "class_declaration"}
     )
 
+    #: Node types ``chunk_parsed`` may split at block boundaries when the node
+    #: exceeds ``ChunkingConfig.max_chunk_lines``. Default is Python's function
+    #: shapes, so JS/Go/Rust/C# functions are not split today. Override in a leaf
+    #: chunker to opt it in. Distinct from ``splittable_node_types``, which is
+    #: the LanguageSpec-owned set of node types that become chunks at all.
+    _BLOCK_SPLIT_NODE_TYPES: frozenset[str] = frozenset(
+        {"function_definition", "decorated_definition"}
+    )
+
     def _container_traversal_root(self, node: Any) -> Any | None:
         """Return the node whose children are container members, or None.
 
@@ -815,7 +824,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                     config
                     and config.enable_large_node_splitting
                     and node_lines > config.max_chunk_lines
-                    and node.type in ("function_definition", "decorated_definition")
+                    and node.type in self._BLOCK_SPLIT_NODE_TYPES
                     and self._container_traversal_root(node) is None
                 ):
                     policy = SizePolicy.for_function(
