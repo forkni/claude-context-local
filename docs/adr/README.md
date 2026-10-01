@@ -85,6 +85,8 @@ for avoiding re-litigating settled questions.
 | [0077](0077-single-block-listwise-invariant.md) | Make single-block listwise reranking an invariant | accepted | 2026-09-19 |
 | [0078](0078-reject-real-toon-text-output.md) | Reject real TOON v4.1 text output; keep the improved `ultra` | accepted | 2026-09-21 |
 | [0079](0079-gar-style-rerank-window-membership.md) | Decide rerank-window membership by interleaving, not by sorting mixed score scales | accepted | 2026-10-01 |
+| [0080](0080-hide-faiss-positions-behind-code-index-manager.md) | Hide FAISS positions behind `CodeIndexManager` | accepted | 2026-10-01 |
+| [0081](0081-graph-view-owns-all-graph-reads.md) | `GraphView` owns every code-graph read outside `graph/` | accepted | 2026-10-01 |
 
 ## Adding a new ADR
 
