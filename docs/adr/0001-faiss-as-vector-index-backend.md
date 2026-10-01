@@ -3,7 +3,7 @@
 Status: accepted
 Date: 2026-05-15
 
-We use faiss-cpu (`IndexFlatIP` for <10K vectors, `IndexIVFFlat` above) as the vector index
+We use faiss-cpu (`IndexFlatIP` up to 10K vectors, `IndexIVFFlat` above) as the vector index
 backend and have evaluated turbovec (TurboQuant scalar quantization, Rust + PyO3, v0.3.0) as a
 possible replacement. We are not migrating: turbovec ships no Windows wheels, is alpha-status
 with a single maintainer, has no GPU support and no GPU-accelerated retrieval fork on GitHub,
@@ -53,3 +53,13 @@ Revisit this decision only when **all** of the following hold:
 3. We index corpora ≥1M chunks at d≥1536, or RAM ceiling becomes a documented pain point.
 4. Either FAISS becomes unusable for us, or a GPU-capable retrieval port of TurboQuant
    appears on GitHub with meaningful adoption.
+
+## Amendment (2026-09-30): the flat/IVF kind follows size at every rebuild point
+
+The Context line above is the rule, but the code only applied it to the first add batch, and
+every removal pass rebuilt as flat. An IVF project silently downgraded on its first incremental
+removal, and a project that started small and grew stayed flat. `index_kind_for()` in
+`search/faiss_index.py` now owns the decision (IVF above `IVF_MIN_VECTORS = 10000`), and both the
+first batch and `FaissVectorIndex.remove_positions()` consult it, retraining IVF cells at each
+rebuild. IVF searches `nprobe = 16` lists (FAISS defaults to 1) and carries a direct map so
+`reconstruct()` works without the mmap file. The Decision (FAISS over turbovec) is unchanged.
