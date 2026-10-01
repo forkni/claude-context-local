@@ -14,74 +14,24 @@ from typing import TYPE_CHECKING, Any
 
 from tree_sitter import Language, Parser
 
+# Re-exported: chunking.repo_profiler, scripts/benchmark and tests import these from here.
+from chunking.sizing import (
+    compute_adaptive_threshold as compute_adaptive_threshold,
+)
+from chunking.sizing import (
+    estimate_characters as estimate_characters,
+)
+from chunking.sizing import (
+    measure,
+    pack_by_size,
+)
+
 
 if TYPE_CHECKING:
     from chunking.repo_profiler import RepoProfile
     from search.config import ChunkingConfig
 
 logger = logging.getLogger(__name__)
-
-
-def compute_adaptive_threshold(
-    complexity: int,
-    base_threshold: int,
-    max_complexity: int = 30,
-    multiplier_max: float = 1.3,
-    multiplier_min: float = 0.5,
-    hard_cap: int = 8000,
-) -> int:
-    """Compute complexity-modulated chunk size threshold.
-
-    Implements the research formula for adaptive chunk sizing:
-      Cv = min(complexity / max_complexity, 1.0)   # normalize: 0=linear, 1=max
-      T(Cv) = T_max - (T_max - T_min) × Cv         # high CC → smaller chunks
-
-    Args:
-        complexity: Cyclomatic complexity of the function (raw integer, min 1)
-        base_threshold: Project baseline (P75 of function sizes) in non-whitespace chars
-        max_complexity: Normalization ceiling — CC >= this → Cv = 1.0 (default 30)
-        multiplier_max: T_max = base_threshold × this (for low-complexity code, default 1.3)
-        multiplier_min: T_min = base_threshold × this (for high-complexity code, default 0.5)
-        hard_cap: Absolute ceiling in non-whitespace chars (~2500-token context cliff, default 8000)
-
-    Returns:
-        Effective max_chars threshold, always in range [T_min, hard_cap]
-
-    Examples:
-        >>> compute_adaptive_threshold(1, 3000)   # linear code: ~3900 chars
-        3858
-        >>> compute_adaptive_threshold(15, 3000)  # moderate: ~2700 chars
-        2700
-        >>> compute_adaptive_threshold(30, 3000)  # complex: 1500 chars
-        1500
-    """
-    cv = min(complexity / max(max_complexity, 1), 1.0)
-    t_max = base_threshold * multiplier_max
-    t_min = base_threshold * multiplier_min
-    effective = t_max - (t_max - t_min) * cv
-    return min(int(effective), hard_cap)
-
-
-def estimate_characters(content: str, count_whitespace: bool = False) -> int:
-    """Count characters in content (cAST paper approach).
-
-    Args:
-        content: Text content to measure
-        count_whitespace: If False, count non-whitespace only (cAST default)
-
-    Returns:
-        Character count
-
-    Reference:
-        cAST (EMNLP 2025): Uses non-whitespace characters for language-agnostic sizing
-    """
-    if count_whitespace:
-        return len(content)
-    # C-level non-whitespace count: str.split() drops runs of (Unicode) whitespace,
-    # so joining the pieces back together and measuring their length avoids a
-    # per-character Python-level generator. Parity with str.isspace() is exact in
-    # CPython (both use the same Unicode whitespace definition).
-    return len("".join(content.split()))
 
 
 @dataclass
@@ -816,26 +766,9 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         Returns:
             List of non-empty node groups covering `nodes` in order.
         """
-        groups: list[list[Any]] = []
-        current_nodes: list[Any] = []
-
-        for node in nodes:
-            if current_nodes and may_cut_before(current_nodes[-1], node):
-                test_nodes = current_nodes + [node]
-                test_size = self._calculate_accumulated_size(
-                    test_nodes, source_bytes, split_size_method
-                )
-                if test_size >= threshold:
-                    groups.append(current_nodes)
-                    current_nodes = [node]
-                    continue
-
-            current_nodes.append(node)
-
-        if current_nodes:
-            groups.append(current_nodes)
-
-        return groups
+        return pack_by_size(
+            nodes, source_bytes, threshold, split_size_method, may_cut_before
+        )
 
     def _get_split_threshold(
         self,
@@ -905,19 +838,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         Returns:
             The calculated size according to the specified method
         """
-        if not nodes:
-            return 0
-
-        # Get text span from first to last node
-        start = nodes[0].start_byte
-        end = nodes[-1].end_byte
-        text = source_bytes[start:end].decode("utf-8", errors="ignore")
-
-        if method == "lines":
-            return text.count("\n") + 1
-        elif method == "characters":
-            return estimate_characters(text)
-        return text.count("\n") + 1  # default fallback
+        return measure(nodes, source_bytes, method)
 
     def chunk_code(
         self,
