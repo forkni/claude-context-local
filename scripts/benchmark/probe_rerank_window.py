@@ -7,56 +7,44 @@ the merged expansion pool (~66-83 chunks at k=10), yet missing the final top-10.
 instruments the exact boundary between "gold is in the merged pool" and "gold is in the
 window the listwise reranker actually scores" to distinguish three failure modes:
 
-- **window-cut**: gold is in the merged pool (``multi_hop_searcher.py:478``) but falls
-  outside ``candidates[:top_k_candidates]`` at the hard cut (``reranking_engine.py:253-254``) —
+- **window-cut**: gold is in the merged pool but falls outside
+  ``candidates[:top_k_candidates]`` at the hard cut in ``RerankingEngine._run_rerank`` --
   the model never sees it.
 - **model-demotion**: gold is inside the window but the listwise model still ranks it > k.
 - **pool-loss**: gold never reached the merged pool at all (a pre-existing retrieval gap,
   out of scope for this probe).
 
-Mechanism (three incomparable score scales feed the ``:337`` sort that determines the cut):
-hop-1 survivors carry a jina relevance score overwritten in place
-(``neural_reranker.py:1521-1525``, range observed ~+0.22..-0.12); semantic-expansion chunks
-carry raw FAISS cosine (``multi_hop_searcher.py:141``, ~0.5-0.9); graph-expansion chunks carry
-literal ``0.0`` (``multi_hop_searcher.py:227``). Sorting all three together at the merge-pool
-rerank means cosine-scored expansion chunks systematically outrank hop-1 winners.
+History: the pre-ADR-0079 ``"score"`` merged-pool ordering sorted three incomparable score
+scales together (jina scores, FAISS cosines, a literal 0.0) and evicted hop-1 survivors from
+the window. Window membership is now decided by ``RerankingEngine._gar_interleave``
+(``docs/adr/0079-gar-style-rerank-window-membership.md``); the legacy orderings, the hop-1
+reserve, the graph bands and the graph_hop window cap are deleted, along with their replay
+gates here. The reports in ``evaluation/`` that used them are historical records.
 
-**Extended instrumentation** (per ``docs/plans/humming-wondering-phoenix.md``, Phase 1),
-gated behind ``search/config.py``'s ``RerankerConfig.merged_pool_policy`` field
-(``"score"`` default / ``"score_reserve_fix"`` / ``"channel_priority"`` — see
-``search/reranking_engine.py``'s ``_order_merged_pool``/``_apply_hop1_reserve``):
+Instrumentation:
 
 - ``Instrumentation.pass2_call()``/``.pass2_window()``/``.pass3_calls()`` disambiguate the
   multi-hop merge-pool rerank (Pass 2) from the ego-graph/parent-expansion tail rerank
   (Pass 3) by ``rerank_by_query`` call **ordinal**, cross-checked against
-  ``is_merged_pass`` (``"window" in kwargs`` — only Pass 2's dispatch ever passes that
-  kwarg at all, an exact discriminator unlike sniffing ``hop1_reserved_slots``' value) —
-  *not* by list position or log prefix alone, since both passes share the
-  ``"[NEURAL_RERANK]"`` prefix (``reranking_engine.py:571``); only Pass 1
-  (``SearchExecutor.apply_neural_reranking``) uses the distinct ``"[NEURAL_RERANK-SEARCH]"``.
+  ``is_merged_pass`` (``"window" in kwargs`` -- only Pass 2's dispatch ever passes that
+  kwarg) -- *not* by list position or log prefix alone, since both passes share the
+  ``"[NEURAL_RERANK]"`` prefix; only Pass 1 (``SearchExecutor.apply_neural_reranking``)
+  uses the distinct ``"[NEURAL_RERANK-SEARCH]"``.
 - **ADR-0077 single-block invariant**: each Pass-2 call record also captures
   ``last_block_count``/``last_doc_token_cap`` (``RerankingEngine`` attributes populated from
-  ``JinaRerankerV3`` post-call — see ``search/reranking_engine.py``'s ``_run_rerank`` and
-  ``search/neural_reranker.py``'s ``JinaRerankerV3.__init__`` for their exact "last pass wins"
-  semantics and the one documented asymmetry). ``print_query_report()`` and
-  ``summarize_listwise_invariant()`` surface these so "did the invariant hold — exactly one
-  block, on every query, at both budgets?" is answerable from a single offline pass, without
-  a GPU benchmark leg — see docs/adr/0077-single-block-listwise-invariant.md.
+  ``JinaRerankerV3`` post-call). ``print_query_report()`` and
+  ``summarize_listwise_invariant()`` surface these so "did the invariant hold -- exactly one
+  block, on every query -- at this budget?" is answerable from one offline pass, without a
+  GPU benchmark leg. See docs/adr/0077-single-block-listwise-invariant.md.
 - ``simulate_windows()`` replays each query's captured Pass-2 pool (order/score/source/
-  ``hop1_rank`` snapshot, taken pre-sort) through the **actual production**
-  ``RerankingEngine._order_merged_pool``/``._apply_hop1_reserve`` static methods for every
-  policy in ``SIMULATED_POLICIES`` — an offline counterfactual, not a re-run of the search
-  pipeline, so all four policies are evaluated from one live pass per query.
-- **Self-validity check**: ``simulate_windows(...)[<the policy actually configured for this
-  run>]`` must equal the observed Pass-2 window on every query. Because the simulator calls
-  the same production functions (not a reimplementation), a mismatch means the probe's
-  *pool snapshot* is incomplete or stale — not that the simulator's logic drifted. A mismatch
-  is a HALT condition (exit code 3): downstream predictions/gate numbers should not be
-  trusted until it is fixed.
-- Six pre-registered predictions (P1-P6) and gate criteria (A1 premise, A2 headroom, A3
-  self-validity) are evaluated in ``compute_predictions()``/``evaluate_gate()`` and printed
-  after the per-query sweep. ``--json-out PATH`` writes the full per-query + aggregate
-  payload for offline analysis.
+  ``hop1_rank``/``anchor_rank`` snapshot, taken pre-sort) through the probe-local GAR
+  orderings in ``SIMULATED_POLICIES``: ``gar_anchor_first`` (what production does) and
+  ``gar_round_robin`` (the rejected alternative, kept for comparison).
+- **Self-validity check**: ``simulate_windows(...)["gar_anchor_first"]`` must equal the
+  observed Pass-2 window on every query. A mismatch means the captured pool snapshot is
+  incomplete, or the probe's ordering has drifted from ``_gar_interleave``; it is a HALT
+  condition (exit code 3) -- the simulated counterfactuals should not be trusted.
+- ``--json-out PATH`` writes the full per-query + aggregate payload for offline analysis.
 
 Usage:
     .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
@@ -64,32 +52,14 @@ Usage:
 
     .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
         --all --dataset evaluation/golden_dataset_expanded.json --k 10 \
-        --json-out evaluation/probe_rerank_window_20260815.json
+        --json-out evaluation/probe_rerank_window_<date>.json
 
     .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
-        --all --set reranker.merged_pool_policy=channel_priority
-
-    .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
-        --replay evaluation/probe_rerank_window_20260815.json --caps 2,3
-
-    # Evidence-ordered graph band probe (docs/plans "Evidence-ordered graph band"):
-    # capture 1 (default) + capture 2 (evidence side-channel), then gate offline.
-    .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
-        --all --json-out evaluation/probe_graph_band_default_<date>.json
-    .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
-        --all --set graph_enhanced.graph_hop_call_evidence_enabled=true \
-        --force-graph-hop-unscored \
-        --json-out evaluation/probe_graph_band_evidence_<date>.json
-    .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
-        --band-order-replay evaluation/probe_graph_band_default_<date>.json \
-        evaluation/probe_graph_band_evidence_<date>.json
+        --all --set reranker.top_k_candidates=33
 
 Exit codes: 0 (GREEN) no window-cuts and self-validity holds everywhere; 1 (RED) at least
 one grade-3 gold is window-cut; 2 on setup errors; 3 (HALT) self-validity diverged on at
-least one query — treat P1-P6/A1-A3 as untrustworthy until investigated. ``--replay`` mode
-uses its own G1/G2/G3 exit codes 0/1/3 (see ``run_replay()``); ``--band-order-replay`` mode
-uses its own G1/G2/G3 exit codes 0/1/3 (see ``run_band_order_replay()``); 2 still applies to
-setup errors (bad ``--caps``, unreadable JSON) via the ordinary Python traceback.
+least one query.
 """
 
 from __future__ import annotations
@@ -110,34 +80,12 @@ from evaluation.metrics import normalize_chunk_id  # noqa: E402
 
 MERGE_LOG_PREFIX = "[NEURAL_RERANK]"
 
-# Policies simulate_windows() replays through the ACTUAL production static methods
-# (RerankingEngine._order_merged_pool / ._apply_hop1_reserve) against each query's captured
-# Pass-2 pool. "score" and "score_reserve_fix" are real SearchConfig.reranker.
-# merged_pool_policy values; "channel_priority" is the third. "score_no_reserve" is a
-# probe-only synthetic variant (score ordering, hop1_reserved_slots forced to 0) that
-# isolates ordering from eviction for prediction P4 (finding E).
-SIMULATED_POLICIES = (
-    "score",
-    "score_no_reserve",
-    "score_reserve_fix",
-    "channel_priority",
-    "gar_anchor_first",
-    "gar_round_robin",
-)
-
-# GAR-style window membership candidates (docs/adr/0079, evaluation/GAR_WINDOW_AB_20261001.md).
-# Probe-local simulators: the production "gar_interleave" policy does not exist yet when this
-# probe is first run, so these order the captured pool with the same alternation rule the
-# policy will implement. Both alternate 1:1 between hop-1 survivors (by hop1_rank) and the
-# frontier (expansion candidates); they differ only in how the frontier itself is ordered.
-GAR_POLICIES = ("gar_anchor_first", "gar_round_robin")
-
-# Cap values simulate_cap_windows() replays for the graph_hop_window_cap probe
-# (docs/plans/humming-wondering-phoenix.md follow-on, --replay mode). cap=0 is
-# the no-op baseline -- byte-identical to SIMULATED_POLICIES's "score" entry --
-# and is always included as the comparison point for gold rescue/eviction
-# deltas (see _cap_gold_net).
-SIMULATED_CAPS = (0, 2, 3, 4, 5)
+# GAR-style window orderings simulate_windows() replays against each query's captured Pass-2
+# pool (docs/adr/0079, evaluation/GAR_WINDOW_AB_20261001.md). Both alternate 1:1 between
+# hop-1 survivors (by hop1_rank) and the frontier (expansion candidates); they differ only in
+# how the frontier itself is ordered. "gar_anchor_first" is the production ordering.
+SIMULATED_POLICIES = ("gar_anchor_first", "gar_round_robin")
+OBSERVED_POLICY = "gar_anchor_first"
 
 
 def load_queries(dataset_path: Path, query_ids: list[str] | None) -> list[dict]:
@@ -161,12 +109,10 @@ def load_queries(dataset_path: Path, query_ids: list[str] | None) -> list[dict]:
 
 
 class _SimResult:
-    """Minimal stand-in for ``search.reranker.SearchResult``, sufficient for
-    ``RerankingEngine._order_merged_pool``/``._apply_hop1_reserve`` — both only touch
-    ``.chunk_id``, ``.score``, ``.source``, and ``.metadata['hop1_rank']``. Built from the
-    probe's captured Pass-2 pool snapshot, not the original live objects (which are gone by
-    the time ``simulate_windows`` runs) — so a self-validity mismatch means the snapshot,
-    not this class or the production logic, is missing something.
+    """Minimal stand-in for ``search.reranker.SearchResult``, sufficient for the GAR orderings
+    below -- they only touch ``.chunk_id``, ``.source``, and ``.metadata['hop1_rank'/
+    'anchor_rank']``. Built from the probe's captured Pass-2 pool snapshot, not the original
+    live objects (which are gone by the time ``simulate_windows`` runs).
     """
 
     __slots__ = ("chunk_id", "score", "source", "metadata")
@@ -185,26 +131,10 @@ class _SimResult:
         self.metadata = {"hop1_rank": hop1_rank, "anchor_rank": anchor_rank}
 
 
-def simulate_windows(
-    pass2_call: dict, top_k_candidates: int, hop1_reserved_slots: int
-) -> dict[str, list[str]]:
+def simulate_windows(pass2_call: dict, top_k_candidates: int) -> dict[str, list[str]]:
     """Offline counterfactual: replay the Pass-2 pool (captured pre-sort, original merge
-    order preserved) through the ACTUAL production ordering and eviction code —
-    ``RerankingEngine._order_merged_pool`` / ``._apply_hop1_reserve`` — for each policy in
-    ``SIMULATED_POLICIES``, and return the resulting rerank-window ``chunk_id`` sequence.
-
-    Reusing the production static methods (rather than re-implementing the sort/eviction
-    here) means a divergence in the self-validity check
-    (``simulate_windows(...)[policy] != observed window_ids``) can only mean the probe's
-    *pool snapshot* — order, score, source, or hop1_rank — is incomplete or stale, never
-    that this function's logic drifted from ``reranking_engine.py``.
-
-    "score_no_reserve" is not a real ``merged_pool_policy`` value; it is "score" ordering
-    with the reserve promotion forced off (``hop1_reserved_slots=0``), isolating ordering
-    from eviction for prediction P4 (finding E).
-    """
-    from search.reranking_engine import RerankingEngine
-
+    order preserved) through each ordering in ``SIMULATED_POLICIES`` and return the resulting
+    rerank-window ``chunk_id`` sequence."""
     pool_objects = [
         _SimResult(
             p["chunk_id"],
@@ -215,23 +145,10 @@ def simulate_windows(
         )
         for p in pass2_call["pool"]
     ]
-
-    windows: dict[str, list[str]] = {}
-    for policy in SIMULATED_POLICIES:
-        if policy in GAR_POLICIES:
-            windows[policy] = [
-                r.chunk_id for r in gar_order(pool_objects, policy)[:top_k_candidates]
-            ]
-            continue
-        order_policy = "score" if policy == "score_no_reserve" else policy
-        ordered = RerankingEngine._order_merged_pool(pool_objects, order_policy)
-        reserve_slots = 0 if policy == "score_no_reserve" else hop1_reserved_slots
-        evict_policy = "lowest_non_hop1" if policy == "score_reserve_fix" else "tail"
-        final = RerankingEngine._apply_hop1_reserve(
-            ordered, top_k_candidates, reserve_slots, evict_policy=evict_policy
-        )
-        windows[policy] = [r.chunk_id for r in final[:top_k_candidates]]
-    return windows
+    return {
+        policy: [r.chunk_id for r in gar_order(pool_objects, policy)[:top_k_candidates]]
+        for policy in SIMULATED_POLICIES
+    }
 
 
 def _frontier_by_anchor(frontier: list) -> dict[int, list]:
@@ -293,54 +210,6 @@ def gar_order(pool: list, policy: str) -> list:
     return ordered
 
 
-def simulate_cap_windows(
-    pass2_call: dict, top_k_candidates: int, hop1_reserved_slots: int
-) -> dict[int, list[str]]:
-    """Offline counterfactual analogous to ``simulate_windows()``, but for the
-    ``graph_hop_window_cap`` probe (``--replay`` mode) instead of
-    ``merged_pool_policy``: replay the Pass-2 pool through the ACTUAL
-    production ``RerankingEngine._order_merged_pool("score")`` ->
-    ``._apply_graph_hop_window_cap(cap)`` -> ``._apply_hop1_reserve("tail")``
-    chain for every cap in ``SIMULATED_CAPS``, returning the resulting
-    rerank-window ``chunk_id`` sequence keyed by cap.
-
-    ``cap=0`` is a no-op by construction (``_apply_graph_hop_window_cap``
-    returns its input unchanged when ``cap <= 0``), so ``windows[0]`` is
-    byte-identical to ``simulate_windows(...)["score"]`` and to the observed
-    production window whenever the deployed policy is ``"score"`` — the same
-    self-validity guarantee ``simulate_windows`` relies on: a divergence can
-    only mean the captured pool snapshot is stale, never that this function's
-    logic drifted from ``reranking_engine.py``.
-
-    ``graph_hop_unscored=True`` here (ADR-0039): this is what makes
-    ``--replay``'s G3 self-validity check (``windows[0] == observed
-    window_ids``) the empirical byte-identity gate for the provenance-band
-    reformulation — a real production pool, ordered by the new banded code
-    path, must still reproduce the exact window a *pre-reformulation* capture
-    observed. A mismatch means the reformulation is not behaviour-preserving.
-    """
-    from search.reranking_engine import RerankingEngine
-
-    pool_objects = [
-        _SimResult(p["chunk_id"], p["score"], p["source"], p["hop1_rank"])
-        for p in pass2_call["pool"]
-    ]
-    ordered = RerankingEngine._order_merged_pool(
-        pool_objects, "score", graph_hop_unscored=True
-    )
-
-    windows: dict[int, list[str]] = {}
-    for cap in SIMULATED_CAPS:
-        capped = RerankingEngine._apply_graph_hop_window_cap(
-            ordered, top_k_candidates, cap
-        )
-        final = RerankingEngine._apply_hop1_reserve(
-            capped, top_k_candidates, hop1_reserved_slots, evict_policy="tail"
-        )
-        windows[cap] = [r.chunk_id for r in final[:top_k_candidates]]
-    return windows
-
-
 def channel_histogram(pass2_call: dict, pass2_window: dict) -> dict[str, int]:
     """Count Pass-2 rerank-window entries by channel (``source``), plus a
     ``_hop1_tagged`` sub-count (entries with ``metadata['hop1_rank']`` set — hop-1
@@ -359,9 +228,8 @@ def channel_histogram(pass2_call: dict, pass2_window: dict) -> dict[str, int]:
 
 def score_ranges(pass2_call: dict) -> dict[str, dict[str, float]]:
     """Per-channel (source) min/median/max raw ``.score`` across the full Pass-2 merged
-    pool (not just the window) — shows the incomparable-scale defect directly: channel
-    score bands should not overlap under "score"/"score_reserve_fix" ordering, by
-    construction of the bug."""
+    pool (not just the window) — shows the incomparable score scales per channel, the reason
+    window membership is decided by interleave rather than by comparing scores."""
     by_source: dict[str, list[float]] = {}
     for cid, src in pass2_call["sources"].items():
         by_source.setdefault(src, []).append(pass2_call["scores"][cid])
@@ -379,7 +247,7 @@ def score_ranges(pass2_call: dict) -> dict[str, dict[str, float]]:
 class Instrumentation:
     """Installs/removes monkeypatches on MultiHopSearcher and RerankingEngine classes."""
 
-    def __init__(self, searcher, force_graph_hop_unscored: bool = False) -> None:
+    def __init__(self, searcher) -> None:
         self._multi_hop_searcher = searcher.multi_hop_searcher
         self._engine_cls = type(searcher.reranking_engine)
         # _single_hop_search is a per-instance bound-callback attribute set in
@@ -388,20 +256,6 @@ class Instrumentation:
         self._orig_single_hop = self._multi_hop_searcher._single_hop_search
         self._orig_rerank_by_query = self._engine_cls.rerank_by_query
         self._orig_run_rerank = self._engine_cls._run_rerank
-        # Evidence-ordered graph band probe side-channel (docs/plans
-        # "Evidence-ordered graph band" Phase 1): when True, every captured
-        # rerank_by_query call has graph_hop_unscored forced to True before
-        # dispatch, regardless of what the caller passed. Under default
-        # config (graph_hop_unscored already True) this is a no-op. Under
-        # graph_enhanced.graph_hop_call_evidence_enabled=true (which would
-        # otherwise dispatch graph_hop_unscored=False, i.e. plain score
-        # sort - multi_hop_searcher.py:643-645), this keeps the ADR-0039
-        # banding path live in production while _graph_expand still writes
-        # the real A1 call-evidence score onto every graph_hop candidate's
-        # .score - so the pool snapshot captures real scores, but the
-        # observed production window stays byte-identical to a default run
-        # (verified offline as G3b in run_band_order_replay()).
-        self._force_graph_hop_unscored = force_graph_hop_unscored
         self.reset()
 
     def reset(self) -> None:
@@ -412,12 +266,10 @@ class Instrumentation:
         # _run_rerank call (fired synchronously from inside it) can record which
         # rerank_by_query call it belongs to. This is the Pass-2/Pass-3
         # disambiguation: both dispatch _run_rerank under the same "[NEURAL_RERANK]"
-        # log_prefix (reranking_engine.py:571), so the prefix alone can't tell them apart.
+        # log_prefix, so the prefix alone can't tell them apart.
         self._active_ordinal: int | None = None
 
     def install(self) -> None:
-        import dataclasses
-
         from search.rerank_window_policy import RerankWindowPolicy
 
         instrumentation = self
@@ -435,9 +287,7 @@ class Instrumentation:
         def patched_rerank_by_query(self_engine, query, results, k, *args, **kwargs):
             ordinal = len(instrumentation.rerank_by_query_calls)
             window = kwargs.get("window", RerankWindowPolicy.tail())
-            hop1_reserved_slots = window.hop1_reserved_slots
             is_merged_pass = "window" in kwargs
-            merged_pool_policy = window.merged_pool_policy
             pool = [
                 {
                     "chunk_id": normalize_chunk_id(r.chunk_id),
@@ -457,15 +307,12 @@ class Instrumentation:
                     "scores": {p["chunk_id"]: p["score"] for p in pool},
                     "sources": {p["chunk_id"]: p["source"] for p in pool},
                     "hop1_ranks": {p["chunk_id"]: p["hop1_rank"] for p in pool},
-                    "hop1_reserved_slots": hop1_reserved_slots,
                     "is_merged_pass": is_merged_pass,
-                    "merged_pool_policy": merged_pool_policy,
+                    "interleave": window.interleave,
                     "output_ids": None,  # filled in below once orig returns
                 }
             )
             instrumentation._active_ordinal = ordinal
-            if instrumentation._force_graph_hop_unscored:
-                kwargs["window"] = dataclasses.replace(window, graph_hop_unscored=True)
             try:
                 output = orig_rerank_by_query(
                     self_engine, query, results, k, *args, **kwargs
@@ -535,11 +382,7 @@ class Instrumentation:
         ordinal 0 is Pass 2. Cross-checked against ``is_merged_pass`` (``"window" in
         kwargs`` — only Pass 2's dispatch ever passes that kwarg at all) — the
         cross-check only *fires* (raises) on an actual contradiction (a merged-pass call
-        NOT at ordinal 0, or more than one such call). This is an exact discriminator,
-        unlike sniffing ``hop1_reserved_slots > 0`` (the previous approach): that value
-        is legitimately 0 on a real Pass-2 call whenever
-        ``reranker.hop1_reserved_slots`` is configured to 0, which made the old
-        cross-check silently inert (never raising, never confirming) at that setting.
+        NOT at ordinal 0, or more than one such call).
         """
         if not self.rerank_by_query_calls:
             return None
@@ -650,7 +493,7 @@ def print_query_report(record: dict) -> None:
                 f"  Pass-2 rerank window: {pass2_window['rerank_count']} "
                 f"(boundary score={pass2_window['boundary_score']}, "
                 f"top_k_candidates={pass2_window['top_k_candidates']}, "
-                f"policy={pass2_call['merged_pool_policy']!r})"
+                f"interleave={pass2_call['interleave']})"
             )
             # ADR-0077 single-block invariant readings, captured by
             # Instrumentation.install()'s patched_run_rerank post-call. None
@@ -675,7 +518,7 @@ def print_query_report(record: dict) -> None:
             )
             print(f"  Self-validity (simulate == observed window): {validity_s}")
             if record["p6_hits"]:
-                print(f"  P6 (in window, outside Pass-2 top-k): {record['p6_hits']}")
+                print(f"  In window, outside Pass-2 top-k: {record['p6_hits']}")
         else:
             print("  (no Pass-2 rerank window - reranker disabled for this call?)")
     rows = record["rows"]
@@ -699,36 +542,15 @@ def _median_or_none(xs: list[float] | list[int]) -> float | None:
     return statistics.median(xs) if xs else None
 
 
-def _policy_gold_net(records: list[dict], policy: str) -> tuple[int, int, int]:
-    """Grade-3 gold rescues/evictions moving from the observed "score" simulated window to
-    ``policy``'s simulated window, summed over every query with a usable simulation.
-    Positive net = ``policy`` nets more gold window-memberships than it costs; feeds gate
-    criterion A2."""
-    rescues = 0
-    evictions = 0
-    for r in records:
-        if r["simulated"] is None:
-            continue
-        base = set(r["simulated"]["score"])
-        variant = set(r["simulated"][policy])
-        golds = {row["gold"] for row in r["rows"]}
-        rescues += len((variant - base) & golds)
-        evictions += len((base - variant) & golds)
-    return rescues, evictions, rescues - evictions
-
-
 def summarize_window_membership(records: list[dict]) -> dict:
-    """Per simulated policy: grade-3 golds that land in the 30-slot window (of those present in
-    the Pass-2 pool), queries with at least one gold lost vs "score_no_reserve" (the pre-eviction
-    ordering), and the median graph_hop occupancy of the window (the Q12 guard: ``channel_priority``
-    drove it from 7 to 0 and was disqualified for it -- POOL_ORDER_AB_20260815)."""
+    """Per simulated policy: grade-3 golds that land in the window (of those present in the
+    Pass-2 pool), the median graph_hop occupancy of the window, and how many hop-1 rank-1
+    survivors the window keeps."""
     out: dict[str, dict] = {}
     usable = [r for r in records if r["simulated"] is not None]
     for policy in SIMULATED_POLICIES:
         golds_in_window = 0
         golds_in_pool = 0
-        queries_gold_lost = 0
-        queries_gold_rescued = 0
         graph_counts: list[int] = []
         hop1_rank1_kept = 0
         hop1_rank1_total = 0
@@ -738,14 +560,9 @@ def summarize_window_membership(records: list[dict]) -> dict:
             pool_ids = set(r["pass2_call"]["pool_ids"])
             window = r["simulated"][policy]
             window_set = set(window)
-            base_set = set(r["simulated"]["score"])
             golds = {row["gold"] for row in r["rows"]} & pool_ids
             golds_in_pool += len(golds)
             golds_in_window += len(golds & window_set)
-            if (base_set & golds) - window_set:
-                queries_gold_lost += 1
-            if (window_set & golds) - base_set:
-                queries_gold_rescued += 1
             graph_counts.append(sum(1 for c in window if sources.get(c) == "graph_hop"))
             for cid, hr in hop1_ranks.items():
                 if hr == 1:
@@ -754,8 +571,6 @@ def summarize_window_membership(records: list[dict]) -> dict:
         out[policy] = {
             "golds_in_pool": golds_in_pool,
             "golds_in_window": golds_in_window,
-            "queries_gold_lost_vs_score": queries_gold_lost,
-            "queries_gold_rescued_vs_score": queries_gold_rescued,
             "graph_hop_window_median": _median_or_none(graph_counts),
             "graph_hop_window_zero_frac": (
                 sum(1 for c in graph_counts if c == 0) / len(graph_counts)
@@ -775,8 +590,6 @@ def print_window_membership(summary: dict) -> None:
     for policy, v in summary["by_policy"].items():
         print(
             f"  {policy:<20} golds_in_window={v['golds_in_window']}/{v['golds_in_pool']}"
-            f"  lost_vs_score={v['queries_gold_lost_vs_score']}"
-            f"  rescued_vs_score={v['queries_gold_rescued_vs_score']}"
             f"  graph_hop_median={v['graph_hop_window_median']}"
             f"  graph_hop_zero_frac={v['graph_hop_window_zero_frac']}"
             f"  hop1_rank1_in_window={v['hop1_rank1_in_window']}"
@@ -819,664 +632,6 @@ def summarize_listwise_invariant(records: list[dict]) -> dict:
     }
 
 
-def compute_predictions(records: list[dict]) -> dict:
-    """Evaluate pre-registered predictions P1-P6 (``docs/plans/humming-wondering-phoenix.md``,
-    Phase 1) against collected probe records. P1-P5 need a Pass-2 call+window (``usable``);
-    P6 additionally reads grade-3 gold classification rows, present on every record."""
-    usable = [
-        r
-        for r in records
-        if r["pass2_call"] is not None and r["pass2_window"] is not None
-    ]
-    n = len(usable)
-
-    # P1: Pass-2 window median multi_hop share.
-    multi_hop_shares = []
-    for r in usable:
-        window_n = len(r["pass2_window"]["window_ids"])
-        multi_hop_shares.append(
-            (r["channel_histogram"].get("multi_hop", 0) / window_n) if window_n else 0.0
-        )
-    p1_median = _median_or_none(multi_hop_shares)
-
-    # P2: median count of window entries with hop1_rank <= 8, and the median share of those
-    # that only reached the window via the reserve promotion (absent from the pre-reserve
-    # "score_no_reserve" simulated window).
-    hop1_le8_counts = []
-    reserve_arrival_fracs = []
-    for r in usable:
-        pool_by_id = {p["chunk_id"]: p for p in r["pass2_call"]["pool"]}
-        le8_ids = [
-            cid
-            for cid in r["pass2_window"]["window_ids"]
-            if (pool_by_id.get(cid, {}).get("hop1_rank") or 99) <= 8
-        ]
-        hop1_le8_counts.append(len(le8_ids))
-        if le8_ids and r["simulated"] is not None:
-            pre_reserve_ids = set(r["simulated"]["score_no_reserve"])
-            arrived_via_reserve = sum(
-                1 for cid in le8_ids if cid not in pre_reserve_ids
-            )
-            reserve_arrival_fracs.append(arrived_via_reserve / len(le8_ids))
-    p2_count_median = _median_or_none(hop1_le8_counts)
-    p2_reserve_share_median = _median_or_none(reserve_arrival_fracs)
-
-    # P3: median graph_hop window count, and the fraction of queries with >=1.
-    graph_hop_counts = [r["channel_histogram"].get("graph_hop", 0) for r in usable]
-    p3_median = _median_or_none(graph_hop_counts)
-    p3_any_frac = (sum(1 for c in graph_hop_counts if c >= 1) / n) if n else 0.0
-
-    # P4 (finding E): fraction of queries where a pre-reserve window candidate with
-    # hop1_rank in {1, 2} is absent from the post-reserve ("score") simulated window --
-    # the reserve evicting a top-ranked hop-1 seed to make room for a worse-ranked one.
-    p4_hits = 0
-    p4_n = 0
-    for r in usable:
-        if r["simulated"] is None:
-            continue
-        p4_n += 1
-        pool_by_id = {p["chunk_id"]: p for p in r["pass2_call"]["pool"]}
-        pre_reserve = set(r["simulated"]["score_no_reserve"])
-        post_reserve = set(r["simulated"]["score"])
-        evicted_top2 = [
-            cid
-            for cid in pre_reserve
-            if pool_by_id.get(cid, {}).get("hop1_rank") in (1, 2)
-            and cid not in post_reserve
-        ]
-        if evicted_top2:
-            p4_hits += 1
-    p4_frac = (p4_hits / p4_n) if p4_n else 0.0
-
-    # P5: Pass-3 (ego-graph/parent-expansion tail) inertness -- rerank_count should equal
-    # len(candidates) on ~every query that has a Pass-3 call.
-    pass3_flags = [
-        c["rerank_count"] == len(c["candidate_ids"])
-        for r in records
-        for c in r["pass3_calls"]
-    ]
-    p5_frac = (sum(pass3_flags) / len(pass3_flags)) if pass3_flags else None
-
-    # P6: grade-3 golds inside the Pass-2 window but outside Pass-2's own top-k output --
-    # measures finding (D)'s ceiling independent of Pass 3.
-    p6_total = sum(len(r["p6_hits"]) for r in records)
-    p6_queries = sum(1 for r in records if r["p6_hits"])
-
-    predictions = {
-        "P1_multi_hop_median_share": {
-            "value": p1_median,
-            "target": ">= 0.60",
-            "pass": p1_median is not None and p1_median >= 0.60,
-        },
-        "P2_hop1_le8": {
-            "median_count": p2_count_median,
-            "reserve_arrival_share_median": p2_reserve_share_median,
-            "target": "reserve_arrival_share_median >= 0.60",
-            "pass": (
-                p2_reserve_share_median is not None and p2_reserve_share_median >= 0.60
-            ),
-        },
-        "P3_graph_hop": {
-            "median_count": p3_median,
-            "any_frac": p3_any_frac,
-            "target": "median_count == 0 and any_frac >= 0.05",
-            "pass": p3_median == 0 and p3_any_frac >= 0.05,
-        },
-        "P4_finding_e_evicted_top2_frac": {
-            "value": p4_frac,
-            "n": p4_n,
-            "target": ">= 0.50",
-            "pass": p4_frac >= 0.50,
-        },
-        "P5_pass3_inert_frac": {
-            "value": p5_frac,
-            "n": len(pass3_flags),
-            "target": ">= 0.99",
-            "pass": p5_frac is not None and p5_frac >= 0.99,
-        },
-        "P6_window_not_top10": {
-            "hit_count": p6_total,
-            "query_count": p6_queries,
-            "target": "informational (finding D ceiling)",
-            "pass": None,
-        },
-    }
-    return {"n_usable": n, "n_total": len(records), "predictions": predictions}
-
-
-def evaluate_gate(records: list[dict], predictions: dict) -> dict:
-    """A1/A2/A3 abort-criteria verdicts, per the plan's Phase 1 gate."""
-    preds = predictions["predictions"]
-    a1_premise_ok = (
-        preds["P1_multi_hop_median_share"]["pass"] and preds["P2_hop1_le8"]["pass"]
-    )
-
-    net_by_policy = {}
-    for policy in ("score_reserve_fix", "channel_priority"):
-        rescues, evictions, net = _policy_gold_net(records, policy)
-        net_by_policy[policy] = {"rescues": rescues, "evictions": evictions, "net": net}
-    a2_headroom_ok = any(v["net"] > 0 for v in net_by_policy.values())
-
-    validity_checked = [r for r in records if r["self_validity"] is not None]
-    a3_valid = all(r["self_validity"] for r in validity_checked)
-
-    return {
-        "A1_premise_holds": a1_premise_ok,
-        "A2_headroom_by_policy": net_by_policy,
-        "A2_headroom_ok": a2_headroom_ok,
-        "A3_self_validity_ok": a3_valid,
-        "A3_checked_n": len(validity_checked),
-        "abort": (not a1_premise_ok) or (not a2_headroom_ok) or (not a3_valid),
-    }
-
-
-def print_predictions_report(predictions: dict, gate: dict) -> None:
-    preds = predictions["predictions"]
-    print("\n" + "=" * 72)
-    print(
-        f"PREDICTIONS (n_usable={predictions['n_usable']}/{predictions['n_total']} "
-        "queries with a Pass-2 window)"
-    )
-    print("=" * 72)
-    for key, p in preds.items():
-        status = p.get("pass")
-        status_s = "-" if status is None else ("PASS" if status else "FAIL")
-        extra = {k: v for k, v in p.items() if k != "pass"}
-        print(f"  [{status_s}] {key}: {extra}")
-
-    print("\nGATE (abort criteria)")
-    print(
-        f"  A1 premise (P1 & P2 hold): "
-        f"{'PASS' if gate['A1_premise_holds'] else 'FAIL -> ABORT'}"
-    )
-    for policy, v in gate["A2_headroom_by_policy"].items():
-        print(
-            f"  A2 {policy}: rescues={v['rescues']} evictions={v['evictions']} net={v['net']}"
-        )
-    print(
-        f"  A2 headroom (>=1 policy net > 0): "
-        f"{'PASS' if gate['A2_headroom_ok'] else 'FAIL -> ABORT'}"
-    )
-    print(
-        f"  A3 self-validity ({gate['A3_checked_n']} queries checked): "
-        f"{'PASS' if gate['A3_self_validity_ok'] else 'FAIL -> HALT'}"
-    )
-    print(
-        f"\n  OVERALL: "
-        f"{'ABORT/HALT' if gate['abort'] else 'GATE PASSES -- proceed to Phase 4 arms'}"
-    )
-
-
-def _cap_gold_net(records: list[dict], cap: int) -> tuple[int, int, int]:
-    """Grade-3 gold rescues/evictions moving from each record's ``cap=0``
-    simulated window (byte-identical to the deployed ``"score"`` policy) to
-    its ``cap`` simulated window, summed over every record with a usable cap
-    simulation (``record["cap_simulated"]`` populated by ``run_replay``).
-    Positive net = ``cap`` nets more gold window-memberships than it costs —
-    feeds gate criterion G1. Mirrors ``_policy_gold_net``'s shape for the
-    ``merged_pool_policy`` probe."""
-    rescues = 0
-    evictions = 0
-    for r in records:
-        sim = r.get("cap_simulated")
-        if sim is None:
-            continue
-        base = set(sim[0])
-        variant = set(sim[cap])
-        golds = {row["gold"] for row in r["rows"]}
-        rescues += len((variant - base) & golds)
-        evictions += len((base - variant) & golds)
-    return rescues, evictions, rescues - evictions
-
-
-def evaluate_cap_gate(records: list[dict], chosen_caps: tuple[int, ...]) -> dict:
-    """G1/G2/G3 abort-criteria verdicts for the ``graph_hop_window_cap``
-    probe (``docs/plans/humming-wondering-phoenix.md`` follow-on Phase 1).
-    Structure mirrors ``evaluate_gate()``'s A1/A2/A3 for the original
-    ``merged_pool_policy`` probe.
-
-    - G1 (headroom veto): net gold window-membership change > 0 at a cap.
-    - G2 (retention): no gold in-window at cap=0 may leave the window at
-      that cap -- literally ``evictions == 0`` from ``_cap_gold_net``.
-    - G3 (self-validity): each record's ``cap=0`` replay window must equal
-      the observed production ``pass2_window.window_ids`` exactly (set on
-      ``record["g3_self_validity"]`` by ``run_replay``).
-    """
-    cap_stats = {}
-    for cap in SIMULATED_CAPS:
-        if cap == 0:
-            continue
-        rescues, evictions, net = _cap_gold_net(records, cap)
-        cap_stats[cap] = {"rescues": rescues, "evictions": evictions, "net": net}
-
-    g1_by_cap = {cap: v["net"] > 0 for cap, v in cap_stats.items()}
-    g2_by_cap = {cap: v["evictions"] == 0 for cap, v in cap_stats.items()}
-
-    validity_checked = [r for r in records if r.get("g3_self_validity") is not None]
-    g3_valid = all(r["g3_self_validity"] for r in validity_checked)
-
-    chosen_pass = {
-        cap: (g1_by_cap.get(cap, False) and g2_by_cap.get(cap, False))
-        for cap in chosen_caps
-    }
-
-    return {
-        "cap_stats": cap_stats,
-        "G1_by_cap": g1_by_cap,
-        "G2_by_cap": g2_by_cap,
-        "G3_self_validity_ok": g3_valid,
-        "G3_checked_n": len(validity_checked),
-        "chosen_caps": list(chosen_caps),
-        "chosen_pass": chosen_pass,
-        "abort": (not g3_valid) or not any(chosen_pass.values()),
-    }
-
-
-def print_cap_report(
-    records: list[dict], gate: dict, n_usable: int, n_total: int
-) -> None:
-    print("\n" + "=" * 72)
-    print(f"GRAPH_HOP WINDOW CAP REPLAY (n_usable={n_usable}/{n_total})")
-    print("=" * 72)
-    for cap in SIMULATED_CAPS:
-        if cap == 0:
-            continue
-        changed = 0
-        graph_delta = 0
-        for r in records:
-            sim = r.get("cap_simulated")
-            if sim is None:
-                continue
-            base_ids = set(sim[0])
-            var_ids = set(sim[cap])
-            if base_ids != var_ids:
-                changed += 1
-            pool_source = {p["chunk_id"]: p["source"] for p in r["pass2_call"]["pool"]}
-            graph_delta += sum(
-                1 for c in var_ids if pool_source.get(c) == "graph_hop"
-            ) - sum(1 for c in base_ids if pool_source.get(c) == "graph_hop")
-        stats = gate["cap_stats"][cap]
-        g1 = "PASS" if gate["G1_by_cap"][cap] else "FAIL"
-        g2 = "PASS" if gate["G2_by_cap"][cap] else "FAIL"
-        print(
-            f"  cap={cap}: membership_changed={changed} "
-            f"graph_in_window_delta={graph_delta} "
-            f"gold_rescues={stats['rescues']} gold_evictions={stats['evictions']} "
-            f"net={stats['net']}  G1={g1} G2={g2}"
-        )
-
-    print(
-        f"\nG3 self-validity ({gate['G3_checked_n']} queries checked): "
-        f"{'PASS' if gate['G3_self_validity_ok'] else 'FAIL -> HALT'}"
-    )
-
-    print("\nNamed-gold survival (Q12 / H034 / H066):")
-    for qid in ("Q12", "H034", "H066"):
-        rec = next((r for r in records if r["query_id"] == qid), None)
-        if rec is None or rec.get("cap_simulated") is None:
-            print(f"  {qid}: not found / not usable")
-            continue
-        golds = {row["gold"] for row in rec["rows"]}
-        for cap in SIMULATED_CAPS:
-            in_window = sorted(golds & set(rec["cap_simulated"][cap]))
-            print(f"  {qid} cap={cap}: golds-in-window={in_window or 'none'}")
-
-    print(
-        f"\nChosen caps {gate['chosen_caps']}: "
-        + ", ".join(
-            f"cap={c} {'PASS' if p else 'FAIL'}" for c, p in gate["chosen_pass"].items()
-        )
-    )
-    overall_abort = gate["abort"] or not gate["G3_self_validity_ok"]
-    print(
-        f"\nOVERALL: "
-        f"{'ABORT/HALT' if overall_abort else 'GATE PASSES -- proceed to Phase 2b'}"
-    )
-
-
-def run_replay(
-    json_path: Path, chosen_caps: tuple[int, ...], json_out: Path | None
-) -> int:
-    """``--replay`` mode: read a previously-captured probe JSON
-    (``--json-out`` from a live ``--all`` run) and evaluate the
-    ``graph_hop_window_cap`` gate offline -- no GPU, no live search. Reuses
-    each record's captured Pass-2 pool snapshot (``pass2_call.pool``) and
-    replays it through ``simulate_cap_windows`` (the ACTUAL production
-    statics), so a G3 mismatch can only mean the captured snapshot is stale,
-    never that this function's logic diverged from ``reranking_engine.py``.
-
-    Exit codes: 0 (gate passes on >=1 chosen cap), 1 (no chosen cap clears
-    G1+G2), 3 (G3 self-validity mismatch -- HALT, do not trust G1/G2).
-    """
-    payload = json.loads(json_path.read_text(encoding="utf-8"))
-    records = payload["records"]
-
-    usable = 0
-    for r in records:
-        pc = r.get("pass2_call")
-        pw = r.get("pass2_window")
-        if pc is None or pw is None:
-            r["cap_simulated"] = None
-            r["g3_self_validity"] = None
-            continue
-        usable += 1
-        sim = simulate_cap_windows(
-            pc, pw["top_k_candidates"], pc["hop1_reserved_slots"]
-        )
-        r["cap_simulated"] = sim
-        r["g3_self_validity"] = sim[0] == pw["window_ids"]
-
-    gate = evaluate_cap_gate(records, chosen_caps)
-    print_cap_report(records, gate, usable, len(records))
-
-    if json_out is not None:
-        out_payload = {
-            "source": str(json_path),
-            "n_usable": usable,
-            "n_total": len(records),
-            "simulated_caps": list(SIMULATED_CAPS),
-            "chosen_caps": list(chosen_caps),
-            "gate": gate,
-            "per_query": [
-                {
-                    "query_id": r["query_id"],
-                    "cap_simulated": r["cap_simulated"],
-                    "g3_self_validity": r["g3_self_validity"],
-                }
-                for r in records
-            ],
-        }
-        json_out.write_text(json.dumps(out_payload, indent=2), encoding="utf-8")
-        print(f"\n[JSON] wrote {json_out}")
-
-    if not gate["G3_self_validity_ok"]:
-        print(
-            "\nHALT: self-validity mismatch on cap replay -- G1/G2 cannot be "
-            "trusted until this is fixed."
-        )
-        return 3
-    if gate["abort"]:
-        print("\nVERDICT: ABORT -- no chosen cap clears G1+G2.")
-        return 1
-    print("\nVERDICT: GATE PASSES")
-    return 0
-
-
-def simulate_evidence_band_order(
-    default_pool: dict,
-    evidence_scores: dict[str, float],
-    top_k_candidates: int,
-    hop1_reserved_slots: int,
-) -> tuple[list[str], list[str]]:
-    """Offline counterfactual for reopening direction (a) (docs/plans
-    "Evidence-ordered graph band"): order the ``graph_hop`` band internally
-    by the A1 call-evidence score instead of anchor/BFS insertion order,
-    holding the band boundaries fixed. Returns
-    ``(anchor_window_ids, evidence_window_ids)``.
-
-    The banding split and hop1-reserve promotion still run through the
-    ACTUAL production statics (``RerankingEngine._order_merged_pool`` /
-    ``._apply_hop1_reserve``) - only the graph-band splice itself is a
-    probe-only reimplementation, since ``graph_band_order="evidence"``
-    does not exist in production yet (that is this campaign's Phase 2, only
-    built if this probe's gate passes). If/when it is built,
-    ``_order_merged_pool``'s own "evidence" branch must reproduce this
-    splice exactly - mirror this function's logic there, don't just match
-    its output on this one capture.
-
-    Graph-hop entries are guaranteed contiguous in ``_order_merged_pool``'s
-    banded output (``positive + graph + nonpositive`` concatenation), so a
-    single contiguous-slice search for ``source == "graph_hop"`` is exact,
-    not a heuristic.
-    """
-    from search.reranking_engine import RerankingEngine
-
-    pool_objects = [
-        _SimResult(p["chunk_id"], p["score"], p["source"], p["hop1_rank"])
-        for p in default_pool["pool"]
-    ]
-    ordered = RerankingEngine._order_merged_pool(
-        pool_objects, "score", graph_hop_unscored=True
-    )
-    anchor_final = RerankingEngine._apply_hop1_reserve(
-        ordered, top_k_candidates, hop1_reserved_slots, evict_policy="tail"
-    )
-    anchor_window = [r.chunk_id for r in anchor_final[:top_k_candidates]]
-
-    band_start = next(
-        (i for i, r in enumerate(ordered) if r.source == "graph_hop"), None
-    )
-    if band_start is None:
-        # No graph_hop candidates in this pool at all - evidence ordering
-        # is vacuously identical to anchor ordering.
-        return anchor_window, anchor_window
-
-    band_end = band_start
-    while band_end < len(ordered) and ordered[band_end].source == "graph_hop":
-        band_end += 1
-    band = ordered[band_start:band_end]
-    reordered_band = [
-        r
-        for _, r in sorted(
-            enumerate(band),
-            key=lambda item: (-evidence_scores.get(item[1].chunk_id, 0.0), item[0]),
-        )
-    ]
-    evidence_ordered = ordered[:band_start] + reordered_band + ordered[band_end:]
-    evidence_final = RerankingEngine._apply_hop1_reserve(
-        evidence_ordered, top_k_candidates, hop1_reserved_slots, evict_policy="tail"
-    )
-    evidence_window = [r.chunk_id for r in evidence_final[:top_k_candidates]]
-    return anchor_window, evidence_window
-
-
-def _band_order_gold_net(records: list[dict]) -> tuple[int, int, int]:
-    """Grade-3 gold rescues/evictions moving from each record's anchor
-    (graph band in original insertion order) simulated window to its
-    evidence (graph band ordered by A1 call-evidence score) simulated
-    window, summed over every record with a usable simulation
-    (``record["band_order_simulated"]`` populated by
-    ``run_band_order_replay``). Positive net = evidence ordering nets more
-    gold window-memberships than it costs - feeds gate criterion G1.
-    Mirrors ``_cap_gold_net``'s shape for the ``graph_hop_window_cap``
-    probe."""
-    rescues = 0
-    evictions = 0
-    for r in records:
-        sim = r.get("band_order_simulated")
-        if sim is None:
-            continue
-        base = set(sim["anchor"])
-        variant = set(sim["evidence"])
-        golds = {row["gold"] for row in r["rows"]}
-        rescues += len((variant - base) & golds)
-        evictions += len((base - variant) & golds)
-    return rescues, evictions, rescues - evictions
-
-
-def evaluate_band_order_gate(records: list[dict]) -> dict:
-    """G1/G2/G3 abort-criteria verdicts for the evidence-ordered graph band
-    probe (docs/plans "Evidence-ordered graph band", Phase 1 Gate P1).
-    Structure mirrors ``evaluate_cap_gate()``'s G1/G2/G3 for the
-    ``graph_hop_window_cap`` probe.
-
-    - G1 (headroom): net gold window-membership delta >= 2. Raised from the
-      naive ``> 0`` bar used by earlier probes on this seam: the
-      ``graph_hop_window_cap`` probe's replay gate passed at exactly net +1
-      and its Phase-3 A/B was then rejected - net +1 is a known false
-      positive here.
-    - G2 (retention): no gold in-window under anchor order may leave the
-      window under evidence order - literally ``evictions == 0`` from
-      ``_band_order_gold_net``.
-    - G3 (self-validity): two independent checks, both must hold on every
-      queryable record -
-        (a) anchor-simulated window == the observed production window on
-            the DEFAULT capture (band-replay byte-identity, ADR-0039 -
-            same guarantee ``simulate_cap_windows``'s cap=0 relies on).
-        (b) the observed production window on the DEFAULT capture ==
-            the observed production window on the EVIDENCE capture (the
-            side-channel is inert on live production ordering - confirms
-            ``--force-graph-hop-unscored`` neutralized the real evidence
-            scores' effect on the actually-dispatched search).
-    """
-    rescues, evictions, net = _band_order_gold_net(records)
-    g1_ok = net >= 2
-    g2_ok = evictions == 0
-
-    checked_a = [r for r in records if r.get("self_validity_anchor") is not None]
-    checked_b = [r for r in records if r.get("self_validity_pairing") is not None]
-    g3_a_ok = all(r["self_validity_anchor"] for r in checked_a)
-    g3_b_ok = all(r["self_validity_pairing"] for r in checked_b)
-    g3_ok = g3_a_ok and g3_b_ok
-
-    return {
-        "rescues": rescues,
-        "evictions": evictions,
-        "net": net,
-        "G1_headroom_ok": g1_ok,
-        "G2_retention_ok": g2_ok,
-        "G3_self_validity_anchor_ok": g3_a_ok,
-        "G3_self_validity_anchor_checked_n": len(checked_a),
-        "G3_self_validity_pairing_ok": g3_b_ok,
-        "G3_self_validity_pairing_checked_n": len(checked_b),
-        "G3_self_validity_ok": g3_ok,
-        "abort": (not g3_ok) or (not g1_ok) or (not g2_ok),
-    }
-
-
-def print_band_order_report(
-    records: list[dict], gate: dict, n_usable: int, n_total: int
-) -> None:
-    print("\n" + "=" * 72)
-    print(f"EVIDENCE-ORDERED GRAPH BAND REPLAY (n_usable={n_usable}/{n_total})")
-    print("=" * 72)
-    print(
-        f"  gold_rescues={gate['rescues']} gold_evictions={gate['evictions']} "
-        f"net={gate['net']}  "
-        f"G1(net>=2)={'PASS' if gate['G1_headroom_ok'] else 'FAIL'}  "
-        f"G2(evictions==0)={'PASS' if gate['G2_retention_ok'] else 'FAIL'}"
-    )
-    print(
-        f"\n  G3a self-validity (anchor sim == observed default window, "
-        f"{gate['G3_self_validity_anchor_checked_n']} checked): "
-        f"{'PASS' if gate['G3_self_validity_anchor_ok'] else 'FAIL -> HALT'}"
-    )
-    print(
-        f"  G3b self-validity (default observed == evidence observed "
-        f"window, {gate['G3_self_validity_pairing_checked_n']} checked): "
-        f"{'PASS' if gate['G3_self_validity_pairing_ok'] else 'FAIL -> HALT'}"
-    )
-
-    print("\nNamed-gold rescue detail (Q12 / Q56 / Q72 / Q102 / Q112):")
-    for qid in ("Q12", "Q56", "Q72", "Q102", "Q112"):
-        rec = next((r for r in records if r["query_id"] == qid), None)
-        if rec is None or rec.get("band_order_simulated") is None:
-            print(f"  {qid}: not found / not usable")
-            continue
-        golds = {row["gold"] for row in rec["rows"]}
-        anchor_hit = sorted(golds & set(rec["band_order_simulated"]["anchor"]))
-        evidence_hit = sorted(golds & set(rec["band_order_simulated"]["evidence"]))
-        print(
-            f"  {qid}: anchor golds-in-window={anchor_hit or 'none'}  "
-            f"evidence golds-in-window={evidence_hit or 'none'}"
-        )
-
-    overall_abort = gate["abort"]
-    print(
-        f"\nOVERALL: "
-        f"{'ABORT/HALT' if overall_abort else 'GATE PASSES -- proceed to Phase 2 build'}"
-    )
-
-
-def run_band_order_replay(
-    default_path: Path, evidence_path: Path, json_out: Path | None
-) -> int:
-    """``--band-order-replay DEFAULT_JSON EVIDENCE_JSON`` mode: pair two
-    previously-captured probe JSONs - a default-config run and a run with
-    ``--set graph_enhanced.graph_hop_call_evidence_enabled=true
-    --force-graph-hop-unscored`` - and evaluate the evidence-ordered
-    graph-band gate offline: no GPU, no live search.
-
-    For each query, pulls the real A1 call-evidence scores off the
-    EVIDENCE capture's ``graph_hop`` pool entries, and replays the DEFAULT
-    capture's pool through ``simulate_evidence_band_order`` to compute the
-    anchor and evidence simulated windows via the ACTUAL production
-    ``_order_merged_pool``/``_apply_hop1_reserve`` statics (only the
-    graph-band splice itself is probe-only - see
-    ``simulate_evidence_band_order``'s docstring).
-
-    Exit codes: 0 (G1+G2+G3 all pass), 1 (G1 or G2 fails), 3 (G3
-    self-validity mismatch - HALT, do not trust G1/G2).
-    """
-    default_payload = json.loads(default_path.read_text(encoding="utf-8"))
-    evidence_payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-    default_records = default_payload["records"]
-    evidence_by_id = {r["query_id"]: r for r in evidence_payload["records"]}
-
-    usable = 0
-    for r in default_records:
-        pc = r.get("pass2_call")
-        pw = r.get("pass2_window")
-        ev_r = evidence_by_id.get(r["query_id"])
-        ev_pc = ev_r.get("pass2_call") if ev_r else None
-        ev_pw = ev_r.get("pass2_window") if ev_r else None
-        if pc is None or pw is None or ev_pc is None or ev_pw is None:
-            r["band_order_simulated"] = None
-            r["self_validity_anchor"] = None
-            r["self_validity_pairing"] = None
-            continue
-        usable += 1
-        evidence_scores = {
-            p["chunk_id"]: p["score"]
-            for p in ev_pc["pool"]
-            if p["source"] == "graph_hop"
-        }
-        anchor_window, evidence_window = simulate_evidence_band_order(
-            pc, evidence_scores, pw["top_k_candidates"], pc["hop1_reserved_slots"]
-        )
-        r["band_order_simulated"] = {
-            "anchor": anchor_window,
-            "evidence": evidence_window,
-        }
-        r["self_validity_anchor"] = anchor_window == pw["window_ids"]
-        r["self_validity_pairing"] = pw["window_ids"] == ev_pw["window_ids"]
-
-    gate = evaluate_band_order_gate(default_records)
-    print_band_order_report(default_records, gate, usable, len(default_records))
-
-    if json_out is not None:
-        out_payload = {
-            "default_source": str(default_path),
-            "evidence_source": str(evidence_path),
-            "n_usable": usable,
-            "n_total": len(default_records),
-            "gate": gate,
-            "per_query": [
-                {
-                    "query_id": r["query_id"],
-                    "band_order_simulated": r["band_order_simulated"],
-                    "self_validity_anchor": r["self_validity_anchor"],
-                    "self_validity_pairing": r["self_validity_pairing"],
-                }
-                for r in default_records
-            ],
-        }
-        json_out.write_text(json.dumps(out_payload, indent=2), encoding="utf-8")
-        print(f"\n[JSON] wrote {json_out}")
-
-    if not gate["G3_self_validity_ok"]:
-        print(
-            "\nHALT: self-validity mismatch on band-order replay -- G1/G2 "
-            "cannot be trusted until this is fixed."
-        )
-        return 3
-    if gate["abort"]:
-        print("\nVERDICT: ABORT -- G1 or G2 failed.")
-        return 1
-    print("\nVERDICT: GATE PASSES")
-    return 0
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -1486,16 +641,6 @@ def main() -> int:
     parser.add_argument("--dataset", default="evaluation/golden_dataset_expanded.json")
     parser.add_argument("--project-path", default=".")
     parser.add_argument("--k", type=int, default=10)
-    parser.add_argument(
-        "--hop1-reserved-slots",
-        type=int,
-        default=None,
-        help=(
-            "Override reranker.hop1_reserved_slots in the in-memory config for "
-            "this run (fix verification arm). Default: use config value. "
-            "Sugar for --set reranker.hop1_reserved_slots=<value>."
-        ),
-    )
     parser.add_argument(
         "--set",
         dest="set_overrides",
@@ -1514,86 +659,11 @@ def main() -> int:
         default=None,
         metavar="PATH",
         help=(
-            "Write the full per-query + aggregate predictions/gate payload as JSON "
-            "to PATH (relative paths resolve against the repo root). In --replay "
-            "mode, writes the cap-gate payload instead."
-        ),
-    )
-    parser.add_argument(
-        "--replay",
-        default=None,
-        metavar="JSON",
-        help=(
-            "Offline mode: replay a previously-captured --json-out payload "
-            "through the graph_hop_window_cap gate (no GPU, no live search, "
-            "seconds). Ignores --query-id/--all/--dataset/--project-path/"
-            "--set/--hop1-reserved-slots. See run_replay()."
-        ),
-    )
-    parser.add_argument(
-        "--caps",
-        default="2,3",
-        help=(
-            "Comma-separated chosen caps to gate in --replay mode "
-            "(default: 2,3 -- the pre-registered primary/secondary)."
-        ),
-    )
-    parser.add_argument(
-        "--band-order-replay",
-        nargs=2,
-        default=None,
-        metavar=("DEFAULT_JSON", "EVIDENCE_JSON"),
-        help=(
-            "Offline mode: pair a default-config --json-out capture with a "
-            "--set graph_enhanced.graph_hop_call_evidence_enabled=true "
-            "--force-graph-hop-unscored capture and gate the "
-            "evidence-ordered graph-band lever (no GPU, seconds). Ignores "
-            "--query-id/--all/--dataset/--project-path/--set/"
-            "--hop1-reserved-slots/--replay/--caps. See "
-            "run_band_order_replay()."
-        ),
-    )
-    parser.add_argument(
-        "--force-graph-hop-unscored",
-        action="store_true",
-        help=(
-            "Force graph_hop_unscored=True on every captured "
-            "rerank_by_query call, regardless of what the caller passed. "
-            "No effect under default config (already True). Under "
-            "--set graph_enhanced.graph_hop_call_evidence_enabled=true, "
-            "neutralizes the real evidence scores' effect on live "
-            "production ordering (keeps the ADR-0039 banding path) while "
-            "still capturing the real per-candidate scores in the pool "
-            "snapshot -- the evidence side-channel capture for "
-            "--band-order-replay."
+            "Write the full per-query + aggregate payload as JSON to PATH "
+            "(relative paths resolve against the repo root)."
         ),
     )
     args = parser.parse_args()
-
-    if args.band_order_replay:
-        default_path, evidence_path = (Path(p) for p in args.band_order_replay)
-        if not default_path.is_absolute():
-            default_path = REPO_ROOT / default_path
-        if not evidence_path.is_absolute():
-            evidence_path = REPO_ROOT / evidence_path
-        band_json_out = None
-        if args.json_out:
-            band_json_out = Path(args.json_out)
-            if not band_json_out.is_absolute():
-                band_json_out = REPO_ROOT / band_json_out
-        return run_band_order_replay(default_path, evidence_path, band_json_out)
-
-    if args.replay:
-        replay_path = Path(args.replay)
-        if not replay_path.is_absolute():
-            replay_path = REPO_ROOT / replay_path
-        chosen_caps = tuple(int(c.strip()) for c in args.caps.split(",") if c.strip())
-        replay_json_out = None
-        if args.json_out:
-            replay_json_out = Path(args.json_out)
-            if not replay_json_out.is_absolute():
-                replay_json_out = REPO_ROOT / replay_json_out
-        return run_replay(replay_path, chosen_caps, replay_json_out)
 
     dataset_path = Path(args.dataset)
     if not dataset_path.is_absolute():
@@ -1620,8 +690,6 @@ def main() -> int:
 
     try:
         overrides = parse_set_flags(args.set_overrides)
-        if args.hop1_reserved_slots is not None:
-            overrides["reranker.hop1_reserved_slots"] = args.hop1_reserved_slots
     except ArmOverrideError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
@@ -1643,9 +711,7 @@ def main() -> int:
 
     searcher = get_searcher(project_path=args.project_path)
 
-    instr = Instrumentation(
-        searcher, force_graph_hop_unscored=args.force_graph_hop_unscored
-    )
+    instr = Instrumentation(searcher)
     instr.install()
 
     window_cut_count = 0
@@ -1688,16 +754,15 @@ def main() -> int:
                 channel_hist = channel_histogram(pass2_call, pass2_window)
                 score_rng = score_ranges(pass2_call)
                 simulated = simulate_windows(
-                    pass2_call,
-                    pass2_window["top_k_candidates"],
-                    pass2_call["hop1_reserved_slots"],
+                    pass2_call, pass2_window["top_k_candidates"]
                 )
-                observed_policy = pass2_call["merged_pool_policy"]
-                self_validity = (
-                    simulated.get(observed_policy) == pass2_window["window_ids"]
-                )
-                if not self_validity:
-                    self_validity_failures.append(query_id)
+                # Only a merged-pool (interleave) pass has a simulated counterpart.
+                if pass2_call["interleave"]:
+                    self_validity = (
+                        simulated[OBSERVED_POLICY] == pass2_window["window_ids"]
+                    )
+                    if not self_validity:
+                        self_validity_failures.append(query_id)
 
                 if pass2_call["output_ids"] is not None:
                     pass2_top_ids = set(pass2_call["output_ids"][: args.k])
@@ -1751,9 +816,6 @@ def main() -> int:
     if listwise_invariant["multi_block_query_ids"]:
         print(f"  Multi-block queries: {listwise_invariant['multi_block_query_ids']}")
 
-    predictions = compute_predictions(per_query_records)
-    gate = evaluate_gate(per_query_records, predictions)
-    print_predictions_report(predictions, gate)
     window_membership = summarize_window_membership(per_query_records)
     print_window_membership(window_membership)
 
@@ -1764,8 +826,6 @@ def main() -> int:
         payload = {
             "k": args.k,
             "n_queries": len(items),
-            "predictions": predictions,
-            "gate": gate,
             "listwise_invariant_summary": listwise_invariant,
             "window_membership": window_membership,
             "self_validity_failures": self_validity_failures,
@@ -1782,7 +842,7 @@ def main() -> int:
         )
         print(
             "simulate_windows() diverges from the observed production window -- "
-            "P2/P4/A2 counterfactuals cannot be trusted until this is fixed."
+            "the simulated counterfactuals cannot be trusted until this is fixed."
         )
         return 3
 

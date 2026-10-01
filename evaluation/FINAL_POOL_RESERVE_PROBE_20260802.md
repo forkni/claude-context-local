@@ -1,5 +1,7 @@
 # Final-pool-assembly reserve — membership probe (2026-08-02)
 
+> **Code removed 2026-10-01 (ADR-0079, commit C):** `scripts/benchmark/probe_final_pool_reserve.py` and the `_apply_hop1_reserve` it simulates were deleted with the legacy hop-1 reserve / graph-band / window-cap path. This note is now a record only; recover the code from git history before `refactor(search): delete legacy hop-1 reserve`.
+
 ## Verdict
 
 **Decision gate FAILED — the reserve is NOT built.** It is recorded here as a

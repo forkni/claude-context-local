@@ -1,5 +1,7 @@
 # Duplicate-tree crowding — rerank-window probe (2026-08-17)
 
+> **Code removed 2026-10-01 (ADR-0079, commit C):** `scripts/benchmark/probe_duplicate_crowding.py` and the `_apply_graph_hop_window_cap` it mirrors were deleted with the legacy hop-1 reserve / graph-band / window-cap path. This note is now a record only; recover the code from git history before `refactor(search): delete legacy hop-1 reserve`.
+
 ## Verdict
 
 **Decision gate ABORTED — fold-don't-drop is NOT built.** Three of four

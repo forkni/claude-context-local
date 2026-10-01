@@ -415,7 +415,9 @@ def test_instrument_captures_run_rerank_calls():
     assert record["output_ids"] == ["a.py:function:a"]
 
 
-def test_instrument_captures_hop1_reserved_slots_via_rerank_by_query():
+def test_instrument_classifies_call_with_window_kwarg_as_merged():
+    """The pass-identity discriminator is the presence of ``window=`` (only the
+    multi-hop Pass-2 merged call passes it), not any value the policy carries."""
     searcher, _, _ = _fake_searcher_for_instrument()
     cfg = SearchConfig()
     session = ProbeSession(searcher=searcher, config=cfg, k=10)
@@ -425,38 +427,16 @@ def test_instrument_captures_hop1_reserved_slots_via_rerank_by_query():
         searcher.reranking_engine.rerank_by_query(
             candidates=[candidate],
             k=1,
-            window=RerankWindowPolicy(hop1_reserved_slots=6),
+            window=RerankWindowPolicy.merged_pool(),
         )
 
-    assert calls[0]["hop1_slots"] == 6
-    assert calls[0]["is_merged_pass"] is True
-
-
-def test_instrument_classifies_merged_pass_with_zero_hop1_slots_as_merged():
-    """D3 pin: a Pass-2 (merged-pool) call with hop1_reserved_slots explicitly
-    set to 0 must still classify as a merged pass. The old classifier sniffed
-    hop1_slots > 0, which silently misread this as a tail pass -- the bug
-    the is_merged_pass discriminator (`"window" in kwargs`) exists to fix."""
-    searcher, _, _ = _fake_searcher_for_instrument()
-    cfg = SearchConfig()
-    session = ProbeSession(searcher=searcher, config=cfg, k=10)
-    candidate = SimpleNamespace(chunk_id="a.py:function:a", source=None)
-
-    with session.instrument() as calls:
-        searcher.reranking_engine.rerank_by_query(
-            candidates=[candidate],
-            k=1,
-            window=RerankWindowPolicy(hop1_reserved_slots=0),
-        )
-
-    assert calls[0]["hop1_slots"] == 0
     assert calls[0]["is_merged_pass"] is True
 
 
 def test_instrument_classifies_call_without_window_kwarg_as_not_merged():
     """The other side of the discriminator: a tail-pass call that never
     passes window= at all (production's ego/parent call shape) must not be
-    classified as merged, regardless of the sentinel's own hop1_slots."""
+    classified as merged."""
     searcher, _, _ = _fake_searcher_for_instrument()
     cfg = SearchConfig()
     session = ProbeSession(searcher=searcher, config=cfg, k=10)

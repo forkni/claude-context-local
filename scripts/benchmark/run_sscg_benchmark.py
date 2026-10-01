@@ -205,12 +205,6 @@ _KNOBS: tuple[_Knob, ...] = (
         "Multi-hop expansion factor",
     ),
     _Knob(
-        "hop1_reserved_slots",
-        "reranker.hop1_reserved_slots",
-        "hop1_reserved_slots",
-        "Hop1 reserved rerank-window slots",
-    ),
-    _Knob(
         "query_expansion",
         "query_expansion.enabled",
         "query_expansion",
@@ -710,9 +704,7 @@ class _WindowRecorder:
     query the ego tail pass overwrites the Pass-2 (merged-pool) window this
     metric is about. The recorder snapshots the window after every
     ``rerank_by_query`` call and keeps the first (Pass-2 when multi-hop ran,
-    the only pass otherwise). It also records what ``_apply_hop1_reserve``
-    removed from the pool; the reserve only runs under the legacy policies, so
-    ``evicted_by_reserve`` is ``None`` on a ``gar_interleave`` leg.
+    the only pass otherwise).
     """
 
     def __init__(self) -> None:
@@ -720,20 +712,14 @@ class _WindowRecorder:
 
     def reset(self) -> None:
         self.window_ids: list[str] | None = None
-        self.evicted_by_reserve: list[str] | None = None
 
     def note_window(self, ids: list[str] | None) -> None:
         if self.window_ids is None and ids is not None:
             self.window_ids = list(ids)
 
-    def note_reserve(self, before: list[str], after: list[str]) -> None:
-        kept = set(after)
-        evicted = [cid for cid in before if cid not in kept]
-        self.evicted_by_reserve = (self.evicted_by_reserve or []) + evicted
-
 
 def _instrument_window_membership(searcher: Any) -> _WindowRecorder | None:
-    """Wrap ``rerank_by_query`` and ``_apply_hop1_reserve`` to feed a ``_WindowRecorder``.
+    """Wrap ``rerank_by_query`` to feed a ``_WindowRecorder``.
 
     Idempotent: re-instrumenting the same engine returns the existing recorder.
     """
@@ -745,7 +731,6 @@ def _instrument_window_membership(searcher: Any) -> _WindowRecorder | None:
         return existing
     recorder = _WindowRecorder()
     original_rerank = engine.rerank_by_query
-    original_reserve = engine._apply_hop1_reserve
 
     def _recording_rerank(*args: Any, **kwargs: Any) -> Any:
         # Clear first so a call that never reaches _run_rerank (reranker off)
@@ -756,13 +741,7 @@ def _instrument_window_membership(searcher: Any) -> _WindowRecorder | None:
         finally:
             recorder.note_window(engine.last_window_ids)
 
-    def _recording_reserve(pool: list, *args: Any, **kwargs: Any) -> Any:
-        out = original_reserve(pool, *args, **kwargs)
-        recorder.note_reserve([r.chunk_id for r in pool], [r.chunk_id for r in out])
-        return out
-
     engine.rerank_by_query = _recording_rerank
-    engine._apply_hop1_reserve = _recording_reserve
     engine._sscg_window_recorder = recorder
     return recorder
 
@@ -1405,9 +1384,7 @@ async def run_benchmark(
 
             # Window membership (ADR-0079): was any gold chunk in the window the
             # listwise model actually saw? Unlike pool_hit this is blind to
-            # backfill, and it names the step that throws a gold away -- under
-            # the legacy policies gold_evicted_by_reserve is the hop-1 reserve
-            # dropping a gold from the pool (absent on a gar_interleave leg).
+            # backfill.
             window_metrics: dict[str, Any] = {}
             if window_recorder is not None and window_recorder.window_ids:
                 window_entries = expand_retrieved_with_containment(
@@ -1418,17 +1395,6 @@ async def run_benchmark(
                     "window_size": len(window_entries),
                     "gold_in_window": any(e in window_flat for e in expected),
                 }
-                if window_recorder.evicted_by_reserve is not None:
-                    evicted_flat = flatten_entries(
-                        expand_retrieved_with_containment(
-                            window_recorder.evicted_by_reserve,
-                            expected,
-                            merged_membership or {},
-                        )
-                    )
-                    window_metrics["gold_evicted_by_reserve"] = any(
-                        e in evicted_flat for e in expected
-                    )
 
             # Line-overlap metrics (when line_lookup is available)
             line_metrics: dict[str, float] = {}
@@ -2007,16 +1973,6 @@ def build_parser() -> argparse.ArgumentParser:
             "Override multi_hop.expansion (hop-2 expansion factor, controls "
             "candidate-pool size before the multi-hop rerank cut) for this run. "
             "Default: use config value (0.5)."
-        ),
-    )
-    parser.add_argument(
-        "--hop1-reserved-slots",
-        type=int,
-        help=(
-            "Override reranker.hop1_reserved_slots (promotes up to N "
-            "best-hop1-ranked candidates from outside the multi-hop rerank "
-            "window back into it) for this run. Default: use config value "
-            "(0 = disabled)."
         ),
     )
     parser.add_argument(

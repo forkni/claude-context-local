@@ -514,8 +514,9 @@ def aggregate_metrics(
 
     # Window membership (ADR-0079) — presence-based. gold_in_window answers
     # "was any gold chunk in the window the listwise model actually scored?"
-    # (pool_hit can't: it counts backfilled candidates too). The evicted count
-    # exists only on legacy-policy legs, where the hop-1 reserve can drop a gold.
+    # (pool_hit can't: it counts backfilled candidates too). The evicted count is
+    # read only from pre-ADR-0079 result files, where the since-deleted hop-1
+    # reserve could drop a gold; the harness no longer writes it.
     window_rows = [q for q in per_query if "gold_in_window" in q]
     if window_rows:
         agg["gold_in_window_rate"] = round(

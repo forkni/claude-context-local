@@ -13,13 +13,11 @@ time this test was written:
   ``evaluation.probe_harness.load_golden_queries``.
 
 Both baselines only ever move down, one probe at a time, as Step 5 migrates
-each beachhead probe (``probe_tm2c2_fusion.py``, ``probe_final_pool_reserve.py``,
+each beachhead probe (``probe_tm2c2_fusion.py``,
 ``probe_leg_depth_fusion.py``, ``probe_stable_misses.py``,
 ``probe_context_cost.py``, ``probe_reserve_depth.py``) onto the harness -- see
-MIGRATED_PROBES below, populated as each migration lands. ``probe_duplicate_crowding.py`` is
-explicitly excluded from migration (untracked, actively-changing WIP; "two
-hats" -- see the plan) and must never appear in MIGRATED_PROBES.
-``probe_rerank_window.py`` is a third, out-of-scope instrumentation adapter
+MIGRATED_PROBES below, populated as each migration lands.
+``probe_rerank_window.py`` is an out-of-scope instrumentation adapter
 (``probe_leg_depth_fusion.py``'s ``fidelity_check`` depends on its own,
 richer ``Instrumentation`` API) and also never migrates.
 
@@ -44,12 +42,10 @@ BASELINE_SYS_PATH_BOOTSTRAP_COUNT = 18
 BASELINE_LOCAL_LOAD_QUERIES_COUNT = 1
 
 # Populated one filename at a time as Step 5 lands each migration.
-# probe_duplicate_crowding.py and probe_rerank_window.py never join this set
-# (see module docstring).
+# probe_rerank_window.py never joins this set (see module docstring).
 MIGRATED_PROBES: frozenset[str] = frozenset(
     {
         "probe_tm2c2_fusion.py",
-        "probe_final_pool_reserve.py",
         "probe_leg_depth_fusion.py",
         "probe_stable_misses.py",
         "probe_context_cost.py",
@@ -57,7 +53,7 @@ MIGRATED_PROBES: frozenset[str] = frozenset(
     }
 )
 
-NEVER_MIGRATE = frozenset({"probe_duplicate_crowding.py", "probe_rerank_window.py"})
+NEVER_MIGRATE = frozenset({"probe_rerank_window.py"})
 
 
 def _benchmark_scripts() -> list[Path]:
@@ -123,14 +119,13 @@ def test_migrated_probes_import_probe_harness():
 
 
 def test_never_migrate_probes_are_not_claimed_as_migrated():
-    """Guards the two-hats exclusion: probe_duplicate_crowding.py stays
-    untracked WIP, probe_rerank_window.py stays an out-of-scope third
-    instrumentation adapter -- neither may ever be marked migrated."""
+    """Guards the exclusion: probe_rerank_window.py stays an out-of-scope
+    instrumentation adapter and may never be marked migrated."""
     assert not (MIGRATED_PROBES & NEVER_MIGRATE)
 
 
 def test_never_migrate_probes_still_exist():
-    """If either file is deleted or renamed, the exclusion above is dead --
+    """If the file is deleted or renamed, the exclusion above is dead --
     this must go red so NEVER_MIGRATE gets updated deliberately, not
     silently stop meaning anything."""
     existing = {p.name for p in _benchmark_scripts()}

@@ -13,7 +13,7 @@ from utils.timing import timed
 
 from .chunk_id import dedupe_results
 from .config import get_search_config
-from .rerank_window_policy import GAR_INTERLEAVE_POLICY, RerankWindowPolicy
+from .rerank_window_policy import RerankWindowPolicy
 from .types import ResultSource
 
 
@@ -25,7 +25,6 @@ if TYPE_CHECKING:  # pragma: no mutate
         JinaRerankerV3,
         NeuralReranker,
     )
-    from .reranker import SearchResult
 
 try:
     import torch
@@ -39,11 +38,6 @@ from .neural_reranker import create_reranker
 # RerankWindowPolicy is frozen, so one shared instance is safe as a default —
 # module-level singleton instead of calling .tail() in the signature (B008).
 _TAIL_WINDOW = RerankWindowPolicy.tail()
-
-# merged_pool_policy="channel_priority" tier map for non-hop1 candidates.
-# Tier 0 (hop-1 survivors, metadata["hop1_rank"] is not None) is handled
-# separately in _order_merged_pool since it isn't keyed by `source`.
-_CHANNEL_TIER = {ResultSource.MULTI_HOP: 1, ResultSource.GRAPH_HOP: 2}
 
 
 class RerankingEngine:
@@ -301,77 +295,19 @@ class RerankingEngine:
             return candidates
 
     @staticmethod
-    def _order_merged_pool(
-        results: list, policy: str, graph_hop_unscored: bool = False
-    ) -> list:
-        """Order the merged multi-hop pool before the ``top_k_candidates`` cut.
+    def _order_merged_pool(results: list, interleave: bool) -> list:
+        """Order the pool before the ``top_k_candidates`` cut.
 
-        ``"score"`` (default) is the literal pre-existing behaviour — sort by
-        raw ``.score`` descending — kept as its own branch so the default
-        path is provably byte-identical to before this policy existed. It
-        mixes three incomparable scales (see module docstring context in
-        ``rerank_by_query``'s docstring and ADR-0013); ``"score_reserve_fix"``
-        uses the same sort (the fix lives in ``_apply_hop1_reserve``'s
-        ``evict_policy``, not here). ``"channel_priority"`` replaces the sort
-        with a three-tier ordering that never compares across scales: tier 0
-        = hop-1 survivors (``metadata["hop1_rank"]`` is not None) ordered by
-        that rank ascending; tier 1 = ``source == "multi_hop"`` ordered by
-        score descending; tier 2 = ``source == "graph_hop"`` in stable
-        insertion order; tier 3 = anything else, stable insertion order.
-
-        ``graph_hop_unscored`` (default ``False``, only meaningful for
-        ``"score"``/``"score_reserve_fix"``): the caller's declaration that
-        every ``source == "graph_hop"`` candidate in ``results`` carries
-        ``MultiHopSearcher``'s fabricated placeholder score (literal ``0.0``,
-        never a real relevance signal — see ADR-0039). When ``True``, the
-        sort is replaced by an explicit three-band ordering — signal-positive
-        candidates (score > 0) descending, then every ``graph_hop`` candidate
-        in its original insertion order, then signal-nonpositive candidates
-        (score <= 0) descending — instead of relying on ``0.0``'s incidental
-        position under a plain numeric sort. Measured behaviour-preserving:
-        the two orderings diverge only when a non-graph candidate scores
-        exactly ``0.0`` (0 of 4,129 non-graph pool entries in the
-        `evaluation/probe_rerank_window_20260815.json` capture); the pinned
-        tie rule places such a candidate in the nonpositive band, i.e. after
-        graph. Callers set this from the same config gate that decides
-        whether ``graph_hop`` scores are placeholders
-        (``graph_enhanced.graph_hop_call_evidence_enabled``) — see
-        ``MultiHopSearcher.search``.
+        ``interleave=True`` (MultiHopSearcher's Pass-2, ADR-0079) decides
+        window membership by alternating hop-1 survivors with the expansion
+        frontier (``_gar_interleave``); it never compares a score across
+        channels. ``interleave=False`` (the tail pass, ``single_pass``) sorts
+        by raw ``.score`` descending, which is sound there because every
+        candidate carries a score from one scale.
         """
-        if policy in ("score", "score_reserve_fix"):
-            if not graph_hop_unscored:
-                return sorted(results, key=lambda r: r.score, reverse=True)
-            # Provenance bands: graph_hop carries no real score at all (the
-            # caller has declared its 0.0 is a placeholder), so it is never
-            # compared against a real score — it is ordered by insertion
-            # order between the signal-positive and signal-nonpositive bands.
-            positive, graph, nonpositive = [], [], []
-            for r in results:
-                if r.source == ResultSource.GRAPH_HOP:
-                    graph.append(r)
-                elif r.score > 0:
-                    positive.append(r)
-                else:
-                    nonpositive.append(r)
-            positive.sort(key=lambda r: r.score, reverse=True)
-            nonpositive.sort(key=lambda r: r.score, reverse=True)
-            return positive + graph + nonpositive
-        if policy == "channel_priority":
-
-            def _sort_key(item: "tuple[int, SearchResult]") -> tuple[int, float, int]:
-                index, r = item
-                hop1_rank = r.metadata.get("hop1_rank")
-                if hop1_rank is not None:
-                    return (0, hop1_rank, index)
-                tier = _CHANNEL_TIER.get(r.source, 3)
-                if tier == 1:
-                    return (tier, -r.score, index)
-                return (tier, 0.0, index)
-
-            return [r for _, r in sorted(enumerate(results), key=_sort_key)]
-        if policy == GAR_INTERLEAVE_POLICY:
+        if interleave:
             return RerankingEngine._gar_interleave(results)
-        raise ValueError(f"Unknown merged_pool_policy: {policy!r}")
+        return sorted(results, key=lambda r: r.score, reverse=True)
 
     @staticmethod
     def _gar_interleave(results: list) -> list:
@@ -422,146 +358,6 @@ class RerankingEngine:
                 ordered.append(frontier[i])
         return ordered
 
-    @staticmethod
-    def _apply_graph_hop_window_cap(
-        sorted_results: list, top_k_candidates: int, cap: int
-    ) -> list:
-        """Cap how many ``source == "graph_hop"`` candidates occupy the
-        ``top_k_candidates`` rerank window, without comparing scores across
-        channels.
-
-        Runs after ``_order_merged_pool`` (still under the deployed
-        ``"score"`` policy) and before ``_apply_hop1_reserve``. Every
-        ``graph_hop`` candidate carries the literal score ``0.0``
-        (``MultiHopSearcher``'s graph-expansion branch), and
-        ``_order_merged_pool`` always keeps ``graph_hop`` entries contiguous
-        in their original graph-expansion order — incidentally, via stable
-        sort tie-breaking, when ``graph_hop_unscored=False``; structurally,
-        by explicit banding, when ``True`` (ADR-0039) — so either way the
-        first ``cap`` graph entries encountered here are exactly the first
-        ``cap`` in that order: "first admitted" never depends on a
-        cross-scale score comparison.
-
-        Single stable pass over ``sorted_results``: non-graph candidates are
-        admitted to the window freely; ``graph_hop`` candidates are admitted
-        only while fewer than ``cap`` have been admitted already, after
-        which excess graph candidates are deferred to just below the window
-        (their relative order preserved) so non-graph candidates further
-        back in the pool backfill the freed slots. The unscanned tail is
-        untouched. Output is always a permutation of the input — deferred
-        entries are reinserted immediately after the window, ahead of
-        whatever wasn't scanned.
-
-        No-op (returns ``sorted_results`` unchanged, same object) when
-        ``cap <= 0`` or the pool doesn't exceed ``top_k_candidates`` — the
-        deployed default ``cap=0`` is byte-identical to before this existed.
-        """
-        if cap <= 0 or len(sorted_results) <= top_k_candidates:
-            return sorted_results
-
-        window: list = []
-        deferred: list = []
-        graph_admitted = 0
-        stopped_at = len(sorted_results)
-        for _idx, r in enumerate(sorted_results):
-            if len(window) == top_k_candidates:
-                stopped_at = _idx
-                break
-            if r.source == ResultSource.GRAPH_HOP and graph_admitted >= cap:
-                deferred.append(r)
-            else:
-                if r.source == ResultSource.GRAPH_HOP:
-                    graph_admitted += 1
-                window.append(r)
-
-        return window + deferred + sorted_results[stopped_at:]
-
-    @staticmethod
-    def _apply_hop1_reserve(
-        sorted_results: list,
-        top_k_candidates: int,
-        reserved_slots: int,
-        evict_policy: str = "tail",
-    ) -> list:
-        """Promote hop-1-ranked candidates cut from the rerank window back in.
-
-        Sorting the merged multi-hop pool by ``.score`` (the caller's sort,
-        immediately before this runs) mixes three incomparable scales — hop-1
-        survivors carry an overwritten jina relevance score (~-0.12..+0.22),
-        semantic-expansion candidates carry raw FAISS cosine (~0.5-0.9), and
-        graph-expansion candidates carry literal 0.0. A hop-1 winner can
-        structurally rank below the ``top_k_candidates`` cut on scale alone,
-        never reaching the listwise model at all. This promotes up to
-        ``reserved_slots`` of the best-hop1-ranked candidates from outside the
-        window back into it, evicting an equal number from the window's tail.
-        Intra-window order doesn't matter — the listwise model re-scores the
-        whole window. No-op when the pool doesn't exceed the window or no
-        tail candidate is hop1-tagged.
-
-        Args:
-            evict_policy: ``"tail"`` (default) evicts from the window's
-                score-sorted tail — the pre-existing behaviour. Because the
-                caller's score sort puts every hop-1 survivor below every
-                semantic-expansion candidate (see module context above), the
-                window's tail *is* the hop-1 region: promoting a rank-3..N
-                hop-1 candidate can evict a better-ranked (rank 1-2) one
-                already sitting there. ``"lowest_non_hop1"`` instead evicts
-                the window's lowest-scored entries that are *not*
-                hop1-tagged first, so a hop-1 promotion prefers evicting a
-                non-hop1 incumbent over a hop-1 one; only falls back to
-                evicting hop1 window entries if there aren't enough non-hop1
-                ones to make room (rare: window is almost entirely
-                hop1-tagged). Both policies evict exactly
-                ``min(reserved_slots-worth-of-promotions, len(window))``
-                window entries, so total output length is identical between
-                the two — they differ only in *which* window entries are
-                dropped.
-        """
-        if reserved_slots <= 0 or len(sorted_results) <= top_k_candidates:
-            return sorted_results
-
-        window = sorted_results[:top_k_candidates]
-        tail = sorted_results[top_k_candidates:]
-
-        tail_hop1 = [
-            (r.metadata.get("hop1_rank"), i, r)
-            for i, r in enumerate(tail)
-            if r.metadata.get("hop1_rank") is not None
-        ]
-        if not tail_hop1:
-            return sorted_results
-
-        tail_hop1.sort(key=lambda item: (item[0], item[1]))
-        promote = [r for _, _, r in tail_hop1[:reserved_slots]]
-        promote_ids = {r.chunk_id for r in promote}
-        remaining_tail = [r for r in tail if r.chunk_id not in promote_ids]
-        num_evict = len(promote)
-
-        if evict_policy == "lowest_non_hop1":
-            # window is score-sorted descending; prefer evicting the
-            # lowest-scored entries that aren't hop1-tagged (tail-up), only
-            # falling back to hop1-tagged window entries (also tail-up) if
-            # there aren't enough non-hop1 ones to make room. This keeps the
-            # total eviction count identical to "tail" (min(num_evict,
-            # len(window))) — the two policies differ only in target choice.
-            non_hop1_tail_first = [
-                r for r in reversed(window) if r.metadata.get("hop1_rank") is None
-            ]
-            hop1_tail_first = [
-                r for r in reversed(window) if r.metadata.get("hop1_rank") is not None
-            ]
-            evict_ids = {
-                r.chunk_id for r in (non_hop1_tail_first + hop1_tail_first)[:num_evict]
-            }
-            kept_window = [r for r in window if r.chunk_id not in evict_ids]
-            return kept_window + promote + remaining_tail
-
-        if evict_policy != "tail":
-            raise ValueError(f"Unknown evict_policy: {evict_policy!r}")
-
-        kept_window = window[: max(0, len(window) - num_evict)]
-        return kept_window + promote + remaining_tail
-
     def rerank_by_query(
         self,
         query: str,
@@ -584,12 +380,11 @@ class RerankingEngine:
             window: Which rerank pass this is — see CONTEXT.md's "Rerank
                 pass" glossary entry and ``RerankWindowPolicy``.
                 ``RerankWindowPolicy.tail()`` (default) is the post-expansion
-                pass: no hop-1 reserve, plain score order, real scores —
-                byte-identical to the pre-``RerankWindowPolicy`` defaults.
-                ``RerankWindowPolicy.merged_pool(config)`` is
-                ``MultiHopSearcher``'s Pass-2 over the merged pool; the
-                ego-graph/parent-expansion tail call sites always pass
-                ``tail()``.
+                pass: plain score order, real scores.
+                ``RerankWindowPolicy.merged_pool()`` is ``MultiHopSearcher``'s
+                Pass-2 over the merged pool, with window membership decided by
+                interleave (ADR-0079); the ego-graph/parent-expansion tail
+                call sites always pass ``tail()``.
 
         Returns:
             Top k results sorted by query relevance
@@ -597,37 +392,11 @@ class RerankingEngine:
         if not results:
             return []
 
-        sorted_results = self._order_merged_pool(
-            results, window.merged_pool_policy, window.graph_hop_unscored
-        )
+        sorted_results = self._order_merged_pool(results, window.interleave)
         self.last_candidate_ids = [r.chunk_id for r in sorted_results]
-
-        # The interleave decides window membership itself: the cap would defer
-        # graph_hop entries and the reserve would promote hop-1 ranks from past
-        # the window over its tail, both breaking the 1:1 alternation.
-        gar = window.merged_pool_policy == GAR_INTERLEAVE_POLICY
-
-        if window.graph_hop_window_cap > 0 and not gar:
-            sorted_results = self._apply_graph_hop_window_cap(
-                sorted_results,
-                config.reranker.top_k_candidates,
-                window.graph_hop_window_cap,
-            )
 
         # Neural reranking (Quality First mode) — always re-check config for
         # runtime changes.
-        if window.hop1_reserved_slots > 0 and not gar:
-            evict_policy = (
-                "lowest_non_hop1"
-                if window.merged_pool_policy == "score_reserve_fix"
-                else "tail"
-            )
-            sorted_results = self._apply_hop1_reserve(
-                sorted_results,
-                config.reranker.top_k_candidates,
-                window.hop1_reserved_slots,
-                evict_policy=evict_policy,
-            )
         if sorted_results and self._ensure_reranker("[RERANK]", config=config):
             sorted_results = self._run_rerank(
                 query, sorted_results, k, "[NEURAL_RERANK]", config=config

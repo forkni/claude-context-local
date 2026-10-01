@@ -100,13 +100,10 @@ def executor():
     )
 
 
-def _cfg(
-    top_k_candidates=30, single_pass=False, bm25_reserved_slots=0, hop1_reserved_slots=0
-):
+def _cfg(top_k_candidates=30, single_pass=False, bm25_reserved_slots=0):
     cfg = Mock()
     cfg.reranker.top_k_candidates = top_k_candidates
     cfg.reranker.single_pass = single_pass
-    cfg.reranker.hop1_reserved_slots = hop1_reserved_slots
     cfg.search_mode.bm25_reserved_slots = bm25_reserved_slots
     cfg.search_mode.leg_search_multiplier = 5
     cfg.search_mode.fusion_function = "rrf"
@@ -359,15 +356,14 @@ def test_rerank_slice_caps_at_top_k_candidates():
     assert len(passed_candidates) == 30
 
 
-def test_hop1_reserve_default_zero_is_identical_window():
-    """hop1_reserved_slots=0 (default) must reproduce the exact pre-existing
-    window — no reserve logic runs at all (multi-hop pool flooding fix,
-    docs/adr/0013-hop1-reserve-at-final-pool.md)."""
+def test_tail_window_ignores_hop1_rank_tags():
+    """The tail pass (ego-graph/parent-expansion in HybridSearcher, no window=
+    kwarg) is plain score order and window membership: a low-scored candidate
+    tagged hop1_rank=1 is cut like any other, byte-identical to before ADR-0079
+    (only the Pass-2 merged call interleaves)."""
     engine = RerankingEngine()
     engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
-    cfg = _cfg(top_k_candidates=5, hop1_reserved_slots=0)
-    # 10 candidates: only the top 5 by score should ever reach the reranker,
-    # even though a lower-scored candidate is tagged hop1_rank=1.
+    cfg = _cfg(top_k_candidates=5)
     candidates = [
         SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
         for i in range(10)
@@ -376,86 +372,6 @@ def test_hop1_reserve_default_zero_is_identical_window():
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
         out = engine.rerank_by_query("q", candidates, k=5, config=cfg)
-
-    assert [r.chunk_id for r in out] == ["c0", "c1", "c2", "c3", "c4"]
-
-
-def test_hop1_reserve_promotes_tagged_candidate_into_window():
-    """hop1_reserved_slots > 0 promotes the best-hop1-ranked candidate from
-    outside the top_k_candidates window back into it, evicting the window's
-    worst-scored entry (order otherwise irrelevant — the reranker re-scores
-    the whole window)."""
-    engine = RerankingEngine()
-    engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
-    cfg = _cfg(top_k_candidates=5, hop1_reserved_slots=1)
-    candidates = [
-        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
-        for i in range(10)
-    ]
-    candidates[9].metadata["hop1_rank"] = (
-        1  # score 0.0, would be cut without the reserve
-    )
-
-    with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query(
-            "q",
-            candidates,
-            k=5,
-            config=cfg,
-            window=RerankWindowPolicy(hop1_reserved_slots=1),
-        )
-
-    out_ids = {r.chunk_id for r in out}
-    assert "c9" in out_ids
-    assert "c4" not in out_ids  # evicted to make room
-    assert len(out) == 5
-
-
-def test_hop1_reserve_noop_when_pool_within_window():
-    """No-op when the merged pool doesn't exceed top_k_candidates — nothing
-    to reserve room for."""
-    engine = RerankingEngine()
-    engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
-    cfg = _cfg(top_k_candidates=30, hop1_reserved_slots=3)
-    candidates = [
-        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
-        for i in range(10)
-    ]
-    candidates[9].metadata["hop1_rank"] = 1
-
-    with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query(
-            "q",
-            candidates,
-            k=5,
-            config=cfg,
-            window=RerankWindowPolicy(hop1_reserved_slots=3),
-        )
-
-    assert [r.chunk_id for r in out] == ["c0", "c1", "c2", "c3", "c4"]
-
-
-def test_hop1_reserve_ego_tail_call_site_unaffected():
-    """rerank_by_query's hop1_reserved_slots parameter defaults to 0 — calls
-    that don't pass it explicitly (the ego-graph/parent-expansion tail in
-    HybridSearcher) are byte-identical even when the config value is
-    non-zero, because the config is only read for top_k_candidates unless
-    the caller opts in via the argument."""
-    engine = RerankingEngine()
-    engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
-    # Config has a non-zero knob value, but the caller (simulating the
-    # ego-tail call sites) doesn't pass hop1_reserved_slots.
-    cfg = _cfg(top_k_candidates=5, hop1_reserved_slots=3)
-    candidates = [
-        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
-        for i in range(10)
-    ]
-    candidates[9].metadata["hop1_rank"] = 1
-
-    with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query(
-            "q", candidates, k=5, config=cfg
-        )  # no window kwarg -- default policy is tail()
 
     assert [r.chunk_id for r in out] == ["c0", "c1", "c2", "c3", "c4"]
 
@@ -483,640 +399,82 @@ def test_dedupe_split_blocks_can_return_fewer_than_k():
 
 
 # ---------------------------------------------------------------------------
-# merged_pool_policy: ordering + eviction fix (reranking_engine.py:267-336)
+# Merged-pool window membership (ADR-0079): interleave, not a mixed-scale sort
 #
-# Repairs finding (E) — the merged multi-hop pool's raw-.score sort mixes
-# three incomparable scales (hop-1 jina relevance, semantic-expansion raw
-# FAISS cosine, graph-expansion literal 0.0), so hop1_reserved_slots' blind
-# tail eviction can evict a BETTER-ranked hop-1 survivor to make room for a
-# worse-ranked one. See docs/adr/0013-hop1-reserve-at-final-pool.md and
-# evaluation/POOL_ORDER_AB_20260815.md.
+# The merged multi-hop pool carries three incomparable score scales (hop-1 jina
+# relevance, semantic-expansion raw FAISS cosine, graph-expansion literal 0.0).
+# Sorting them together pushed every hop-1 survivor, rank 1 included, past the
+# window cut. The interleave seats hop-1 survivors and the frontier alternately.
+# See docs/adr/0079-gar-style-rerank-window-membership.md.
 # ---------------------------------------------------------------------------
 
 
-def test_merged_pool_policy_default_is_score():
-    """merged_pool_policy="score" (default) is byte-identical to the
-    pre-existing sort — negatives, ties, and zero scores all sort purely by
-    .score descending, independent of source/metadata. Ties preserve
-    original (stable-sort) order."""
-    engine = RerankingEngine()
-    engine._ensure_reranker = Mock(return_value=False)
-    cfg = _cfg(top_k_candidates=10)
-    candidates = [
-        SearchResult(chunk_id="neg", score=-0.5, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="zero_a", score=0.0, metadata={}, source="graph_hop"),
+def _mixed_scale_pool():
+    """Hop-1 rank 1 has the LOWEST raw score; 12 semantic expansions score 0.9."""
+    hop1 = SearchResult(
+        chunk_id="hop1_a",
+        score=-0.5,
+        metadata={"hop1_rank": 1},
+        source="multi_hop",
+    )
+    frontier = [
         SearchResult(
-            chunk_id="zero_b", score=0.0, metadata={"hop1_rank": 1}, source="unknown"
-        ),
-        SearchResult(chunk_id="hi", score=0.9, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="tie_a", score=0.4, metadata={}, source="graph_hop"),
-        SearchResult(
-            chunk_id="tie_b", score=0.4, metadata={"hop1_rank": 2}, source="unknown"
-        ),
-    ]
-
-    with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query("q", candidates, k=6, config=cfg)
-
-    assert [r.chunk_id for r in out] == [
-        "hi",
-        "tie_a",
-        "tie_b",
-        "zero_a",
-        "zero_b",
-        "neg",
-    ]
-
-
-def test_merged_pool_policy_ego_tail_call_site_unaffected():
-    """rerank_by_query's merged_pool_policy defaults to "score" — calls that
-    don't pass it explicitly (the ego-graph/parent-expansion tail in
-    HybridSearcher) stay on the plain score sort regardless of what
-    config.reranker.merged_pool_policy holds, because the policy is a
-    call-scoped argument, not something read off config internally."""
-    engine = RerankingEngine()
-    engine._ensure_reranker = Mock(return_value=False)
-    cfg = _cfg(top_k_candidates=10)
-    candidates = [
-        SearchResult(chunk_id="hi", score=0.9, metadata={}, source="graph_hop"),
-        SearchResult(
-            chunk_id="hop1_best",
-            score=-0.5,
-            metadata={"hop1_rank": 1},
-            source="unknown",
-        ),
-    ]
-
-    with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query(
-            "q", candidates, k=2, config=cfg
-        )  # no window kwarg -- default policy is tail()
-
-    # Plain score sort — graph_hop's 0.9 beats hop1's -0.5, exactly as
-    # today, regardless of the policy live in config.
-    assert [r.chunk_id for r in out] == ["hi", "hop1_best"]
-
-
-def test_channel_priority_orders_hop1_then_semantic_then_graph():
-    """channel_priority never compares across scales: hop-1 survivors (by
-    hop1_rank ascending) sort ahead of semantic expansion (by score
-    descending), which sorts ahead of graph expansion (insertion order) —
-    even when the hop-1 entries have the lowest raw scores in the fixture."""
-    engine = RerankingEngine()
-    engine._ensure_reranker = Mock(return_value=False)
-    cfg = _cfg(top_k_candidates=10)
-    candidates = [
-        SearchResult(chunk_id="graph_a", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(
-            chunk_id="semantic_hi", score=0.9, metadata={}, source="multi_hop"
-        ),
-        SearchResult(
-            chunk_id="hop1_worst",
-            score=-0.9,
-            metadata={"hop1_rank": 2},
-            source="unknown",
-        ),
-        SearchResult(chunk_id="graph_b", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(
-            chunk_id="semantic_lo", score=0.5, metadata={}, source="multi_hop"
-        ),
-        SearchResult(
-            chunk_id="hop1_best",
-            score=-0.95,
-            metadata={"hop1_rank": 1},
-            source="unknown",
-        ),
-    ]
-
-    with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query(
-            "q",
-            candidates,
-            k=6,
-            config=cfg,
-            window=RerankWindowPolicy(merged_pool_policy="channel_priority"),
-        )
-
-    assert [r.chunk_id for r in out] == [
-        "hop1_best",
-        "hop1_worst",
-        "semantic_hi",
-        "semantic_lo",
-        "graph_a",
-        "graph_b",
-    ]
-
-
-def test_channel_priority_makes_hop1_reserve_inert():
-    """Under channel_priority, all hop-1 candidates already sit in tier 0
-    (ahead of top_k_candidates), so _apply_hop1_reserve's tail scan finds no
-    hop1-tagged tail entries and hits its early return — passing a non-zero
-    hop1_reserved_slots changes nothing versus 0 (retires the analytical
-    confound noted in the plan's Phase 2)."""
-    engine = RerankingEngine()
-    engine._ensure_reranker = Mock(return_value=False)
-    cfg = _cfg(top_k_candidates=3)
-    candidates = [
-        SearchResult(
-            chunk_id=f"hop1_{i}",
-            score=float(i),
-            metadata={"hop1_rank": i},
-            source="unknown",
-        )
-        for i in range(3)
-    ] + [
-        SearchResult(
-            chunk_id=f"semantic_{i}",
-            score=float(9 - i),
-            metadata={},
+            chunk_id=f"s{i}",
+            score=0.9,
+            metadata={"anchor_rank": 1 + i % 3},
             source="multi_hop",
         )
-        for i in range(5)
+        for i in range(12)
     ]
-
-    with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        without_reserve = engine.rerank_by_query(
-            "q",
-            candidates,
-            k=8,
-            config=cfg,
-            window=RerankWindowPolicy(
-                merged_pool_policy="channel_priority", hop1_reserved_slots=0
-            ),
-        )
-        with_reserve = engine.rerank_by_query(
-            "q",
-            candidates,
-            k=8,
-            config=cfg,
-            window=RerankWindowPolicy(
-                merged_pool_policy="channel_priority", hop1_reserved_slots=5
-            ),
-        )
-
-    assert [r.chunk_id for r in without_reserve] == [r.chunk_id for r in with_reserve]
+    return [*frontier, hop1]
 
 
-def test_hop1_reserve_tail_eviction_drops_top_hop1_characterization():
-    """Characterizes finding (E): under the default "score"/"tail" eviction,
-    promoting a worse-ranked hop-1 candidate can evict a BETTER-ranked hop-1
-    candidate already sitting in the window's score-sorted tail — because
-    the score sort puts every hop-1 survivor below every semantic-expansion
-    candidate, the window's tail IS the hop-1 region."""
+def test_plain_score_order_cuts_hop1_rank1_from_a_mixed_scale_window():
+    """Characterization of the pre-ADR-0079 defect, kept as the contrast: under
+    plain score order the lowest-scored hop-1 rank 1 never reaches the window."""
     engine = RerankingEngine()
     engine._ensure_reranker = Mock(return_value=False)
-    cfg = _cfg(top_k_candidates=4, hop1_reserved_slots=1)
-    candidates = [
-        # Window (top 4 by score): 3 semantic winners + hop1 rank-1 (best),
-        # sitting in the window's lowest-scored (tail) slot.
-        SearchResult(chunk_id="semantic_a", score=0.9, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="semantic_b", score=0.8, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="semantic_c", score=0.7, metadata={}, source="multi_hop"),
-        SearchResult(
-            chunk_id="hop1_rank1",
-            score=0.6,
-            metadata={"hop1_rank": 1},
-            source="unknown",
-        ),
-        # Outside the window: a WORSE-ranked hop1 candidate, lower score.
-        SearchResult(
-            chunk_id="hop1_rank2",
-            score=0.1,
-            metadata={"hop1_rank": 2},
-            source="unknown",
-        ),
-    ]
+    cfg = _cfg(top_k_candidates=5)
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query(
+            "q", _mixed_scale_pool(), k=5, config=cfg, window=RerankWindowPolicy.tail()
+        )
+
+    assert "hop1_a" not in {r.chunk_id for r in out}
+
+
+def test_merged_pool_window_always_contains_hop1_rank1():
+    """The same pool under the merged-pool policy: hop-1 rank 1 leads the
+    window, whatever its raw score."""
+    engine = RerankingEngine()
+    engine._ensure_reranker = Mock(return_value=False)
+    cfg = _cfg(top_k_candidates=5)
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
         out = engine.rerank_by_query(
             "q",
-            candidates,
+            _mixed_scale_pool(),
             k=5,
             config=cfg,
-            window=RerankWindowPolicy(hop1_reserved_slots=1),
+            window=RerankWindowPolicy.merged_pool(),
         )
 
-    out_ids = [r.chunk_id for r in out]
-    assert "hop1_rank2" in out_ids  # promoted, as intended
-    assert "hop1_rank1" not in out_ids  # but the BETTER-ranked survivor got evicted
+    assert out[0].chunk_id == "hop1_a"
+    assert len(out) == 5
 
 
-def test_score_reserve_fix_evicts_lowest_non_hop1():
-    """merged_pool_policy="score_reserve_fix" keeps the score sort but fixes
-    finding (E): eviction prefers the window's lowest-scored NON-hop1 entry,
-    so a hop-1 promotion no longer evicts a better-ranked hop-1 incumbent.
-    Also pins the permutation contract via Counter — no items are silently
-    duplicated or dropped beyond the intended eviction."""
-    engine = RerankingEngine()
-    engine._ensure_reranker = Mock(return_value=False)
-    cfg = _cfg(top_k_candidates=4, hop1_reserved_slots=1)
-    candidates = [
-        SearchResult(chunk_id="semantic_a", score=0.9, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="semantic_b", score=0.8, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="semantic_c", score=0.7, metadata={}, source="multi_hop"),
-        SearchResult(
-            chunk_id="hop1_rank1",
-            score=0.6,
-            metadata={"hop1_rank": 1},
-            source="unknown",
-        ),
-        SearchResult(
-            chunk_id="hop1_rank2",
-            score=0.1,
-            metadata={"hop1_rank": 2},
-            source="unknown",
-        ),
+def test_order_merged_pool_without_interleave_is_plain_sorted_by_score():
+    """interleave=False (tail pass, single_pass) sorts purely by score."""
+    pool = [
+        SearchResult(chunk_id="a", score=0.0, metadata={}),
+        SearchResult(chunk_id="b", score=-0.3, metadata={}),
+        SearchResult(chunk_id="c", score=0.7, metadata={}),
     ]
 
-    with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query(
-            "q",
-            candidates,
-            k=5,
-            config=cfg,
-            window=RerankWindowPolicy(
-                hop1_reserved_slots=1, merged_pool_policy="score_reserve_fix"
-            ),
-        )
+    ordered = RerankingEngine._order_merged_pool(pool, False)
 
-    out_ids = [r.chunk_id for r in out]
-    assert "hop1_rank1" in out_ids  # the better-ranked hop1 survivor is kept
-    assert "hop1_rank2" in out_ids  # the promoted candidate is present too
-    assert "semantic_c" not in out_ids  # lowest-scored non-hop1 entry evicted instead
-
-    from collections import Counter
-
-    assert Counter(out_ids) == Counter(
-        ["semantic_a", "semantic_b", "hop1_rank1", "hop1_rank2"]
-    )
-
-
-def test_order_merged_pool_score_returns_plain_sorted_by_score():
-    """_order_merged_pool("score") is the literal pre-existing sort
-    expression — direct unit check independent of rerank_by_query's
-    surrounding config/reranker plumbing."""
-    candidates = [
-        SearchResult(chunk_id="lo", score=-1.0, metadata={}),
-        SearchResult(chunk_id="hi", score=1.0, metadata={}),
-        SearchResult(chunk_id="mid", score=0.0, metadata={}),
-    ]
-
-    out = RerankingEngine._order_merged_pool(candidates, "score")
-
-    assert [r.chunk_id for r in out] == ["hi", "mid", "lo"]
-    assert out == sorted(candidates, key=lambda r: r.score, reverse=True)
-
-
-def test_order_merged_pool_unknown_policy_raises():
-    """Guards against a typo'd --set arm silently no-op'ing on an unknown
-    merged_pool_policy value."""
-    with pytest.raises(ValueError, match="Unknown merged_pool_policy"):
-        RerankingEngine._order_merged_pool([], "bogus")
-
-
-# ---------------------------------------------------------------------------
-# graph_hop_unscored: explicit provenance-banded ordering (ADR-0039). A
-# caller-declared, default-off refinement of the "score"/"score_reserve_fix"
-# branch above — replaces the incidental placement of graph_hop's literal
-# 0.0 placeholder (tied with real 0.0 scores under a plain sort) with an
-# explicit band, without comparing it against a real score. See
-# evaluation/probe_rerank_window_20260815.json (0 of 4,129 non-graph pool
-# entries score exactly 0.0 — the only case where the two orderings diverge).
-# ---------------------------------------------------------------------------
-
-
-def test_order_merged_pool_graph_hop_unscored_bands_by_provenance():
-    """graph_hop_unscored=True: positive-scored descending, then every
-    graph_hop entry in insertion order, then nonpositive-scored descending —
-    and, absent a non-graph exact-0.0 tie, this is byte-identical to the
-    plain score sort."""
-    candidates = [
-        SearchResult(chunk_id="pos_hi", score=0.9, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="pos_lo", score=0.2, metadata={}, source="hybrid"),
-        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="g1", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="neg_hi", score=-0.1, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="neg_lo", score=-0.5, metadata={}, source="multi_hop"),
-    ]
-
-    banded = RerankingEngine._order_merged_pool(
-        candidates, "score", graph_hop_unscored=True
-    )
-    plain = RerankingEngine._order_merged_pool(candidates, "score")
-
-    expected = ["pos_hi", "pos_lo", "g0", "g1", "neg_hi", "neg_lo"]
-    assert [r.chunk_id for r in banded] == expected
-    assert [r.chunk_id for r in plain] == expected
-
-
-def test_order_merged_pool_graph_hop_unscored_divergence_pin():
-    """The one case where banded and plain sort diverge: a non-graph
-    candidate scoring exactly 0.0. Pinned direction — it lands in the
-    nonpositive band, i.e. after every graph_hop entry — even though it
-    appears BEFORE the graph entries in insertion order, which is where a
-    plain stable sort's tie-breaking would keep it."""
-    candidates = [
-        SearchResult(chunk_id="pos", score=0.5, metadata={}, source="multi_hop"),
-        SearchResult(
-            chunk_id="zero_nongraph", score=0.0, metadata={}, source="unknown"
-        ),
-        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="g1", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="neg", score=-0.3, metadata={}, source="multi_hop"),
-    ]
-
-    plain = RerankingEngine._order_merged_pool(candidates, "score")
-    banded = RerankingEngine._order_merged_pool(
-        candidates, "score", graph_hop_unscored=True
-    )
-
-    # Plain: stable-sort tie at 0.0 keeps zero_nongraph's original position
-    # ahead of g0/g1.
-    assert [r.chunk_id for r in plain] == [
-        "pos",
-        "zero_nongraph",
-        "g0",
-        "g1",
-        "neg",
-    ]
-    # Banded: zero_nongraph is not source=="graph_hop", so it is never
-    # placed in the graph band regardless of insertion order.
-    assert [r.chunk_id for r in banded] == [
-        "pos",
-        "g0",
-        "g1",
-        "zero_nongraph",
-        "neg",
-    ]
-
-
-def test_order_merged_pool_graph_hop_unscored_permutation_invariant():
-    """Banding never drops or duplicates entries, and the graph band
-    preserves the original relative order of graph_hop candidates even when
-    interleaved with other sources."""
-    from collections import Counter
-
-    candidates = [
-        SearchResult(chunk_id="s0", score=0.7, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="s1", score=-0.2, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="g1", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="g2", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="s2", score=0.3, metadata={}, source="hybrid"),
-    ]
-
-    out = RerankingEngine._order_merged_pool(
-        candidates, "score", graph_hop_unscored=True
-    )
-
-    assert Counter(r.chunk_id for r in out) == Counter(r.chunk_id for r in candidates)
-    graph_ids = [r.chunk_id for r in out if r.source == "graph_hop"]
-    assert graph_ids == ["g0", "g1", "g2"]
-
-
-def test_order_merged_pool_channel_priority_ignores_graph_hop_unscored():
-    """graph_hop_unscored only affects the "score"/"score_reserve_fix"
-    branch -- channel_priority's output is identical regardless of it."""
-    candidates = [
-        SearchResult(chunk_id="graph_a", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="semantic_a", score=0.6, metadata={}, source="multi_hop"),
-        SearchResult(
-            chunk_id="hop1_a", score=-0.4, metadata={"hop1_rank": 1}, source="unknown"
-        ),
-    ]
-
-    default = RerankingEngine._order_merged_pool(candidates, "channel_priority")
-    with_flag = RerankingEngine._order_merged_pool(
-        candidates, "channel_priority", graph_hop_unscored=True
-    )
-
-    assert [r.chunk_id for r in default] == [r.chunk_id for r in with_flag]
-
-
-def test_graph_hop_unscored_ego_tail_call_site_unaffected():
-    """rerank_by_query's graph_hop_unscored defaults to False -- calls that
-    don't pass it explicitly (the ego-graph/parent-expansion tail in
-    HybridSearcher) stay on the plain score sort even on a pool that WOULD
-    band differently, because Pass-2 survivors reaching that tail under
-    source=="graph_hop" carry real, already-reranked scores, not
-    placeholders."""
-    engine = RerankingEngine()
-    engine._ensure_reranker = Mock(return_value=False)
-    cfg = _cfg(top_k_candidates=10)
-    candidates = [
-        SearchResult(chunk_id="pos", score=0.5, metadata={}, source="multi_hop"),
-        SearchResult(
-            chunk_id="zero_nongraph", score=0.0, metadata={}, source="unknown"
-        ),
-        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="neg", score=-0.3, metadata={}, source="multi_hop"),
-    ]
-
-    with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query(
-            "q", candidates, k=4, config=cfg
-        )  # no window kwarg -- default policy is tail()
-
-    # Plain sort: zero_nongraph keeps its stable-sort tie position ahead of
-    # g0, the opposite of what banding would do.
-    assert [r.chunk_id for r in out] == ["pos", "zero_nongraph", "g0", "neg"]
-
-
-def test_apply_hop1_reserve_unknown_evict_policy_raises():
-    """Guards against a typo'd evict_policy value silently no-op'ing."""
-    candidates = [
-        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
-        for i in range(10)
-    ]
-    candidates[9].metadata["hop1_rank"] = 1
-
-    with pytest.raises(ValueError, match="Unknown evict_policy"):
-        RerankingEngine._apply_hop1_reserve(
-            candidates, top_k_candidates=5, reserved_slots=1, evict_policy="bogus"
-        )
-
-
-# ---------------------------------------------------------------------------
-# graph_hop_window_cap: caps zero-signal graph_hop occupancy in the rerank
-# window (reranking_engine.py:338-390). Reopening direction (b) from
-# evaluation/POOL_ORDER_AB_20260815.md, gated by
-# evaluation/POOL_ORDER_CAP_PROBE_20260815.md — a standalone knob, not a
-# fourth merged_pool_policy choice, since that key is verdict-locked.
-# ---------------------------------------------------------------------------
-
-
-def test_graph_hop_window_cap_zero_is_noop_same_object():
-    """cap<=0 is the deployed default -- must return the identical input
-    object (no copy), same contract as _order_merged_pool's byte-identical
-    "score" path."""
-    candidates = [
-        SearchResult(chunk_id=f"g{i}", score=0.0, metadata={}, source="graph_hop")
-        for i in range(40)
-    ]
-
-    out = RerankingEngine._apply_graph_hop_window_cap(
-        candidates, top_k_candidates=30, cap=0
-    )
-
-    assert out is candidates
-
-
-def test_graph_hop_window_cap_small_pool_is_noop_same_object():
-    """Pool not exceeding top_k_candidates never needs capping -- identical
-    input object returned even with cap>0."""
-    candidates = [
-        SearchResult(chunk_id=f"g{i}", score=0.0, metadata={}, source="graph_hop")
-        for i in range(5)
-    ]
-
-    out = RerankingEngine._apply_graph_hop_window_cap(
-        candidates, top_k_candidates=30, cap=2
-    )
-
-    assert out is candidates
-
-
-def test_graph_hop_window_cap_permutation_invariant():
-    """Output is always a permutation of the input -- nothing silently
-    duplicated or dropped, regardless of channel mix."""
-    from collections import Counter
-
-    candidates = [
-        SearchResult(chunk_id=f"g{i}", score=0.0, metadata={}, source="graph_hop")
-        for i in range(10)
-    ] + [
-        SearchResult(
-            chunk_id=f"s{i}", score=float(10 - i), metadata={}, source="multi_hop"
-        )
-        for i in range(25)
-    ]
-
-    out = RerankingEngine._apply_graph_hop_window_cap(
-        candidates, top_k_candidates=30, cap=3
-    )
-
-    assert len(out) == len(candidates)
-    assert Counter(r.chunk_id for r in out) == Counter(r.chunk_id for r in candidates)
-
-
-def test_graph_hop_window_cap_admits_exactly_cap_and_backfills():
-    """Admits the first `cap` graph_hop entries (insertion order) into the
-    window, defers the rest just below it preserving their relative order,
-    and backfills the freed slots with the next non-graph candidates in
-    scan order -- the unscanned tail is appended last, untouched."""
-    candidates = [
-        SearchResult(chunk_id="s0", score=0.9, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="g1", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="g2", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="s1", score=-0.1, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="g3", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="s2", score=-0.2, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="s3", score=-0.3, metadata={}, source="multi_hop"),
-    ]
-
-    out = RerankingEngine._apply_graph_hop_window_cap(
-        candidates, top_k_candidates=5, cap=2
-    )
-
-    # window (first 5): s0, g0, g1 admitted; g2 deferred so s1, s2 backfill
-    # the freed slot instead. deferred (g2, g3) sits just below the window,
-    # order preserved. Unscanned tail (s3) is appended last.
-    assert [r.chunk_id for r in out] == [
-        "s0",
-        "g0",
-        "g1",
-        "s1",
-        "s2",
-        "g2",
-        "g3",
-        "s3",
-    ]
-
-
-def test_graph_hop_window_cap_degenerate_all_graph_no_backfill_source():
-    """When there's nothing but graph_hop to backfill with, deferred flows
-    straight back into the same positions it vacated -- the cap changes
-    nothing about the effective window content, only confirming it never
-    drops or reorders items when there's no non-graph candidate to promote
-    in its place."""
-    candidates = [
-        SearchResult(chunk_id=f"g{i}", score=0.0, metadata={}, source="graph_hop")
-        for i in range(40)
-    ]
-
-    out = RerankingEngine._apply_graph_hop_window_cap(
-        candidates, top_k_candidates=30, cap=2
-    )
-
-    assert [r.chunk_id for r in out] == [c.chunk_id for c in candidates]
-
-
-def test_graph_hop_window_cap_ego_tail_call_site_unaffected():
-    """rerank_by_query's graph_hop_window_cap defaults to 0 -- calls that
-    don't pass it explicitly (the ego-graph/parent-expansion tail in
-    HybridSearcher) stay on the plain score sort regardless of what
-    config.reranker.graph_hop_window_cap holds, because the cap is a
-    call-scoped argument, not something read off config internally."""
-    engine = RerankingEngine()
-    engine._ensure_reranker = Mock(return_value=False)
-    cfg = _cfg(top_k_candidates=3)
-    candidates = [
-        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="g1", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="g2", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="s0", score=-0.1, metadata={}, source="multi_hop"),
-    ]
-
-    with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query(
-            "q", candidates, k=4, config=cfg
-        )  # no window kwarg -- default policy is tail()
-
-    assert [r.chunk_id for r in out] == ["g0", "g1", "g2", "s0"]
-
-
-def test_graph_hop_window_cap_applied_before_hop1_reserve():
-    """graph_hop_window_cap runs after _order_merged_pool and before
-    hop1_reserved_slots' eviction -- capping graph_hop's window occupancy
-    can keep a candidate the blind tail-eviction reserve would otherwise
-    drop entirely (finding E), by never letting it sit in the pre-reserve
-    window in the first place."""
-    engine = RerankingEngine()
-    engine._ensure_reranker = Mock(return_value=False)
-    cfg = _cfg(top_k_candidates=3, hop1_reserved_slots=1)
-    candidates = [
-        SearchResult(chunk_id="s0", score=0.9, metadata={}, source="multi_hop"),
-        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(chunk_id="g1", score=0.0, metadata={}, source="graph_hop"),
-        SearchResult(
-            chunk_id="hop1_a", score=-0.5, metadata={"hop1_rank": 1}, source="unknown"
-        ),
-    ]
-
-    with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        without_cap = engine.rerank_by_query(
-            "q",
-            candidates,
-            k=4,
-            config=cfg,
-            window=RerankWindowPolicy(hop1_reserved_slots=1),
-        )
-        with_cap = engine.rerank_by_query(
-            "q",
-            candidates,
-            k=4,
-            config=cfg,
-            window=RerankWindowPolicy(hop1_reserved_slots=1, graph_hop_window_cap=1),
-        )
-
-    # Without the cap: window = [s0, g0, g1], hop1_a promotes in via the
-    # blind tail eviction -- g1 is dropped entirely, not merely demoted.
-    assert [r.chunk_id for r in without_cap] == ["s0", "g0", "hop1_a"]
-    # With cap=1: g0 admits, g1 defers and hop1_a backfills the freed slot
-    # during the cap pass itself -- the reserve then finds no hop1-tagged
-    # tail entry left to promote (early return) and g1 survives in the tail.
-    assert [r.chunk_id for r in with_cap] == ["s0", "g0", "hop1_a", "g1"]
+    assert [r.chunk_id for r in ordered] == ["c", "a", "b"]
 
 
 # ---------------------------------------------------------------------------

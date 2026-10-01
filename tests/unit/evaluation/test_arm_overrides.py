@@ -166,7 +166,6 @@ def test_requires_rebuild_true_for_construction_baked_fields(key):
         "reranker.top_k_candidates",
         "search_mode.bm25_reserved_slots",
         "multi_hop.expansion",
-        "reranker.hop1_reserved_slots",
         # bm25_weight/dense_weight are resolved live per search() call
         # (hybrid_searcher.py:731-739), not baked into HybridSearcher at
         # construction - see Phase 2a, ADR-0018 follow-on.

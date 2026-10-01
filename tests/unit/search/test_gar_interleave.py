@@ -1,6 +1,6 @@
-"""Tests for ``merged_pool_policy="gar_interleave"`` and the shared backfill (ADR-0079).
+"""Tests for the merged-pool window interleave and the shared backfill (ADR-0079).
 
-The policy decides rerank-window membership by 1:1 alternation between hop-1
+``RerankWindowPolicy.merged_pool()`` decides rerank-window membership by 1:1 alternation between hop-1
 survivors (by ``hop1_rank``) and the expansion frontier (by ``anchor_rank``, graph
 before semantic inside each anchor) instead of sorting incomparable score scales
 together. ``_run_rerank`` backfills: candidates past the listwise window keep their
@@ -9,7 +9,7 @@ incoming order and are never dropped.
 
 from unittest.mock import Mock, patch
 
-from search.rerank_window_policy import GAR_INTERLEAVE_POLICY, RerankWindowPolicy
+from search.rerank_window_policy import RerankWindowPolicy
 from search.reranker import SearchResult
 from search.reranking_engine import RerankingEngine
 
@@ -48,7 +48,7 @@ def _ids(results: list) -> list[str]:
     return [r.chunk_id for r in results]
 
 
-_GAR = RerankWindowPolicy(merged_pool_policy=GAR_INTERLEAVE_POLICY)
+_GAR = RerankWindowPolicy.merged_pool()
 
 
 class TestGarInterleaveOrder:
@@ -62,7 +62,7 @@ class TestGarInterleaveOrder:
             _hop1(1),
             _hop1(2),
         ]
-        ordered = RerankingEngine._order_merged_pool(pool, GAR_INTERLEAVE_POLICY, False)
+        ordered = RerankingEngine._order_merged_pool(pool, True)
         # Frontier: anchor 1 (graph first), then anchor 2 (graph first).
         assert _ids(ordered) == ["h1", "g1", "h2", "s1", "h3", "g2", "s2"]
 
@@ -73,22 +73,22 @@ class TestGarInterleaveOrder:
             _graph("g_b", 1),
             _semantic("s_a", 1),
         ]
-        ordered = RerankingEngine._order_merged_pool(pool, GAR_INTERLEAVE_POLICY, False)
+        ordered = RerankingEngine._order_merged_pool(pool, True)
         # Per-anchor frontier: g_a, s_a, g_b.
         assert _ids(ordered) == ["h1", "g_a", "s_a", "g_b"]
 
     def test_other_side_fills_when_one_runs_out(self):
         pool = [_hop1(1), _hop1(2)] + [_semantic(f"s{i}", 1) for i in range(4)]
-        ordered = RerankingEngine._order_merged_pool(pool, GAR_INTERLEAVE_POLICY, False)
+        ordered = RerankingEngine._order_merged_pool(pool, True)
         assert _ids(ordered) == ["h1", "s0", "h2", "s1", "s2", "s3"]
 
         pool = [_hop1(i) for i in range(1, 5)] + [_semantic("s0", 1)]
-        ordered = RerankingEngine._order_merged_pool(pool, GAR_INTERLEAVE_POLICY, False)
+        ordered = RerankingEngine._order_merged_pool(pool, True)
         assert _ids(ordered) == ["h1", "s0", "h2", "h3", "h4"]
 
     def test_frontier_without_anchor_sorts_last(self):
         pool = [_hop1(1), _semantic("orphan", None), _semantic("anchored", 9)]
-        ordered = RerankingEngine._order_merged_pool(pool, GAR_INTERLEAVE_POLICY, False)
+        ordered = RerankingEngine._order_merged_pool(pool, True)
         assert _ids(ordered) == ["h1", "anchored", "orphan"]
 
     def test_hop1_is_classified_by_metadata_not_source(self):
@@ -96,7 +96,7 @@ class TestGarInterleaveOrder:
         # semantic expansion; only hop1_rank tells them apart. Raw scores must not
         # matter either.
         pool = [_semantic("s1", 1, score=0.99), _hop1(1, score=-0.5)]
-        ordered = RerankingEngine._order_merged_pool(pool, GAR_INTERLEAVE_POLICY, False)
+        ordered = RerankingEngine._order_merged_pool(pool, True)
         assert _ids(ordered) == ["h1", "s1"]
 
     def test_is_a_permutation(self):
@@ -105,7 +105,7 @@ class TestGarInterleaveOrder:
             + [_graph(f"g{i}", i % 3 + 1) for i in range(6)]
             + [_semantic(f"s{i}", i % 4 + 1) for i in range(9)]
         )
-        ordered = RerankingEngine._order_merged_pool(pool, GAR_INTERLEAVE_POLICY, False)
+        ordered = RerankingEngine._order_merged_pool(pool, True)
         assert sorted(_ids(ordered)) == sorted(_ids(pool))
 
 
@@ -133,31 +133,24 @@ class TestGarWindowMembership:
         assert "h1" in engine.last_window_ids
         assert len(engine.last_window_ids) == 30
 
-    def test_reserve_and_cap_do_not_run(self):
+    def test_interleave_is_not_reshaped_after_ordering(self):
+        """A pool with 20 hop-1 survivors keeps the interleave byte-for-byte:
+        no later step promotes hop-1 ranks 16-20 over the window's tail."""
         engine = RerankingEngine()
         engine._ensure_reranker = Mock(return_value=False)
-        engine._apply_hop1_reserve = Mock(side_effect=AssertionError("reserve ran"))
-        engine._apply_graph_hop_window_cap = Mock(side_effect=AssertionError("cap ran"))
         cfg = _cfg(top_k_candidates=30)
         pool = (
             [_hop1(i) for i in range(1, 21)]
             + [_graph(f"g{i}", i % 10 + 1) for i in range(10)]
             + [_semantic(f"s{i}", i % 10 + 1) for i in range(15)]
         )
-        window = RerankWindowPolicy(
-            merged_pool_policy=GAR_INTERLEAVE_POLICY,
-            hop1_reserved_slots=6,
-            graph_hop_window_cap=3,
-        )
 
         with patch("search.reranking_engine.get_search_config", return_value=cfg):
             out = engine.rerank_by_query(
-                "q", pool, k=len(pool), config=cfg, window=window
+                "q", pool, k=len(pool), config=cfg, window=_GAR
             )
 
-        expected = RerankingEngine._order_merged_pool(
-            pool, GAR_INTERLEAVE_POLICY, False
-        )
+        expected = RerankingEngine._order_merged_pool(pool, True)
         assert _ids(out) == _ids(expected)
 
 
@@ -181,9 +174,7 @@ class TestBackfill:
         with patch("search.reranking_engine.get_search_config", return_value=cfg):
             out = engine.rerank_by_query("q", pool, k=40, config=cfg, window=_GAR)
 
-        expected = RerankingEngine._order_merged_pool(
-            pool, GAR_INTERLEAVE_POLICY, False
-        )
+        expected = RerankingEngine._order_merged_pool(pool, True)
         assert _ids(out) == [
             *reversed(_ids(expected)[:30]),
             *_ids(expected)[30:],
@@ -216,7 +207,5 @@ class TestBackfill:
         with patch("search.reranking_engine.get_search_config", return_value=cfg):
             out = engine.rerank_by_query("q", pool, k=10, config=cfg, window=_GAR)
 
-        expected = RerankingEngine._order_merged_pool(
-            pool, GAR_INTERLEAVE_POLICY, False
-        )
+        expected = RerankingEngine._order_merged_pool(pool, True)
         assert _ids(out) == list(reversed(_ids(expected)))

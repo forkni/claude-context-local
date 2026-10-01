@@ -300,10 +300,8 @@ class MultiHopSearcher:
                 scores = [0.0] * len(pending)
         else:
             # Legacy: no real score assigned here — 0.0 is a placeholder, not
-            # a relevance signal. RerankingEngine._order_merged_pool treats
-            # every source=="graph_hop" candidate in this pool as carrying
-            # this placeholder (graph_hop_unscored=True, ADR-0039) rather
-            # than comparing it against real scores from other channels.
+            # a relevance signal. The Pass-2 window never compares it against
+            # real scores from other channels (ADR-0079 interleave).
             scores = [0.0] * len(pending)
 
         for (neighbor_id, metadata, _anchor), score in zip(
@@ -335,13 +333,10 @@ class MultiHopSearcher:
         """Score graph-hop candidates on their anchor's score scale (A1).
 
         score = min(anchor_score * cosine(query, candidate) + call_evidence,
-        anchor_score) — anchored to the hop-1 scale so the merged pool's
-        raw-score sort in RerankingEngine.rerank_by_query compares like with
-        like, and capped so a candidate never outranks its own anchor. This
-        anchoring only matters under merged_pool_policy="score" (or
-        "score_reserve_fix", same sort) — "channel_priority" ignores raw
-        score for graph_hop placement entirely (stable insertion order
-        within its own tier), so this scoring's benefit is inert there.
+        anchor_score) — anchored to the hop-1 scale and capped so a candidate
+        never outranks its own anchor. The Pass-2 window interleave
+        (ADR-0079) ignores raw score for graph_hop placement, so this
+        scoring only matters to the ``single_pass`` score sort.
         call_evidence = lambda_weight * log2(1 + distinct reference_ids the
         candidate shares a calls-edge with); see
         GraphQueryEngine.score_call_evidence for the query-conditioning
@@ -600,10 +595,9 @@ class MultiHopSearcher:
             f"({timings['hop_1'] * 1000:.1f}ms)"
         )
 
-        # Tag hop-1 provenance so a downstream rerank-window reserve
-        # (RerankingEngine.rerank_by_query, hop1_reserved_slots) can promote
-        # these candidates back in if the merged pool's score-scale sort
-        # pushes them out of the top_k_candidates cut.
+        # Tag hop-1 provenance: the Pass-2 window interleave
+        # (RerankingEngine._gar_interleave) tells hop-1 survivors apart from
+        # the expansion frontier by this rank, not by `source`.
         for i, r in enumerate(initial_results):
             r.metadata["hop1_rank"] = i + 1
 
@@ -668,21 +662,12 @@ class MultiHopSearcher:
         rerank_start = time.time()
         merged_results = list(all_results.values())
 
-        # This pool's graph_hop candidates carry MultiHopSearcher's own
-        # fabricated placeholder score (see _graph_expand) unless the A1
-        # call-evidence scorer is on and produced real anchor-conditioned
-        # scores — same gate _graph_expand itself reads (ADR-0039).
-        # RerankWindowPolicy.merged_pool() derives this from `config`; both
-        # branches below need the same value, so it's read off the policy
-        # once rather than recomputed.
-        window = RerankWindowPolicy.merged_pool(config)
-
         if config.reranker.single_pass:
             # Q3 single-pass: defer neural reranking to the one listwise pass
             # at the tail of HybridSearcher.search(); keep fusion/expansion
             # score order so ego expansion still seeds from this top-k.
             merged_results = RerankingEngine._order_merged_pool(
-                merged_results, "score", window.graph_hop_unscored
+                merged_results, interleave=False
             )
             final_results = merged_results[:k]
         else:
@@ -691,7 +676,7 @@ class MultiHopSearcher:
                 results=merged_results,
                 k=k,
                 config=config,
-                window=window,
+                window=RerankWindowPolicy.merged_pool(),
             )
 
         timings["rerank"] = time.time() - rerank_start

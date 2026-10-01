@@ -128,7 +128,7 @@ class QueryCapture:
 class Instrumentation:
     """Class-level patch-and-restore layer over the five ego-membership gate
     call sites, following this repo's blessed pattern
-    (`scripts/benchmark/probe_duplicate_crowding.py`'s `Instrumentation`):
+    (`scripts/benchmark/probe_rerank_window.py`'s `Instrumentation`):
     save originals, patch the class, restore in `uninstall()`. Records
     chunk-id strings only -- never live `SearchResult` objects, since
     `_apply_ego_graph_expansion` and the reranker both mutate `.score` in

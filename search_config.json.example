@@ -80,9 +80,6 @@
     "listwise_doc_max_chars": 1000,
     "listwise_dtype": "auto",
     "doc_representation_mode": "full",
-    "hop1_reserved_slots": 6,
-    "merged_pool_policy": "gar_interleave",
-    "graph_hop_window_cap": 0,
     "listwise_packed_token_budget": 8192,
     "listwise_window_fit": "truncate"
   },

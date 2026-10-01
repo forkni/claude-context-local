@@ -735,7 +735,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (17 fields)."""
+    """Neural reranker settings (14 fields)."""
 
     enabled: bool = field(
         default=True,  # Enabled by default (Quality First)
@@ -804,10 +804,9 @@ class RerankerConfig:
         # passes; run ONE listwise pass over the final merged pool (hop-1 + multi-hop
         # + ego expansion) at the tail of HybridSearcher.search(). Trade-off: multi-hop
         # expansion seeds degrade from neural-reranked to RRF-fusion order, and the
-        # merged-pool window shaping (`merged_pool_policy`, `graph_hop_window_cap`,
-        # `hop1_reserved_slots`) is skipped: the pool is ordered by plain score and
-        # truncated to k (MultiHopSearcher.search, pinned by
-        # test_search_multi_hop_single_pass_ignores_window_shaping).
+        # merged-pool window interleave (ADR-0079) is skipped: the pool is
+        # ordered by plain score and truncated to k (MultiHopSearcher.search,
+        # pinned by test_search_multi_hop_single_pass_ignores_window_shaping).
         metadata=spec(
             flat_alias="reranker_single_pass",
             env="CLAUDE_RERANKER_SINGLE_PASS",
@@ -898,110 +897,6 @@ class RerankerConfig:
     # --reranker-sweep mode iterates configs within ONE process and
     # _ensure_reranker() reloads only on model_name change — a mode-only
     # change between sweep entries silently no-ops; use one process per arm.
-    hop1_reserved_slots: int = field(
-        default=6,  # Reserve up to N hop-1-ranked candidates into
-        # the multi-hop rerank window (rerank_by_query) when hop-2 expansion pushes
-        # them out via score-scale incomparability at the top_k_candidates cut
-        # (hop-1 jina scores vs. raw cosine/0.0 expansion scores sorted together).
-        # 6 chosen by A/B sweep (N=5,6,8,9,10 probed; N>=8 starts evicting other
-        # golds' window slots as collateral damage; N=10 aggregate-regressed MRR
-        # on the 96q set). N=6: MRR flat within +/-0.02 noise on 96q and 63q,
-        # recall@20/recall@50/pool_hit_rate all positive on both, no latency cost.
-        # 0 disables (byte-identical to pre-fix behaviour). See
-        # docs/adr/0013-hop1-reserve-at-final-pool.md. NOTE: under the tail
-        # eviction this reserve has always used, promoting a rank-3..N hop-1
-        # candidate can evict a *better*-ranked (rank 1-2) hop-1 candidate
-        # already sitting in the window's score-sorted tail — see
-        # merged_pool_policy's "score_reserve_fix" evict_policy below, which
-        # targets this specific defect.
-        metadata=spec(
-            flat_alias="reranker_hop1_reserved_slots",
-            env="CLAUDE_RERANKER_HOP1_RESERVED_SLOTS",
-            reader="search/rerank_window_policy.py",
-            benchmark_locked="ADR-0013",
-        ),
-    )
-    merged_pool_policy: str = field(
-        default="gar_interleave",  # How RerankingEngine.rerank_by_query orders
-        # the merged multi-hop pool before the top_k_candidates cut. Default
-        # flipped from "score" to "gar_interleave" once its A/B passed
-        # (evaluation/GAR_WINDOW_AB_20261001.md, ADR-0079). "score"
-        # (legacy) sorts by raw .score across three
-        # incommensurable scales -- hop-1 survivors carry an overwritten jina
-        # relevance score (~-0.12..+0.22), semantic-expansion candidates carry
-        # raw FAISS cosine (~0.5-0.9), graph-expansion candidates carry a
-        # fabricated literal 0.0 (never a real relevance signal). Measured
-        # over the 124-query capture (evaluation/probe_rerank_window_20260815
-        # .json): every graph-expansion candidate's score is exactly 0.0 and
-        # no non-graph candidate's is, so the stable sort places all graph
-        # candidates in a single contiguous band between the signal-positive
-        # and signal-negative candidates -- it does not, contrary to an
-        # earlier version of this comment, make graph candidates structurally
-        # outrank every hop-1 winner (see docs/adr/0013-hop1-reserve-at-final
-        # -pool.md, evaluation/POOL_ORDER_AB_20260815.md, and
-        # docs/adr/0039-merged-pool-provenance-bands.md, which replaces the
-        # incidental band with an explicit one under a caller-declared flag).
-        # "score_reserve_fix" keeps the score sort but changes
-        # hop1_reserved_slots' eviction target from the
-        # window's blind score-sorted tail to the lowest-scored non-hop1
-        # entries, so promoting a hop-1 candidate can no longer evict a
-        # better-ranked one. "channel_priority" replaces the sort entirely
-        # with a three-tier ordering (hop-1 by hop1_rank asc, then
-        # source=="multi_hop" by score desc, then source=="graph_hop" by
-        # insertion order) that never compares across scales; under this
-        # policy hop1_reserved_slots is provably inert (all hop-1 candidates
-        # already sit in tier 0). "gar_interleave" (ADR-0079) alternates 1:1
-        # between hop-1 survivors (by hop1_rank) and the expansion frontier
-        # (by anchor_rank, graph/semantic alternating inside an anchor), never
-        # comparing scores across channels; it bypasses hop1_reserved_slots
-        # and graph_hop_window_cap, and candidates past the window are
-        # backfilled, not dropped. Only MultiHopSearcher's Pass-2 rerank call
-        # reads this; the ego-graph/parent-expansion tail rerank calls
-        # (hybrid_searcher.py's two rerank_by_query call sites) don't pass it
-        # and always take the "score" default. Not construction_baked -- live
-        # per call, valid as a --set arm with no searcher rebuild required.
-        metadata=spec(
-            choices=(
-                "score",
-                "score_reserve_fix",
-                "channel_priority",
-                "gar_interleave",
-            ),
-            flat_alias="reranker_merged_pool_policy",
-            reader="search/rerank_window_policy.py",
-            benchmark_locked=(
-                "POOL_ORDER_AB_20260815: channel_priority breaches 63q MRR/recall@5 "
-                "guard-rail; score_reserve_fix never clears the recall CI upside bar"
-            ),
-        ),
-    )
-    graph_hop_window_cap: int = field(
-        default=0,  # Cap how many source=="graph_hop" candidates occupy the
-        # top_k_candidates rerank window (RerankingEngine._apply_graph_hop_window_cap),
-        # applied after _order_merged_pool's sort and before hop1_reserved_slots'
-        # eviction. 0 disables (byte-identical -- the static returns the input
-        # object unchanged). Every graph_hop candidate carries a literal 0.0
-        # score, so "first N admitted" == insertion order -- the cap never
-        # compares scores across channels, unlike merged_pool_policy's
-        # "channel_priority" (rejected, evaluation/POOL_ORDER_AB_20260815.md).
-        # Standalone knob, not a merged_pool_policy choice, since that key is
-        # benchmark_locked. Offline replay
-        # probe (evaluation/POOL_ORDER_CAP_PROBE_20260815.md) gated cap=2/3 for
-        # the Phase 3 A/B before this field existed. Only MultiHopSearcher's
-        # Pass-2 rerank call reads this; hybrid_searcher.py's tail rerank calls
-        # don't pass it and always take the 0 default.
-        metadata=spec(
-            range=(0, 30),
-            flat_alias="reranker_graph_hop_window_cap",
-            env="CLAUDE_RERANKER_GRAPH_HOP_WINDOW_CAP",
-            reader="search/rerank_window_policy.py",
-            benchmark_locked=(
-                "POOL_ORDER_CAP_AB_20260815: neither cap=2 nor cap=3 clears the "
-                "133q recall@10/recall@20 upside CI (both include zero, both point "
-                "estimates negative)"
-            ),
-        ),
-    )
     listwise_packed_token_budget: int = field(
         default=8192,  # Ceiling on one Jina listwise block's packed prompt
         # length (query + preamble + all documents in that block). Peak

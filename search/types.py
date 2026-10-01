@@ -122,11 +122,10 @@ class ResultSource(StrEnum):
 # graph_hop is deliberately excluded even though it also stamps 0.0 on some
 # candidates (MultiHopSearcher._score_graph_hop_candidates): whether a given
 # graph_hop result is scored is conditional per query on
-# SearchConfig.graph_enhanced.graph_hop_call_evidence_enabled (ADR-0039), not
-# a static property of the source tag. That per-call distinction is carried
-# by RerankWindowPolicy.graph_hop_unscored, a caller-declared flag -- adding
-# "graph_hop" here unconditionally would mislabel every scored graph_hop
-# result as unscored whenever call-evidence scoring is on.
+# SearchConfig.graph_enhanced.graph_hop_call_evidence_enabled, not a static
+# property of the source tag -- adding "graph_hop" here unconditionally would
+# mislabel every scored graph_hop result as unscored whenever call-evidence
+# scoring is on.
 UNSCORED_SOURCES: frozenset[str] = frozenset({ResultSource.PARENT_EXPANSION})
 
 
