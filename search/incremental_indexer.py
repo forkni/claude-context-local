@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.python_ast_chunker import CodeChunk
+from embeddings.chunk_cache import PassKind
 from embeddings.embedder import CodeEmbedder
 from merkle.change_detector import ChangeDetector, FileChanges
 from merkle.merkle_dag import MerkleDAG
@@ -1197,12 +1198,14 @@ class IncrementalIndexer:
             # Let embed failures propagate — the caller's except routes to
             # _attempt_recovery, preventing a silent snapshot advance over
             # chunks that were removed but never re-embedded (#1).
-            # cache_full_pass=False: this run's live_keys only covers the
+            # PassKind.INCREMENTAL: this run's live_keys only covers the
             # handful of chunks that changed, never the whole project — see
             # ChunkEmbeddingCache._evict for why a full-pass cap here would
             # wrongly collapse a cache built by prior full indexes.
             all_embedding_results = self._index_write_stage.embed_and_attach_metadata(
-                chunks_to_embed, project_name, cache_full_pass=False
+                chunks_to_embed,
+                project_name,
+                pass_kind=PassKind.INCREMENTAL,
             )
 
         # Add all embeddings to index at once, through the shared write seam.

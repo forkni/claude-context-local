@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from chunking.language_registry import td_network_indexing_enabled
 from chunking.python_ast_chunker import CodeChunk
-from embeddings.chunk_cache import ChunkEmbeddingCache, resolve_chunk_cache
+from embeddings.chunk_cache import ChunkEmbeddingCache, PassKind, resolve_chunk_cache
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
 
@@ -144,7 +144,7 @@ class IndexWriteStage:
             try:
                 logger.info(f"Starting embedding for {len(all_chunks)} chunks")
                 all_embedding_results = self.embed_and_attach_metadata(
-                    all_chunks, project_name
+                    all_chunks, project_name, pass_kind=PassKind.FULL
                 )
                 logger.info(
                     f"Successfully embedded {len(all_embedding_results)} chunks"
@@ -210,7 +210,10 @@ class IndexWriteStage:
 
         Owns the single ``add_embeddings`` write for both index passes: the
         full path (:meth:`run`) and the incremental path
-        (``IncrementalIndexer._add_new_chunks``). The empty-input warning is
+        (``IncrementalIndexer._add_new_chunks``). The single call is
+        load-bearing on a fresh index: ``CodeIndexManager`` sizes the flat/IVF
+        kind from the first batch it receives, so a force reindex must hand
+        over every vector here at once. The empty-input warning is
         full-path semantics — an incremental pass with nothing new to add
         guards at the call site instead of calling this with an empty list.
 
@@ -303,7 +306,7 @@ class IndexWriteStage:
         chunks: list[CodeChunk],
         project_name: str,
         *,
-        cache_full_pass: bool = True,
+        pass_kind: PassKind,
     ) -> list[Any]:
         """Batch-embed chunks and attach project_name/content to each result's metadata.
 
@@ -317,7 +320,7 @@ class IndexWriteStage:
         embedding_results = self._embedder.embed_chunks(
             chunks,
             cache=self._resolve_chunk_cache(),
-            cache_full_pass=cache_full_pass,
+            pass_kind=pass_kind,
         )
         # strict=True: embed_chunks guarantees a 1:1, order-preserved result
         # per input chunk (see embedder.py's un-permute step). A length

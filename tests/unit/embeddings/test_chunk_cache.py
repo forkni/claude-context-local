@@ -3,7 +3,7 @@
 import numpy as np
 
 from embeddings import chunk_cache as chunk_cache_module
-from embeddings.chunk_cache import ChunkEmbeddingCache
+from embeddings.chunk_cache import ChunkEmbeddingCache, PassKind
 
 
 _PROV = "v1|device=cpu|dtype=fp32|backend=pytorch"
@@ -46,7 +46,7 @@ class TestSaveLoadRoundTrip:
         }
         for key, vec in vectors.items():
             cache.put(key, vec)
-        cache.save(set(vectors.keys()))
+        cache.save(set(vectors.keys()), pass_kind=PassKind.FULL)
 
         reloaded = ChunkEmbeddingCache(
             cache_path, model_name="BAAI/bge-m3", dimension=4, provenance=_PROV
@@ -71,7 +71,7 @@ class TestSaveLoadRoundTrip:
             cache_path, model_name="model-a", dimension=4, provenance=_PROV
         )
         cache.put(key, _vec(4, 1.0))
-        cache.save({key})
+        cache.save({key}, pass_kind=PassKind.FULL)
 
         reloaded = ChunkEmbeddingCache(
             cache_path, model_name="model-b", dimension=4, provenance=_PROV
@@ -85,7 +85,7 @@ class TestSaveLoadRoundTrip:
             cache_path, model_name="BAAI/bge-m3", dimension=4, provenance=_PROV
         )
         cache.put(key, _vec(4, 1.0))
-        cache.save({key})
+        cache.save({key}, pass_kind=PassKind.FULL)
 
         reloaded = ChunkEmbeddingCache(
             cache_path, model_name="BAAI/bge-m3", dimension=8, provenance=_PROV
@@ -109,7 +109,7 @@ class TestSaveLoadRoundTrip:
             cache_path, model_name="BAAI/bge-m3", dimension=4, provenance=_PROV
         )
         good.put(key, _vec(4, 1.0))
-        good.save({key})
+        good.save({key}, pass_kind=PassKind.FULL)
 
         # Truncate the saved file mid-record.
         data = cache_path.read_bytes()
@@ -131,7 +131,7 @@ class TestSaveLoadRoundTrip:
             cache_path, model_name="BAAI/bge-m3", dimension=4, provenance=_PROV
         )
         cache.put("k" * 32, _vec(4, 1.0))
-        cache.save({"k" * 32})  # must not raise
+        cache.save({"k" * 32}, pass_kind=PassKind.FULL)  # must not raise
 
 
 class TestProvenance:
@@ -144,7 +144,7 @@ class TestProvenance:
             cache_path, model_name="BAAI/bge-m3", dimension=4, provenance=_PROV
         )
         cache.put(key, _vec(4, 1.0))
-        cache.save({key})
+        cache.save({key}, pass_kind=PassKind.FULL)
 
         reloaded = ChunkEmbeddingCache(
             cache_path,
@@ -191,7 +191,7 @@ class TestEviction:
         # live_keys includes all 3, exceeding the cap of 2 -> cap is exceeded
         # rather than dropping a live key.
         live_keys = {"a" * 32, "b" * 32, "c" * 32}
-        cache.save(live_keys)
+        cache.save(live_keys, pass_kind=PassKind.FULL)
 
         reloaded = ChunkEmbeddingCache(
             cache_path,
@@ -217,7 +217,7 @@ class TestEviction:
         cache.put("a" * 32, _vec(4, 1.0))
         cache.put("b" * 32, _vec(4, 2.0))
         cache.put("c" * 32, _vec(4, 3.0))
-        cache.save({"c" * 32})
+        cache.save({"c" * 32}, pass_kind=PassKind.FULL)
 
         assert cache.get_stats()["cache_size"] <= 2
         reloaded = ChunkEmbeddingCache(
@@ -250,7 +250,7 @@ class TestAutoEvictionCap:
         for i in range(10):
             cache.put(f"{i:032d}", _vec(4, float(i)))
         # 1 live key -> 2x-live (2) is below the floor (5).
-        cache.save({f"{0:032d}"})
+        cache.save({f"{0:032d}"}, pass_kind=PassKind.FULL)
         assert cache.get_stats()["cache_size"] == 5
 
     def test_scales_with_live_keys_above_floor(self, tmp_path, monkeypatch):
@@ -264,7 +264,7 @@ class TestAutoEvictionCap:
             cache.put(f"{i:032d}", _vec(4, float(i)))
         live = {f"{i:032d}" for i in range(8)}
         # 2x-live (16) dominates the floor (2).
-        cache.save(live)
+        cache.save(live, pass_kind=PassKind.FULL)
         assert cache.get_stats()["cache_size"] == 16
 
     def test_byte_clamp_binds_below_the_floor(self, tmp_path, monkeypatch):
@@ -281,12 +281,12 @@ class TestAutoEvictionCap:
         live = {f"{i:032d}" for i in range(10)}
         # The clamp is max(live_count, byte_budget) = max(10, 5) = 10, well
         # under max(2*live, floor) = 2000 -- live keys never get evicted.
-        cache.save(live)
+        cache.save(live, pass_kind=PassKind.FULL)
         assert cache.get_stats()["cache_size"] == 10
 
 
 class TestFullPassFlag:
-    """save(..., full_pass=False) must not apply the entries-based cap that is
+    """save(..., pass_kind=PassKind.INCREMENTAL) must not apply the entries-based cap that is
     only sound when live_keys is the whole project's authoritative set (a
     full index) -- see _evict's docstring. A partial pass (incremental
     update, community-summary refresh) touches only a handful of chunks, and
@@ -294,12 +294,12 @@ class TestFullPassFlag:
     built by prior full passes down to roughly twice that handful.
     """
 
-    def test_partial_pass_preserves_cache_full_pass_would_shrink(
+    def test_partial_pass_preserves_cache_pass_kind_would_shrink(
         self, tmp_path, monkeypatch
     ):
         monkeypatch.setattr(chunk_cache_module, "_AUTO_MIN_ENTRIES", 10)
         # record_bytes = 16 + 4*4 = 32; size the byte ceiling to exactly fit
-        # the pre-populated 50-entry cache, so a full_pass=False save is a no-op.
+        # the pre-populated 50-entry cache, so a pass_kind=PassKind.INCREMENTAL save is a no-op.
         monkeypatch.setattr(chunk_cache_module, "_AUTO_MAX_BYTES", 50 * 32)
         cache_path = tmp_path / "chunk_embeddings.bin"
         cache = ChunkEmbeddingCache(
@@ -311,10 +311,10 @@ class TestFullPassFlag:
         # handful of chunks out of a much larger, previously-built cache.
         live = {f"{0:032d}", f"{1:032d}"}
 
-        cache.save(live, full_pass=False)
+        cache.save(live, pass_kind=PassKind.INCREMENTAL)
         assert cache.get_stats()["cache_size"] == 50  # byte cap only -> untouched
 
-    def test_full_pass_with_same_live_keys_shrinks_to_entries_cap(
+    def test_pass_kind_with_same_live_keys_shrinks_to_entries_cap(
         self, tmp_path, monkeypatch
     ):
         monkeypatch.setattr(chunk_cache_module, "_AUTO_MIN_ENTRIES", 10)
@@ -327,16 +327,16 @@ class TestFullPassFlag:
             cache.put(f"{i:032d}", _vec(4, float(i)))
         live = {f"{0:032d}", f"{1:032d}"}
 
-        # Default full_pass=True applies the entries-based cap -- correct
+        # Default pass_kind=PassKind.FULL applies the entries-based cap -- correct
         # only when live_keys really is the whole project, which the same
         # 2-key live set here is not; contrast with the partial-pass test above.
-        cache.save(live, full_pass=True)
+        cache.save(live, pass_kind=PassKind.FULL)
         assert cache.get_stats()["cache_size"] == 10  # min(max(2*2, floor=10), 50)
 
     def test_partial_pass_byte_cap_floored_at_loaded_size(self, tmp_path, monkeypatch):
         """Regression guard: a project big enough to hit the 32 MiB byte cap
         (e.g. 23,748 chunks at 1024d -> 8160-entry cap) must not have an
-        incremental (full_pass=False) run collapse its cache down to that
+        incremental (pass_kind=PassKind.INCREMENTAL) run collapse its cache down to that
         cap. The cap only bounds *growth* beyond what was already on disk at
         load time -- it must never evict entries the last full pass wrote.
         """
@@ -348,7 +348,7 @@ class TestFullPassFlag:
         for i in range(50):
             cache.put(f"{i:032d}", _vec(4, float(i)))
         all_keys = {f"{i:032d}" for i in range(50)}
-        cache.save(all_keys, full_pass=True)
+        cache.save(all_keys, pass_kind=PassKind.FULL)
 
         # Reopen (simulating the next indexing run), as an incremental pass
         # would: _loaded_count must reflect the 50 entries just persisted.
@@ -363,7 +363,7 @@ class TestFullPassFlag:
         # Byte cap sized to only 20 records -- far below the 50 already on
         # disk. Without the loaded-size floor this collapses to 20.
         monkeypatch.setattr(chunk_cache_module, "_AUTO_MAX_BYTES", 20 * 32)
-        cache.save(new_keys, full_pass=False)
+        cache.save(new_keys, pass_kind=PassKind.INCREMENTAL)
 
         assert cache.get_stats()["cache_size"] == 50, (
             "partial-pass byte cap must not evict below the size loaded from disk"
@@ -396,7 +396,7 @@ class TestFullPassFlag:
         for i in range(50):
             cache.put(f"{i:032d}", _vec(4, float(i)))
         all_keys = {f"{i:032d}" for i in range(50)}
-        cache.save(all_keys, full_pass=True)
+        cache.save(all_keys, pass_kind=PassKind.FULL)
 
         cache = ChunkEmbeddingCache(
             cache_path,
@@ -409,7 +409,7 @@ class TestFullPassFlag:
 
         monkeypatch.setattr(chunk_cache_module, "_AUTO_MAX_BYTES", 5 * 32)
         live = {f"{0:032d}"}
-        cache.save(live, full_pass=False)
+        cache.save(live, pass_kind=PassKind.INCREMENTAL)
 
         assert cache.get_stats()["cache_size"] == 30, (
             "partial-pass cap should floor at project_entry_count (30), not "

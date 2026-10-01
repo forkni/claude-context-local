@@ -46,6 +46,7 @@ import os
 import struct
 import traceback
 from collections import OrderedDict
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,18 @@ _KEY_BYTES = 16  # 128-bit truncated SHA-256 -> 32 hex chars
 _HEADER_FIXED_STRUCT = "<IIIII"
 _AUTO_MIN_ENTRIES = 2_000
 _AUTO_MAX_BYTES = 32 * 1024 * 1024
+
+
+class PassKind(Enum):
+    """Whether an embedding pass covers the whole project or only a subset.
+
+    Required (no default) wherever a cache is saved: ``FULL`` makes the
+    pass's ``live_keys`` the authoritative set the eviction cap derives from;
+    ``INCREMENTAL`` must never shrink a cache built by prior full passes.
+    """
+
+    FULL = "full"
+    INCREMENTAL = "incremental"
 
 
 class ChunkEmbeddingCache:
@@ -229,7 +242,7 @@ class ChunkEmbeddingCache:
             self._entries = OrderedDict()
             self._loaded_count = 0
 
-    def save(self, live_keys: set[str], *, full_pass: bool = True) -> None:
+    def save(self, live_keys: set[str], *, pass_kind: PassKind) -> None:
         """Persist the cache to disk, atomically.
 
         Evicts down to the configured cap first (see :meth:`_evict`), always
@@ -239,19 +252,19 @@ class ChunkEmbeddingCache:
         it could have.
 
         Args:
-            full_pass: Whether *live_keys* is the authoritative set for the
-                whole project (a full index) or only a subset (an
-                incremental update). ``True`` allows eviction to target the
+            pass_kind: Whether *live_keys* is the authoritative set for the
+                whole project (``FULL``) or only a subset (``INCREMENTAL``).
+                ``FULL`` allows eviction to target the
                 entries-based cap derived from ``len(live_keys)`` — correct
                 only when ``live_keys`` really is everything the project
-                needs. ``False`` caps by the byte ceiling, floored at the
+                needs. ``INCREMENTAL`` caps by the byte ceiling, floored at the
                 project's current size, so a small partial-run
                 ``live_keys`` cannot collapse a cache built by prior full
                 passes. See :meth:`_evict`.
         """
         tmp = Path(str(self._path) + ".tmp")
         try:
-            self._evict(live_keys, full_pass=full_pass)
+            self._evict(live_keys, pass_kind=pass_kind)
             self._path.parent.mkdir(parents=True, exist_ok=True)
             name_bytes = self._model_name.encode("utf-8")
             prov_bytes = self._provenance.encode("utf-8")
@@ -283,7 +296,7 @@ class ChunkEmbeddingCache:
             with contextlib.suppress(OSError):
                 tmp.unlink(missing_ok=True)
 
-    def _evict(self, live_keys: set[str], *, full_pass: bool = True) -> None:
+    def _evict(self, live_keys: set[str], *, pass_kind: PassKind) -> None:
         """Drop least-recently-used, non-live entries down to the cap.
 
         ``live_keys`` always survives eviction, even if that means staying
@@ -292,11 +305,11 @@ class ChunkEmbeddingCache:
 
         The entries-based cap (``2 * len(live_keys)``, floored at
         ``_AUTO_MIN_ENTRIES``) is only sound when ``live_keys`` is the
-        authoritative set for the whole project — i.e. ``full_pass=True``. A
+        authoritative set for the whole project — i.e. ``PassKind.FULL``. A
         partial run (an incremental update) touches
         only the handful of chunks that changed; naively applying the same
         formula would shrink a cache built by prior full passes down to
-        roughly twice *that* handful. When ``full_pass=False`` the cap is
+        roughly twice *that* handful. When ``PassKind.INCREMENTAL`` the cap is
         instead the byte ceiling, floored at the project's current size
         (``self._project_entry_count``, falling back to the size loaded
         from disk at construction time, ``self._loaded_count``, when the
@@ -314,7 +327,7 @@ class ChunkEmbeddingCache:
         else:
             record_bytes = _KEY_BYTES + self._dimension * 4
             byte_cap = max(len(live_keys), _AUTO_MAX_BYTES // record_bytes)
-            if full_pass:
+            if pass_kind is PassKind.FULL:
                 cap = min(max(2 * len(live_keys), _AUTO_MIN_ENTRIES), byte_cap)
             else:
                 cap = max(byte_cap, self._project_entry_count or self._loaded_count)

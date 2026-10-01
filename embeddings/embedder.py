@@ -26,7 +26,7 @@ from rich.progress import (
 )
 
 from chunking.python_ast_chunker import CodeChunk
-from embeddings.chunk_cache import ChunkEmbeddingCache
+from embeddings.chunk_cache import ChunkEmbeddingCache, PassKind
 from embeddings.chunk_metadata import ChunkMetadata
 from embeddings.document_composer import (
     EmbeddingDocumentComposer,
@@ -883,7 +883,7 @@ class CodeEmbedder:
         batch_size: int | None = None,
         *,
         cache: ChunkEmbeddingCache | None = None,
-        cache_full_pass: bool = True,
+        pass_kind: PassKind | None = None,
     ) -> list[EmbeddingResult]:
         """Generate embeddings for multiple chunks with dynamic batching.
 
@@ -901,14 +901,14 @@ class CodeEmbedder:
                 unchanged since the last run are served from disk instead
                 of the GPU. On a 100% cache hit the model is never loaded.
                 ``None`` (the default) reproduces today's behavior exactly.
-            cache_full_pass: Forwarded to ``ChunkEmbeddingCache.save`` as
-                ``full_pass``. ``True`` (the default — matches a full index)
-                lets the save prune down to exactly this run's ``live_keys``.
-                Callers embedding only a subset of the project's chunks (an
-                incremental update) must pass ``False``, or the tiny
-                ``live_keys`` from that partial run
-                would evict the vast majority of a cache built by prior full
-                passes. Ignored when ``cache`` is ``None``.
+            pass_kind: Forwarded to ``ChunkEmbeddingCache.save``. Required
+                whenever ``cache`` is given (``ValueError`` otherwise): there is
+                deliberately no default. ``PassKind.FULL`` lets the save prune
+                down to exactly this run's ``live_keys``; callers embedding
+                only a subset of the project's chunks (an incremental update)
+                must pass ``PassKind.INCREMENTAL``, or the tiny ``live_keys``
+                from that partial run would evict the vast majority of a cache
+                built by prior full passes. Ignored when ``cache`` is ``None``.
 
         Returns:
             List of ``EmbeddingResult`` (one per input chunk, in order).
@@ -946,6 +946,12 @@ class CodeEmbedder:
         # `cache is not None`) gates every later cache use, including the
         # write-back — a read failure here disables the cache for the rest
         # of this call, falling back to embedding every chunk normally.
+        if cache is not None and pass_kind is None:
+            raise ValueError(
+                "embed_chunks(cache=...) requires pass_kind=PassKind.FULL or "
+                "PassKind.INCREMENTAL; a forgotten flag would let a partial run "
+                "collapse the cache"
+            )
         cache_enabled = cache is not None
         if cache_enabled:
             try:
@@ -1299,7 +1305,7 @@ class CodeEmbedder:
                     assert result is not None
                     cache.put(key, result.embedding)
             live_keys = {key for key in cache_keys if key is not None}
-            cache.save(live_keys, full_pass=cache_full_pass)
+            cache.save(live_keys, pass_kind=pass_kind)
             self._log_chunk_cache_stats(cache, "run complete")
 
         self._logger.info("Embedding generation completed")

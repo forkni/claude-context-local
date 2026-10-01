@@ -193,6 +193,14 @@ class CodeIndexManager:
     def add_embeddings(self, embedding_results: list[EmbeddingResult]) -> None:
         """Add embeddings to the index and metadata to the database.
 
+        Invariant (index kind): when the index does not exist yet, its kind
+        (flat/IVF, ``index_kind_for``) is chosen from the size of *this call's*
+        batch. A caller building a fresh index (a force reindex) must therefore
+        pass the whole vector set in ONE call -- ``IndexWriteStage.add_to_index``
+        is that single owner. Splitting a large first build across calls would
+        freeze the kind at the first (small) batch; a later removal pass
+        re-decides the kind from the real size (``FaissVectorIndex``'s rebuild).
+
         Args:
             embedding_results: List of EmbeddingResult objects containing embeddings
                              and their associated metadata (chunk_id, content, etc.)

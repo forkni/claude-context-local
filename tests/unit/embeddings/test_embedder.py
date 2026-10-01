@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from chunking.python_ast_chunker import CodeChunk
+from embeddings.chunk_cache import PassKind
 from embeddings.embedder import CodeEmbedder, EmbeddingResult
 from search.config import MODEL_REGISTRY
 
@@ -2272,7 +2273,9 @@ class TestEmbedChunksContentHashCache:
         for i in range(60):
             cache.put(ChunkEmbeddingCache.key_for(contents[i]), hit_value)
 
-        results = embedder.embed_chunks(chunks, batch_size=16, cache=cache)
+        results = embedder.embed_chunks(
+            chunks, batch_size=16, cache=cache, pass_kind=PassKind.FULL
+        )
 
         assert len(encoded_batches) == 40
         assert len(results) == 100
@@ -2314,7 +2317,9 @@ class TestEmbedChunksContentHashCache:
         for content in contents:
             cache.put(ChunkEmbeddingCache.key_for(content), hit_value)
 
-        results = embedder.embed_chunks(chunks, batch_size=2, cache=cache)
+        results = embedder.embed_chunks(
+            chunks, batch_size=2, cache=cache, pass_kind=PassKind.FULL
+        )
 
         assert len(results) == 5
         for result in results:
@@ -2492,7 +2497,9 @@ class TestEmbedChunksContentHashCache:
         broken_cache.key_for.side_effect = ChunkEmbeddingCache.key_for
         broken_cache.get.side_effect = RuntimeError("simulated disk read error")
 
-        results = embedder.embed_chunks(chunks, batch_size=2, cache=broken_cache)
+        results = embedder.embed_chunks(
+            chunks, batch_size=2, cache=broken_cache, pass_kind=PassKind.FULL
+        )
 
         assert len(results) == 5
         for i, (chunk, result) in enumerate(zip(chunks, results, strict=True)):
@@ -2504,15 +2511,15 @@ class TestEmbedChunksContentHashCache:
 
     @_patch_model_loader_st
     @_patch_embedder_st
-    def test_cache_full_pass_flag_forwarded_to_save(
+    def test_pass_kind_forwarded_to_save(
         self, mock_sentence_transformer, mock_model_loader_st
     ):
-        """cache_full_pass must reach ChunkEmbeddingCache.save() verbatim as
-        `full_pass` -- this is the plumbing the incremental and
-        community-refresh call sites rely on to pass full_pass=False (see
+        """pass_kind must reach ChunkEmbeddingCache.save() verbatim as
+        `pass_kind` -- this is the plumbing the incremental and
+        community-refresh call sites rely on to pass PassKind.INCREMENTAL (see
         chunk_cache.py's _evict docstring for why the True default would be
         unsafe for a partial pass), and IndexWriteStage relies on to keep
-        today's full_pass=True behavior unchanged."""
+        the explicit PassKind.FULL behavior unchanged."""
         from embeddings.chunk_cache import ChunkEmbeddingCache
 
         def mock_encode(
@@ -2546,16 +2553,22 @@ class TestEmbedChunksContentHashCache:
         mock_cache.get.return_value = None
 
         embedder.embed_chunks(
-            chunks, batch_size=2, cache=mock_cache, cache_full_pass=False
+            chunks, batch_size=2, cache=mock_cache, pass_kind=PassKind.INCREMENTAL
         )
         mock_cache.save.assert_called_once()
-        assert mock_cache.save.call_args.kwargs == {"full_pass": False}
+        assert mock_cache.save.call_args.kwargs == {"pass_kind": PassKind.INCREMENTAL}
 
         mock_cache.reset_mock()
         mock_cache.get.return_value = None
-        embedder.embed_chunks(chunks, batch_size=2, cache=mock_cache)  # default
+        embedder.embed_chunks(
+            chunks, batch_size=2, cache=mock_cache, pass_kind=PassKind.FULL
+        )
         mock_cache.save.assert_called_once()
-        assert mock_cache.save.call_args.kwargs == {"full_pass": True}
+        assert mock_cache.save.call_args.kwargs == {"pass_kind": PassKind.FULL}
+
+        # No default: a cache without an explicit pass kind must fail loudly.
+        with pytest.raises(ValueError, match="pass_kind"):
+            embedder.embed_chunks(chunks, batch_size=2, cache=mock_cache)
 
     @_patch_model_loader_st
     @_patch_embedder_st
@@ -2591,7 +2604,9 @@ class TestEmbedChunksContentHashCache:
             )
 
         with caplog.at_level("INFO"):
-            embedder.embed_chunks(chunks, batch_size=2, cache=cache)
+            embedder.embed_chunks(
+                chunks, batch_size=2, cache=cache, pass_kind=PassKind.FULL
+            )
 
         assert "[CHUNK_CACHE] 100% hit, model load skipped" in caplog.text
         assert "hits=3" in caplog.text
@@ -2642,7 +2657,9 @@ class TestEmbedChunksContentHashCache:
         )
 
         with caplog.at_level("INFO"):
-            embedder.embed_chunks(chunks, batch_size=2, cache=cache)
+            embedder.embed_chunks(
+                chunks, batch_size=2, cache=cache, pass_kind=PassKind.FULL
+            )
 
         assert "[CHUNK_CACHE] run complete" in caplog.text
         assert "hits=1" in caplog.text

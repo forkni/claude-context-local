@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
+from embeddings.chunk_cache import PassKind
 from graph.graph_storage import CodeGraphStorage
 from merkle.change_detector import FileChanges
 from merkle.merkle_dag import MerkleNode
@@ -361,10 +362,10 @@ class TestIncrementalIndexer:
         assert result.chunks_added == 2
 
     def test_add_new_chunks_passes_partial_pass_cache_to_embedder(self, tmp_path):
-        """_add_new_chunks must resolve the chunk cache and forward cache_full_pass=False.
+        """_add_new_chunks must resolve the chunk cache and forward pass_kind=INCREMENTAL.
 
         Regression guard for Fix 3: this embed site previously ran cold every
-        time. cache_full_pass=False matters because a full-pass eviction cap
+        time. PassKind.INCREMENTAL matters because a full-pass eviction cap
         here would wrongly collapse a cache built by prior full indexes down
         to this run's handful of live keys — see ChunkEmbeddingCache._evict.
 
@@ -429,7 +430,7 @@ class TestIncrementalIndexer:
         )
         call_kwargs = self.mock_embedder.embed_chunks.call_args.kwargs
         assert call_kwargs["cache"] is sentinel_cache
-        assert call_kwargs["cache_full_pass"] is False
+        assert call_kwargs["pass_kind"] is PassKind.INCREMENTAL
 
     def test_error_handling_full_index(self):
         """Test error handling during full index."""
