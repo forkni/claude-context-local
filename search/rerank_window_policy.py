@@ -17,6 +17,12 @@ if TYPE_CHECKING:  # pragma: no mutate
     from .config import SearchConfig
 
 
+# `merged_pool_policy` value whose window membership is decided by interleaving hop-1
+# survivors with the expansion frontier (ADR-0079). Bypasses the hop-1 reserve and the
+# graph_hop window cap.
+GAR_INTERLEAVE_POLICY = "gar_interleave"
+
+
 @dataclass(frozen=True)
 class RerankWindowPolicy:
     """How the rerank window is composed before the listwise pass."""

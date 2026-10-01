@@ -948,13 +948,24 @@ class RerankerConfig:
         # source=="multi_hop" by score desc, then source=="graph_hop" by
         # insertion order) that never compares across scales; under this
         # policy hop1_reserved_slots is provably inert (all hop-1 candidates
-        # already sit in tier 0). Only MultiHopSearcher's Pass-2 rerank call
+        # already sit in tier 0). "gar_interleave" (ADR-0079) alternates 1:1
+        # between hop-1 survivors (by hop1_rank) and the expansion frontier
+        # (by anchor_rank, graph/semantic alternating inside an anchor), never
+        # comparing scores across channels; it bypasses hop1_reserved_slots
+        # and graph_hop_window_cap, and candidates past the window are
+        # backfilled, not dropped. Opt-in until its A/B passes
+        # (evaluation/GAR_WINDOW_AB_20261001.md). Only MultiHopSearcher's Pass-2 rerank call
         # reads this; the ego-graph/parent-expansion tail rerank calls
         # (hybrid_searcher.py's two rerank_by_query call sites) don't pass it
         # and always take the "score" default. Not construction_baked -- live
         # per call, valid as a --set arm with no searcher rebuild required.
         metadata=spec(
-            choices=("score", "score_reserve_fix", "channel_priority"),
+            choices=(
+                "score",
+                "score_reserve_fix",
+                "channel_priority",
+                "gar_interleave",
+            ),
             flat_alias="reranker_merged_pool_policy",
             reader="search/rerank_window_policy.py",
             benchmark_locked=(

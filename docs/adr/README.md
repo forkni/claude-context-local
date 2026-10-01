@@ -84,6 +84,7 @@ for avoiding re-litigating settled questions.
 | [0076](0076-bound-the-listwise-packed-window-by-tokens.md) | Bound the Jina listwise packed window by tokens | accepted | 2026-09-19 |
 | [0077](0077-single-block-listwise-invariant.md) | Make single-block listwise reranking an invariant | accepted | 2026-09-19 |
 | [0078](0078-reject-real-toon-text-output.md) | Reject real TOON v4.1 text output; keep the improved `ultra` | accepted | 2026-09-21 |
+| [0079](0079-gar-style-rerank-window-membership.md) | Decide rerank-window membership by interleaving, not by sorting mixed score scales | proposed | 2026-10-01 |
 
 ## Adding a new ADR
 

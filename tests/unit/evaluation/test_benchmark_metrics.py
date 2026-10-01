@@ -845,3 +845,27 @@ class TestAggregateMetrics:
         ]
         agg = aggregate_metrics(queries)
         assert "hard_negative_intrusion_rate" not in agg
+
+    def test_window_membership_keys_only_when_present(self):
+        queries = [
+            {
+                **_ALL_ONE_QUERY,
+                "gold_in_window": True,
+                "gold_evicted_by_reserve": False,
+            },
+            {
+                **_ALL_ONE_QUERY,
+                "gold_in_window": False,
+                "gold_evicted_by_reserve": True,
+            },
+            {**_ALL_ONE_QUERY},  # e.g. an F-via-similar row: no rerank window
+        ]
+        agg = aggregate_metrics(queries)
+        assert agg["gold_in_window_rate"] == pytest.approx(0.5)
+        assert agg["gold_in_window_count"] == 2
+        assert agg["gold_evicted_by_reserve_count"] == 1
+
+    def test_window_membership_keys_absent_without_window_rows(self):
+        agg = aggregate_metrics([{**_ALL_ONE_QUERY}])
+        assert "gold_in_window_rate" not in agg
+        assert "gold_evicted_by_reserve_count" not in agg

@@ -512,6 +512,23 @@ def aggregate_metrics(
         sizes = [float(q.get("pool_size", 0)) for q in pool_rows]
         agg["avg_pool_size"] = round(mean(sizes), 1)  # pragma: no mutate
 
+    # Window membership (ADR-0079) — presence-based. gold_in_window answers
+    # "was any gold chunk in the window the listwise model actually scored?"
+    # (pool_hit can't: it counts backfilled candidates too). The evicted count
+    # exists only on legacy-policy legs, where the hop-1 reserve can drop a gold.
+    window_rows = [q for q in per_query if "gold_in_window" in q]
+    if window_rows:
+        agg["gold_in_window_rate"] = round(
+            mean([1.0 if q["gold_in_window"] else 0.0 for q in window_rows]),
+            4,  # pragma: no mutate
+        )
+        agg["gold_in_window_count"] = len(window_rows)
+    evict_rows = [q for q in per_query if "gold_evicted_by_reserve" in q]
+    if evict_rows:
+        agg["gold_evicted_by_reserve_count"] = sum(
+            1 for q in evict_rows if q["gold_evicted_by_reserve"]
+        )
+
     # Hard-Negative Intrusion Rate (CoREB) — presence-based; a row's key is
     # either absent (relevance_grades wasn't passed) or explicitly None (no
     # positive+negative pair surfaced in top-k). Both must be excluded, not

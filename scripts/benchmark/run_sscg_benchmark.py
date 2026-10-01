@@ -35,6 +35,7 @@ Usage:
 
 import argparse
 import asyncio
+import importlib.metadata
 import json
 import logging
 import subprocess
@@ -446,6 +447,23 @@ def _build_substrate_fingerprint(searcher: Any, cfg: "SearchConfig") -> dict[str
     except Exception:
         pass
 
+    # Library versions: a deps bump can move embeddings or reranker numerics
+    # without touching any repo file, so git_sha alone can't separate it.
+    versions: dict[str, str] = {}
+    for dist in (
+        "torch",
+        "transformers",
+        "sentence-transformers",
+        "faiss-cpu",
+        "faiss-gpu",
+    ):
+        try:
+            versions[dist] = importlib.metadata.version(dist)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    if versions:
+        fingerprint["library_versions"] = versions
+
     try:
         sha_result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -683,6 +701,70 @@ def _instrument_rerank_calls(searcher: Any) -> list[tuple[int | None, int]]:
     engine.rerank_by_query = _recording_rerank
     engine._sscg_rerank_calls = calls
     return calls
+
+
+class _WindowRecorder:
+    """Per-query record of which candidates entered the listwise window.
+
+    ``RerankingEngine.last_window_ids`` is "last pass wins", so on a default-path
+    query the ego tail pass overwrites the Pass-2 (merged-pool) window this
+    metric is about. The recorder snapshots the window after every
+    ``rerank_by_query`` call and keeps the first (Pass-2 when multi-hop ran,
+    the only pass otherwise). It also records what ``_apply_hop1_reserve``
+    removed from the pool; the reserve only runs under the legacy policies, so
+    ``evicted_by_reserve`` is ``None`` on a ``gar_interleave`` leg.
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.window_ids: list[str] | None = None
+        self.evicted_by_reserve: list[str] | None = None
+
+    def note_window(self, ids: list[str] | None) -> None:
+        if self.window_ids is None and ids is not None:
+            self.window_ids = list(ids)
+
+    def note_reserve(self, before: list[str], after: list[str]) -> None:
+        kept = set(after)
+        evicted = [cid for cid in before if cid not in kept]
+        self.evicted_by_reserve = (self.evicted_by_reserve or []) + evicted
+
+
+def _instrument_window_membership(searcher: Any) -> _WindowRecorder | None:
+    """Wrap ``rerank_by_query`` and ``_apply_hop1_reserve`` to feed a ``_WindowRecorder``.
+
+    Idempotent: re-instrumenting the same engine returns the existing recorder.
+    """
+    engine = getattr(searcher, "reranking_engine", None)
+    if engine is None:
+        return None
+    existing = getattr(engine, "_sscg_window_recorder", None)
+    if existing is not None:
+        return existing
+    recorder = _WindowRecorder()
+    original_rerank = engine.rerank_by_query
+    original_reserve = engine._apply_hop1_reserve
+
+    def _recording_rerank(*args: Any, **kwargs: Any) -> Any:
+        # Clear first so a call that never reaches _run_rerank (reranker off)
+        # doesn't inherit the previous call's window.
+        engine.last_window_ids = None
+        try:
+            return original_rerank(*args, **kwargs)
+        finally:
+            recorder.note_window(engine.last_window_ids)
+
+    def _recording_reserve(pool: list, *args: Any, **kwargs: Any) -> Any:
+        out = original_reserve(pool, *args, **kwargs)
+        recorder.note_reserve([r.chunk_id for r in pool], [r.chunk_id for r in out])
+        return out
+
+    engine.rerank_by_query = _recording_rerank
+    engine._apply_hop1_reserve = _recording_reserve
+    engine._sscg_window_recorder = recorder
+    return recorder
 
 
 def _get_searcher(project_path: str):
@@ -1154,6 +1236,9 @@ async def run_benchmark(
         rerank_engine = getattr(searcher, "reranking_engine", None)
         if rerank_engine is not None:
             rerank_engine.last_candidate_ids = None
+        window_recorder = getattr(rerank_engine, "_sscg_window_recorder", None)
+        if window_recorder is not None:
+            window_recorder.reset()
         if confound_recorder is not None:
             confound_recorder.reset()
         if rerank_calls is not None:
@@ -1318,6 +1403,33 @@ async def run_benchmark(
                     "pool_hit": any(e in pool_ids for e in expected),
                 }
 
+            # Window membership (ADR-0079): was any gold chunk in the window the
+            # listwise model actually saw? Unlike pool_hit this is blind to
+            # backfill, and it names the step that throws a gold away -- under
+            # the legacy policies gold_evicted_by_reserve is the hop-1 reserve
+            # dropping a gold from the pool (absent on a gar_interleave leg).
+            window_metrics: dict[str, Any] = {}
+            if window_recorder is not None and window_recorder.window_ids:
+                window_entries = expand_retrieved_with_containment(
+                    window_recorder.window_ids, expected, merged_membership or {}
+                )
+                window_flat = flatten_entries(window_entries)
+                window_metrics = {
+                    "window_size": len(window_entries),
+                    "gold_in_window": any(e in window_flat for e in expected),
+                }
+                if window_recorder.evicted_by_reserve is not None:
+                    evicted_flat = flatten_entries(
+                        expand_retrieved_with_containment(
+                            window_recorder.evicted_by_reserve,
+                            expected,
+                            merged_membership or {},
+                        )
+                    )
+                    window_metrics["gold_evicted_by_reserve"] = any(
+                        e in evicted_flat for e in expected
+                    )
+
             # Line-overlap metrics (when line_lookup is available)
             line_metrics: dict[str, float] = {}
             if line_lookup:
@@ -1387,6 +1499,7 @@ async def run_benchmark(
                     **file_metrics,
                     **line_metrics,
                     **pool_metrics,
+                    **window_metrics,
                 }
             )
 
@@ -2133,6 +2246,7 @@ async def run_single(
     # Confound instrumentation (0f)
     confound_recorder = _attach_ego_confound_recorder()
     rerank_calls = _instrument_rerank_calls(searcher)
+    _instrument_window_membership(searcher)
     # B1b intent-signal instrumentation
     intent_signal_recorder = _attach_intent_signal_recorder()
 

@@ -13,7 +13,7 @@ from utils.timing import timed
 
 from .chunk_id import dedupe_results
 from .config import get_search_config
-from .rerank_window_policy import RerankWindowPolicy
+from .rerank_window_policy import GAR_INTERLEAVE_POLICY, RerankWindowPolicy
 from .types import ResultSource
 
 
@@ -273,6 +273,12 @@ class RerankingEngine:
                 self.neural_reranker, "last_doc_token_cap", None
             )
             self.last_rerank_skipped = False
+            # Backfill (ADR-0079): candidates past the window are never dropped.
+            # The listwise pass scores only the first ``rerank_count``; the rest
+            # keep their incoming order behind the reranked window. A no-op
+            # whenever the candidate list fits the window.
+            if len(candidates) > rerank_count:
+                return [*result, *candidates[rerank_count:]]
             return result
         # OOM detection path: all mutations here are boundary (requires real CUDA OOM).
         # ExceptionReplacer, And/Or in OOM string detection, and True→False on _session_oom_detected
@@ -363,7 +369,58 @@ class RerankingEngine:
                 return (tier, 0.0, index)
 
             return [r for _, r in sorted(enumerate(results), key=_sort_key)]
+        if policy == GAR_INTERLEAVE_POLICY:
+            return RerankingEngine._gar_interleave(results)
         raise ValueError(f"Unknown merged_pool_policy: {policy!r}")
+
+    @staticmethod
+    def _gar_interleave(results: list) -> list:
+        """GAR-style window membership (ADR-0079): alternate 1:1 between hop-1
+        survivors and the frontier, never comparing a score across channels.
+
+        Hop-1 survivors (``metadata["hop1_rank"]`` is not None -- NOT
+        ``source``: both hop-1 survivors and semantic expansions are
+        ``"multi_hop"``) go in ``hop1_rank`` order and take the first slot.
+        The frontier is every other candidate: ordered by ``anchor_rank`` (the
+        best hop-1 rank among the anchors that produced it), and inside one
+        anchor alternating the graph channel and the semantic channel, graph
+        first (``MultiHopSearcher._hybrid_expand`` runs the graph channel
+        first), each in its incoming order. A frontier candidate without an
+        ``anchor_rank`` sorts after every anchored one. When one side runs
+        out the other fills the rest, so the output is a permutation of the
+        input. See ``evaluation/GAR_WINDOW_AB_20261001.md`` for the offline
+        simulation that picked anchor-first over round-robin.
+        """
+        hop1 = sorted(
+            (r for r in results if r.metadata.get("hop1_rank") is not None),
+            key=lambda r: r.metadata["hop1_rank"],
+        )
+        by_anchor: dict[float, tuple[list, list]] = {}
+        for r in results:
+            if r.metadata.get("hop1_rank") is not None:
+                continue
+            anchor = r.metadata.get("anchor_rank")
+            graph, other = by_anchor.setdefault(
+                float("inf") if anchor is None else anchor, ([], [])
+            )
+            (graph if r.source == ResultSource.GRAPH_HOP else other).append(r)
+
+        frontier: list = []
+        for anchor in sorted(by_anchor):
+            graph, other = by_anchor[anchor]
+            for i in range(max(len(graph), len(other))):
+                if i < len(graph):
+                    frontier.append(graph[i])
+                if i < len(other):
+                    frontier.append(other[i])
+
+        ordered: list = []
+        for i in range(max(len(hop1), len(frontier))):
+            if i < len(hop1):
+                ordered.append(hop1[i])
+            if i < len(frontier):
+                ordered.append(frontier[i])
+        return ordered
 
     @staticmethod
     def _apply_graph_hop_window_cap(
@@ -545,7 +602,12 @@ class RerankingEngine:
         )
         self.last_candidate_ids = [r.chunk_id for r in sorted_results]
 
-        if window.graph_hop_window_cap > 0:
+        # The interleave decides window membership itself: the cap would defer
+        # graph_hop entries and the reserve would promote hop-1 ranks from past
+        # the window over its tail, both breaking the 1:1 alternation.
+        gar = window.merged_pool_policy == GAR_INTERLEAVE_POLICY
+
+        if window.graph_hop_window_cap > 0 and not gar:
             sorted_results = self._apply_graph_hop_window_cap(
                 sorted_results,
                 config.reranker.top_k_candidates,
@@ -554,7 +616,7 @@ class RerankingEngine:
 
         # Neural reranking (Quality First mode) — always re-check config for
         # runtime changes.
-        if window.hop1_reserved_slots > 0:
+        if window.hop1_reserved_slots > 0 and not gar:
             evict_policy = (
                 "lowest_non_hop1"
                 if window.merged_pool_policy == "score_reserve_fix"
