@@ -390,24 +390,11 @@ class MultiHopSearcher:
             return similarities
 
         try:
-            id_to_faiss_idx = {
-                cid: i for i, cid in enumerate(self.dense_index.chunk_ids)
-            }
-            mapped = [
-                (pos, id_to_faiss_idx[cid])
-                for pos, cid in enumerate(chunk_ids)
-                if cid in id_to_faiss_idx
-            ]
-            if not mapped:
+            rows, embeddings = self.dense_index.reconstruct_embeddings(chunk_ids)
+            if embeddings is None:
                 return similarities
-            embeddings = np.stack(
-                [
-                    self.dense_index._faiss_index.reconstruct(int(faiss_idx))
-                    for _, faiss_idx in mapped
-                ]
-            )
             batch = embeddings @ query_embedding
-            for (pos, _), sim in zip(mapped, batch, strict=True):
+            for pos, sim in zip(rows, batch, strict=True):
                 similarities[pos] = float(sim)
         except (RuntimeError, AttributeError, IndexError, TypeError) as e:
             self._logger.debug(
@@ -493,7 +480,7 @@ class MultiHopSearcher:
                 # Fallback to index lookup if result lacks metadata
                 metadata = self.dense_index.get_chunk_by_id(chunk_id)
             if metadata:
-                if self.dense_index._matches_filters(metadata, filters):
+                if self.dense_index.matches_filters(metadata, filters):
                     filtered_results[chunk_id] = result
             else:
                 # Keep results without metadata (shouldn't happen)

@@ -227,7 +227,7 @@ class TestMultiHopSearcher:
                 return filters["file_pattern"] in metadata.get("file", "")
             return True
 
-        self.mock_dense_index._matches_filters.side_effect = mock_matches_filters
+        self.mock_dense_index.matches_filters.side_effect = mock_matches_filters
 
         # Apply filters
         filtered = self.searcher.apply_post_expansion_filters(
@@ -1105,8 +1105,9 @@ class TestCallEvidenceScoring:
 
         query_embedding = np.array([1.0, 0.0, 0.0])
         self.mock_dense_index.chunk_ids = [self.NEIGHBOR]
-        self.mock_dense_index._faiss_index.reconstruct.return_value = np.array(
-            [0.25, 0.5, 0.0]
+        self.mock_dense_index.reconstruct_embeddings.return_value = (
+            [0],
+            np.array([[0.25, 0.5, 0.0]]),
         )
 
         with patch("graph.graph_queries.GraphQueryEngine") as mock_engine_cls:
@@ -1130,8 +1131,9 @@ class TestCallEvidenceScoring:
 
         query_embedding = np.array([1.0, 0.0, 0.0])
         self.mock_dense_index.chunk_ids = [self.NEIGHBOR]
-        self.mock_dense_index._faiss_index.reconstruct.return_value = np.array(
-            [1.0, 0.0, 0.0]
+        self.mock_dense_index.reconstruct_embeddings.return_value = (
+            [0],
+            np.array([[1.0, 0.0, 0.0]]),
         )
 
         with patch("graph.graph_queries.GraphQueryEngine") as mock_engine_cls:
@@ -1172,9 +1174,9 @@ class TestCallEvidenceScoring:
     def test_similarities_missing_id_gets_fallback(self):
         """Ids absent from the dense index get the 0.5 decay; mapped ids get
         their reconstructed cosine."""
-        self.mock_dense_index.chunk_ids = ["known"]
-        self.mock_dense_index._faiss_index.reconstruct.return_value = np.array(
-            [0.9, 0.0]
+        self.mock_dense_index.reconstruct_embeddings.return_value = (
+            [0],
+            np.array([[0.9, 0.0]]),
         )
 
         sims = self.searcher._graph_candidate_similarities(

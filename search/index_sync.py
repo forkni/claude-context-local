@@ -61,7 +61,7 @@ class IndexSynchronizer:
 
             # Log comprehensive state before save
             bm25_dir = self.storage_dir / "bm25"
-            dense_size = self.dense_index.index.ntotal if self.dense_index.index else 0
+            dense_size = self.dense_index.ntotal
 
             self._logger.info("[SAVE] === PRE-SAVE STATE ===")
             self._logger.info(f"[SAVE] BM25 directory exists: {bm25_dir.exists()}")
@@ -104,9 +104,7 @@ class IndexSynchronizer:
             self._verify_bm25_files()
 
             # Log comprehensive state after save
-            dense_size_after = (
-                self.dense_index.index.ntotal if self.dense_index.index else 0
-            )
+            dense_size_after = self.dense_index.ntotal
 
             self._logger.info("[SAVE] === POST-SAVE STATE ===")
             self._logger.info(f"[SAVE] BM25 directory exists: {bm25_dir.exists()}")
@@ -148,11 +146,7 @@ class IndexSynchronizer:
         data source so the two can never silently disagree.
         """
         bm25_count = len(self.bm25_index._doc_ids) if self.bm25_index else 0
-        dense_count = (
-            self.dense_index.ntotal
-            if self.dense_index and self.dense_index.index
-            else 0
-        )
+        dense_count = self.dense_index.ntotal if self.dense_index else 0
         return bm25_count, dense_count
 
     def validate_index_sync(self) -> bool:

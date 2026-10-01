@@ -102,7 +102,7 @@ def _make_search_result(chunk_id: str, score: float):
 def _make_dense_index(
     chunk_ids: list[str], embeddings: dict[str, np.ndarray] | None = None
 ):
-    """Build a fake dense_index with chunk_ids, get_chunk_by_id, and _faiss_index."""
+    """Build a fake dense_index with chunk_ids, get_chunk_by_id, and reconstruct_embeddings."""
     mock = MagicMock()
     mock.chunk_ids = chunk_ids
 
@@ -112,15 +112,19 @@ def _make_dense_index(
     mock.get_chunk_by_id.side_effect = _get_chunk_by_id
 
     if embeddings:
-        # Real ndarray reconstruction
-        def _reconstruct(idx):
-            cid = chunk_ids[idx]
-            return embeddings.get(cid, np.zeros(4, dtype=np.float32))
+        # Mirrors CodeIndexManager.reconstruct_embeddings: skip unindexed ids.
+        def _reconstruct_embeddings(ids):
+            rows = [i for i, cid in enumerate(ids) if cid in chunk_ids]
+            if not rows:
+                return [], None
+            return rows, np.stack(
+                [embeddings.get(ids[i], np.zeros(4, dtype=np.float32)) for i in rows]
+            )
 
-        mock._faiss_index.reconstruct.side_effect = _reconstruct
+        mock.reconstruct_embeddings.side_effect = _reconstruct_embeddings
     else:
         # Reconstruction raises to test decay fallback
-        mock._faiss_index.reconstruct.side_effect = AttributeError("no faiss")
+        mock.reconstruct_embeddings.side_effect = AttributeError("no faiss")
 
     return mock
 

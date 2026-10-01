@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 
@@ -343,15 +344,41 @@ class CodeIndexManager:
 
         return results
 
-    def _matches_filters(
+    def reconstruct_embeddings(
+        self, chunk_ids: Sequence[str]
+    ) -> tuple[list[int], np.ndarray | None]:
+        """Reconstruct the stored vectors for the given chunk IDs in one batch.
+
+        Owns the chunk_id -> FAISS-position lookup so callers never touch
+        positions or the private FAISS wrapper. IDs absent from the dense
+        index are skipped, not errors.
+
+        Args:
+            chunk_ids: Chunk IDs to look up (duplicates allowed).
+
+        Returns:
+            ``(rows, matrix)``: ``rows`` are indices into *chunk_ids* for the
+            IDs that are indexed, in input order; ``matrix`` is the stacked
+            ``(len(rows), dim)`` embeddings aligned with ``rows``, or ``None``
+            when no ID is indexed. FAISS reconstruction errors propagate.
+        """
+        position_of = {cid: i for i, cid in enumerate(self._faiss_index.chunk_ids)}
+        rows = [i for i, cid in enumerate(chunk_ids) if cid in position_of]
+        if not rows:
+            return [], None
+        matrix = np.stack(
+            [self._faiss_index.reconstruct(position_of[chunk_ids[i]]) for i in rows]
+        )
+        return rows, matrix
+
+    def matches_filters(
         self, metadata: dict[str, Any], filters: dict[str, Any]
     ) -> bool:
         """Check if metadata matches the provided filters.
 
         Uses FilterEngine for unified filter logic across the codebase.
-        Kept as a method for backward compatibility — callers outside the
-        per-candidate search loop above (e.g. multi_hop_searcher's
-        post-expansion filtering) still use this one-shot form.
+        Public one-shot form for callers outside the per-candidate search
+        loop above (e.g. multi_hop_searcher's post-expansion filtering).
         """
         return FilterEngine.from_dict(filters).matches(metadata)
 

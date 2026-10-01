@@ -175,7 +175,7 @@ class HybridSearcher(BaseSearcher):
                 "[INIT] load_existing=False — skipping BM25 index load "
                 "(write-only searcher for a pending force-full reindex)"
             )
-            dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0
+            dense_count = self.dense_index.ntotal
 
         # Log final initialization status
         total_bm25 = self.bm25_index.size
@@ -349,7 +349,7 @@ class HybridSearcher(BaseSearcher):
             int: Number of vectors in the loaded index, 0 if starting fresh
         """
         # Dense index loads automatically in its __init__
-        dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0
+        dense_count = self.dense_index.ntotal
         if dense_count > 0:
             self._logger.info(
                 f"[INIT] Loaded existing dense index with {dense_count} vectors"
@@ -406,15 +406,13 @@ class HybridSearcher(BaseSearcher):
     def is_ready(self) -> bool:
         """Check if both indices are ready."""
         bm25_ready = not self.bm25_index.is_empty
-        dense_ready = (
-            self.dense_index.index is not None and self.dense_index.index.ntotal > 0
-        )
+        dense_ready = self.dense_index.ntotal > 0
 
         self._logger.debug(
             f"[IS_READY] BM25 ready: {bm25_ready} (size: {self.bm25_index.size})"
         )
         self._logger.debug(
-            f"[IS_READY] Dense ready: {dense_ready} (vectors: {self.dense_index.index.ntotal if self.dense_index.index else 0})"
+            f"[IS_READY] Dense ready: {dense_ready} (vectors: {self.dense_index.ntotal})"
         )
 
         is_ready = bm25_ready and dense_ready
@@ -475,9 +473,7 @@ class HybridSearcher(BaseSearcher):
             {
                 "bm25_stats": self.bm25_index.get_stats(),
                 "dense_stats": {
-                    "total_vectors": (
-                        self.dense_index.index.ntotal if self.dense_index.index else 0
-                    ),
+                    "total_vectors": (self.dense_index.ntotal),
                     "on_gpu": self.dense_index.is_on_gpu,
                 },
                 "gpu_memory": self.gpu_monitor.get_available_memory(),
@@ -521,7 +517,7 @@ class HybridSearcher(BaseSearcher):
     def get_stats(self) -> dict[str, Any]:
         """Get index statistics in the format expected by MCP server."""
         bm25_count = self.bm25_index.size
-        dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0
+        dense_count = self.dense_index.ntotal
         total_chunks = max(bm25_count, dense_count)  # Use the higher count as total
 
         return {
@@ -537,7 +533,7 @@ class HybridSearcher(BaseSearcher):
     def get_index_size(self) -> int:
         """Get total index size (compatible with incremental indexer interface)."""
         bm25_count = self.bm25_index.size
-        dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0
+        dense_count = self.dense_index.ntotal
         return max(bm25_count, dense_count)  # Return the higher count
 
     def get_by_chunk_id(
@@ -684,7 +680,7 @@ class HybridSearcher(BaseSearcher):
                     span.set_attribute(ATTR_RESULT_COUNT, 0)
                     return []
             elif search_mode == SearchMode.SEMANTIC:
-                if not self.dense_index.index or self.dense_index.index.ntotal == 0:
+                if self.dense_index.ntotal == 0:
                     self._logger.warning(
                         "Semantic search requested but dense index is empty"
                     )
@@ -1198,7 +1194,7 @@ class HybridSearcher(BaseSearcher):
                 f"[ADD_EMBEDDINGS] BM25 index size after adding: {self.bm25_index.size}"
             )
             self._logger.debug(
-                f"[ADD_EMBEDDINGS] Dense index size after adding: {self.dense_index.index.ntotal if self.dense_index.index else 0}"
+                f"[ADD_EMBEDDINGS] Dense index size after adding: {self.dense_index.ntotal}"
             )
 
         except Exception as e:
