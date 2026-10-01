@@ -121,7 +121,16 @@ SIMULATED_POLICIES = (
     "score_no_reserve",
     "score_reserve_fix",
     "channel_priority",
+    "gar_anchor_first",
+    "gar_round_robin",
 )
+
+# GAR-style window membership candidates (docs/adr/0079, evaluation/GAR_WINDOW_AB_20261001.md).
+# Probe-local simulators: the production "gar_interleave" policy does not exist yet when this
+# probe is first run, so these order the captured pool with the same alternation rule the
+# policy will implement. Both alternate 1:1 between hop-1 survivors (by hop1_rank) and the
+# frontier (expansion candidates); they differ only in how the frontier itself is ordered.
+GAR_POLICIES = ("gar_anchor_first", "gar_round_robin")
 
 # Cap values simulate_cap_windows() replays for the graph_hop_window_cap probe
 # (docs/plans/humming-wondering-phoenix.md follow-on, --replay mode). cap=0 is
@@ -163,12 +172,17 @@ class _SimResult:
     __slots__ = ("chunk_id", "score", "source", "metadata")
 
     def __init__(
-        self, chunk_id: str, score: float, source: str, hop1_rank: int | None
+        self,
+        chunk_id: str,
+        score: float,
+        source: str,
+        hop1_rank: int | None,
+        anchor_rank: int | None = None,
     ) -> None:
         self.chunk_id = chunk_id
         self.score = score
         self.source = source
-        self.metadata = {"hop1_rank": hop1_rank}
+        self.metadata = {"hop1_rank": hop1_rank, "anchor_rank": anchor_rank}
 
 
 def simulate_windows(
@@ -192,12 +206,23 @@ def simulate_windows(
     from search.reranking_engine import RerankingEngine
 
     pool_objects = [
-        _SimResult(p["chunk_id"], p["score"], p["source"], p["hop1_rank"])
+        _SimResult(
+            p["chunk_id"],
+            p["score"],
+            p["source"],
+            p["hop1_rank"],
+            p.get("anchor_rank"),
+        )
         for p in pass2_call["pool"]
     ]
 
     windows: dict[str, list[str]] = {}
     for policy in SIMULATED_POLICIES:
+        if policy in GAR_POLICIES:
+            windows[policy] = [
+                r.chunk_id for r in gar_order(pool_objects, policy)[:top_k_candidates]
+            ]
+            continue
         order_policy = "score" if policy == "score_no_reserve" else policy
         ordered = RerankingEngine._order_merged_pool(pool_objects, order_policy)
         reserve_slots = 0 if policy == "score_no_reserve" else hop1_reserved_slots
@@ -207,6 +232,65 @@ def simulate_windows(
         )
         windows[policy] = [r.chunk_id for r in final[:top_k_candidates]]
     return windows
+
+
+def _frontier_by_anchor(frontier: list) -> dict[int, list]:
+    """Group frontier candidates by ``anchor_rank`` (None -> a trailing bucket keyed past every
+    real anchor), alternating the graph channel and the semantic channel inside each anchor,
+    graph first (``_hybrid_expand`` runs the graph channel first). Native order within a channel
+    is the captured merge order, which is already best-first per anchor."""
+    groups: dict[int, list] = {}
+    for r in frontier:
+        key = r.metadata.get("anchor_rank")
+        groups.setdefault(10**6 if key is None else key, []).append(r)
+    out: dict[int, list] = {}
+    for key, members in groups.items():
+        graph = [m for m in members if m.source == "graph_hop"]
+        other = [m for m in members if m.source != "graph_hop"]
+        merged: list = []
+        for i in range(max(len(graph), len(other))):
+            if i < len(graph):
+                merged.append(graph[i])
+            if i < len(other):
+                merged.append(other[i])
+        out[key] = merged
+    return out
+
+
+def gar_order(pool: list, policy: str) -> list:
+    """GAR-style ordering of a captured Pass-2 pool: 1:1 alternation, hop-1 first, between hop-1
+    survivors (by ``hop1_rank``) and the frontier; when one side runs out the other fills the
+    rest. Hop-1 vs frontier is decided by ``metadata['hop1_rank']`` (not ``source``: both are
+    ``"multi_hop"``). ``policy`` picks only the frontier order:
+
+    - ``gar_anchor_first``: all of anchor 1's neighbours, then anchor 2's, ...
+    - ``gar_round_robin``: each anchor's best neighbour, then each anchor's second best, ...
+    """
+    hop1 = sorted(
+        (r for r in pool if r.metadata.get("hop1_rank") is not None),
+        key=lambda r: r.metadata["hop1_rank"],
+    )
+    frontier_raw = [r for r in pool if r.metadata.get("hop1_rank") is None]
+    groups = _frontier_by_anchor(frontier_raw)
+    if policy == "gar_anchor_first":
+        frontier = [r for key in sorted(groups) for r in groups[key]]
+    elif policy == "gar_round_robin":
+        frontier = []
+        depth = max((len(g) for g in groups.values()), default=0)
+        for i in range(depth):
+            for key in sorted(groups):
+                if i < len(groups[key]):
+                    frontier.append(groups[key][i])
+    else:
+        raise ValueError(f"unknown GAR policy {policy!r}")
+
+    ordered: list = []
+    for i in range(max(len(hop1), len(frontier))):
+        if i < len(hop1):
+            ordered.append(hop1[i])
+        if i < len(frontier):
+            ordered.append(frontier[i])
+    return ordered
 
 
 def simulate_cap_windows(
@@ -360,6 +444,7 @@ class Instrumentation:
                     "score": r.score,
                     "source": getattr(r, "source", "unknown"),
                     "hop1_rank": r.metadata.get("hop1_rank"),
+                    "anchor_rank": r.metadata.get("anchor_rank"),
                 }
                 for r in results
             ]
@@ -630,6 +715,72 @@ def _policy_gold_net(records: list[dict], policy: str) -> tuple[int, int, int]:
         rescues += len((variant - base) & golds)
         evictions += len((base - variant) & golds)
     return rescues, evictions, rescues - evictions
+
+
+def summarize_window_membership(records: list[dict]) -> dict:
+    """Per simulated policy: grade-3 golds that land in the 30-slot window (of those present in
+    the Pass-2 pool), queries with at least one gold lost vs "score_no_reserve" (the pre-eviction
+    ordering), and the median graph_hop occupancy of the window (the Q12 guard: ``channel_priority``
+    drove it from 7 to 0 and was disqualified for it -- POOL_ORDER_AB_20260815)."""
+    out: dict[str, dict] = {}
+    usable = [r for r in records if r["simulated"] is not None]
+    for policy in SIMULATED_POLICIES:
+        golds_in_window = 0
+        golds_in_pool = 0
+        queries_gold_lost = 0
+        queries_gold_rescued = 0
+        graph_counts: list[int] = []
+        hop1_rank1_kept = 0
+        hop1_rank1_total = 0
+        for r in usable:
+            sources = r["pass2_call"]["sources"]
+            hop1_ranks = r["pass2_call"]["hop1_ranks"]
+            pool_ids = set(r["pass2_call"]["pool_ids"])
+            window = r["simulated"][policy]
+            window_set = set(window)
+            base_set = set(r["simulated"]["score"])
+            golds = {row["gold"] for row in r["rows"]} & pool_ids
+            golds_in_pool += len(golds)
+            golds_in_window += len(golds & window_set)
+            if (base_set & golds) - window_set:
+                queries_gold_lost += 1
+            if (window_set & golds) - base_set:
+                queries_gold_rescued += 1
+            graph_counts.append(sum(1 for c in window if sources.get(c) == "graph_hop"))
+            for cid, hr in hop1_ranks.items():
+                if hr == 1:
+                    hop1_rank1_total += 1
+                    hop1_rank1_kept += cid in window_set
+        out[policy] = {
+            "golds_in_pool": golds_in_pool,
+            "golds_in_window": golds_in_window,
+            "queries_gold_lost_vs_score": queries_gold_lost,
+            "queries_gold_rescued_vs_score": queries_gold_rescued,
+            "graph_hop_window_median": _median_or_none(graph_counts),
+            "graph_hop_window_zero_frac": (
+                sum(1 for c in graph_counts if c == 0) / len(graph_counts)
+                if graph_counts
+                else None
+            ),
+            "hop1_rank1_in_window": f"{hop1_rank1_kept}/{hop1_rank1_total}",
+        }
+    return {"n_usable": len(usable), "by_policy": out}
+
+
+def print_window_membership(summary: dict) -> None:
+    print()
+    print("=" * 72)
+    print(f"WINDOW MEMBERSHIP by simulated policy (n_usable={summary['n_usable']})")
+    print("=" * 72)
+    for policy, v in summary["by_policy"].items():
+        print(
+            f"  {policy:<20} golds_in_window={v['golds_in_window']}/{v['golds_in_pool']}"
+            f"  lost_vs_score={v['queries_gold_lost_vs_score']}"
+            f"  rescued_vs_score={v['queries_gold_rescued_vs_score']}"
+            f"  graph_hop_median={v['graph_hop_window_median']}"
+            f"  graph_hop_zero_frac={v['graph_hop_window_zero_frac']}"
+            f"  hop1_rank1_in_window={v['hop1_rank1_in_window']}"
+        )
 
 
 def summarize_listwise_invariant(records: list[dict]) -> dict:
@@ -1603,6 +1754,8 @@ def main() -> int:
     predictions = compute_predictions(per_query_records)
     gate = evaluate_gate(per_query_records, predictions)
     print_predictions_report(predictions, gate)
+    window_membership = summarize_window_membership(per_query_records)
+    print_window_membership(window_membership)
 
     if args.json_out:
         out_path = Path(args.json_out)
@@ -1614,6 +1767,7 @@ def main() -> int:
             "predictions": predictions,
             "gate": gate,
             "listwise_invariant_summary": listwise_invariant,
+            "window_membership": window_membership,
             "self_validity_failures": self_validity_failures,
             "records": per_query_records,
         }
