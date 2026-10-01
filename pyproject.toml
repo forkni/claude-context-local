@@ -63,7 +63,7 @@ dependencies = [
     "tree-sitter-python>=0.25.0",
     "tree-sitter-rust>=0.24.2",
     "tree-sitter-typescript>=0.23.2",
-    "urllib3>=2.7.0",  # Security: CVE-2026-44431/44432 (redirect + over-decompression)
+    "urllib3>=2.8.0",  # Security: CVE-2026-44431/44432 (redirect + over-decompression)
 ]
 
 classifiers = [
