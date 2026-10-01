@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from chunking.relationships.call_edge_resolver import CallEdgeResolver, run_resolvers
 from chunking.relationships.external_call_graph import PyanResolver
 from evaluation.chunk_mapping import build_line_to_chunk_map
+from search.graph_view import GraphView
 
 
 if TYPE_CHECKING:
@@ -87,7 +88,7 @@ def inject_call_edges(
     # CodeGraphStorage implements __len__ without __bool__, so `if not storage`
     # or `if not storage.graph` silently treats "empty" as "falsy-but-fine"
     # instead of the failure it actually is (the exact shape of a past bug).
-    if storage.graph.number_of_nodes() == 0:
+    if GraphView(storage).node_count() == 0:
         logger.error(
             "[CALL_EDGES] Graph has zero nodes — skipping edge injection "
             "(expected populated graph nodes before injection runs)"
@@ -211,16 +212,17 @@ def inject_call_edges(
             )
 
         # Inject / upgrade edges with confidence-precedence semantics.
-        g = storage.graph
+        view = GraphView(storage)
         injected = added = upgraded = skipped = 0
         for edge in merged.values():
             caller_id = edge.caller_id
             callee_id = edge.callee_id
-            if caller_id not in g or callee_id not in g:
+            if not view.contains(caller_id) or not view.contains(callee_id):
                 skipped += 1
                 continue
 
-            if not g.has_edge(caller_id, callee_id, "calls"):
+            existing_confidence = view.call_edge_confidence(caller_id, callee_id)
+            if existing_confidence is None:
                 storage.add_call_edge(
                     caller_id,
                     callee_name=callee_id,
@@ -239,9 +241,6 @@ def inject_call_edges(
                 # Upgrade if this resolver has higher confidence.
                 # Key on "calls" — a parallel "imports"/"uses_type" edge on the same
                 # (u, v) pair must not be confused with the "calls" edge we manage.
-                existing_confidence: float = g.edges[caller_id, callee_id, "calls"].get(
-                    "resolver_confidence", 0.0
-                )
                 if edge.confidence > existing_confidence:
                     upgrade_attrs: dict[str, Any] = {
                         "resolver_source": edge.source,

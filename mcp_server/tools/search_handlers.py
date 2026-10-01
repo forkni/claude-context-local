@@ -29,6 +29,7 @@ from search.config import get_search_config
 from search.exceptions import DimensionMismatchError
 from search.filters import normalize_path_lower
 from search.graph_integration import prefer_real_language_nodes
+from search.graph_view import GraphView
 from search.incremental_indexer import IncrementalIndexer
 from search.metadata import MetadataStore
 from search.relationship_analyzer import RelationshipAnalyzer, filter_ambiguous_edges
@@ -274,7 +275,7 @@ async def _resolve_symbol_to_chunk_id(
             # Plain ":name" (chunk_id suffix) or class-qualified ".name"
             matches = [
                 n
-                for n in gs.graph.nodes()
+                for n in GraphView(gs).node_ids()
                 if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
             ]
         if matches:
@@ -519,7 +520,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
             return responses.error(
                 f"Could not resolve source symbol: {source}", path_found=False
             )
-    elif resolved_source and resolved_source not in graph_storage.graph:
+    elif resolved_source and not GraphView(graph_storage).contains(resolved_source):
         # A supplied source_chunk_id that isn't a graph node used to be handed
         # straight to find_path, which silently reported "no path" instead of
         # "this ID doesn't exist" (H5 — worse than a loud error, since the
@@ -546,7 +547,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
             return responses.error(
                 f"Could not resolve target symbol: {target}", path_found=False
             )
-    elif resolved_target and resolved_target not in graph_storage.graph:
+    elif resolved_target and not GraphView(graph_storage).contains(resolved_target):
         recovered, recovered_info = await _recover_unindexed_chunk_id(
             resolved_target, searcher
         )
@@ -586,7 +587,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
                     if source_node
                     else resolved_source.split(":")[-1]
                 ),
-                "exists_in_graph": resolved_source in graph_storage.graph,
+                "exists_in_graph": GraphView(graph_storage).contains(resolved_source),
             },
             "target": {
                 "chunk_id": resolved_target,
@@ -595,7 +596,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
                     if target_node
                     else resolved_target.split(":")[-1]
                 ),
-                "exists_in_graph": resolved_target in graph_storage.graph,
+                "exists_in_graph": GraphView(graph_storage).contains(resolved_target),
             },
             "reason": "No path exists"
             + (f" with edge_types={edge_types}" if edge_types else ""),

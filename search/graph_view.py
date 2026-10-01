@@ -7,16 +7,20 @@ functions directly.  Route everything through this adapter instead so that:
   - NetworkX API details are hidden behind typed records.
   - Tests can supply a small hand-built fake instead of a full CodeGraphStorage.
 
-Two callers exist today:
-  - search/subgraph_extractor.py  (node lookup, edge traversal, SCC topology)
-  - search/ego_graph_retriever.py (_expand_via_ppr — Personalized PageRank)
+Callers include search/subgraph_extractor.py, search/ego_graph_retriever.py,
+search/call_edge_injection.py, search/centrality_ranker.py,
+search/graph_integration.py, search/relationship_analyzer.py and the
+mcp_server result/search handlers.  All are READ paths; graph writes go
+through CodeGraphStorage methods.  tests/unit/search/test_graph_view_boundary.py
+enforces that nothing outside this module touches ``storage.graph``.
 
 See ADR-0051 for constraints on the graph/ ↔ search/ layering.
 """
 
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 import networkx as nx
 from networkx.exception import PowerIterationFailedConvergence as PPRConvergenceError
@@ -73,6 +77,11 @@ class EdgeRecord:
     target: str  # target chunk_id (or bare symbol name for unresolved calls)
     rel_type: str  # relationship kind (calls, imports, inherits, …)
     line: int  # call-site line number (0 if unknown)
+    resolver_confidence: float | None = None  # None when the edge carries none
+    key: Any = field(default=None, compare=False)  # MultiDiGraph parallel-edge key
+    attrs: Mapping[str, Any] = field(
+        default_factory=dict, compare=False
+    )  # raw edge attributes (live view, do not mutate)
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +124,32 @@ class GraphView:
     # Public API
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _edge_record(
+        source: str, target: str, key: Any, edge_data: Mapping[str, Any]
+    ) -> EdgeRecord:
+        return EdgeRecord(
+            source=source,
+            target=target,
+            rel_type=edge_data.get(EDGE_ATTR_TYPE, "calls"),
+            line=edge_data.get(EDGE_ATTR_LINE, 0),
+            resolver_confidence=edge_data.get("resolver_confidence"),
+            key=key,
+            attrs=edge_data,
+        )
+
+    def _keyed(self, view: Any) -> Iterator[tuple[str, str, Any, Mapping[str, Any]]]:
+        """Iterate ``(u, v, key, attrs)`` from an NX edge view.
+
+        MultiDiGraph yields real parallel-edge keys; plain DiGraphs (hand-built
+        test fakes) have none, so ``key`` is None there.
+        """
+        if self._graph.is_multigraph():
+            yield from view(keys=True, data=True)
+        else:
+            for u, v, d in view(data=True):
+                yield u, v, None, d
+
     def contains(self, chunk_id: str) -> bool:
         """Return True if *chunk_id* is a node in the graph."""
         return chunk_id in self._graph
@@ -122,6 +157,45 @@ class GraphView:
     def is_empty(self) -> bool:
         """Return True if the graph has no nodes."""
         return len(self._graph) == 0
+
+    def node_count(self) -> int:
+        """Return the number of nodes (use instead of truthiness; ADR-0066)."""
+        return self._graph.number_of_nodes()
+
+    def node_ids(self) -> list[str]:
+        """Return a snapshot list of all node ids."""
+        return list(self._graph.nodes())
+
+    def nodes_with_attrs(self) -> Iterator[tuple[str, Mapping[str, Any]]]:
+        """Iterate ``(node_id, raw_attrs)`` over every node."""
+        return iter(self._graph.nodes(data=True))
+
+    def node_attrs(self, chunk_id: str) -> Mapping[str, Any]:
+        """Return raw node attributes (empty mapping if the node is absent)."""
+        return self._graph.nodes.get(chunk_id) or {}
+
+    def edges(self, rel_type: str | None = None) -> list[EdgeRecord]:
+        """Return all edges (optionally only *rel_type*) with keys and raw attrs."""
+        records = [
+            self._edge_record(u, v, k, d)
+            for u, v, k, d in self._keyed(self._graph.edges)
+        ]
+        if rel_type is None:
+            return records
+        return [r for r in records if r.rel_type == rel_type]
+
+    def call_edge_confidence(self, source: str, target: str) -> float | None:
+        """Return the ``calls`` edge's resolver_confidence, or None if no such edge.
+
+        An existing ``calls`` edge without a confidence reports 0.0.  Only the
+        ``calls`` parallel edge is consulted -- an ``imports``/``uses_type``
+        edge on the same pair must not be confused with it.
+        """
+        if not self._graph.has_edge(source, target, "calls"):
+            return None
+        return self._graph.edges[source, target, "calls"].get(
+            "resolver_confidence", 0.0
+        )
 
     def has_edge(self, source: str, target: str) -> bool:
         """Return True if any edge exists from *source* to *target*."""
@@ -165,13 +239,10 @@ class GraphView:
         if chunk_id not in self._graph:
             return []
         return [
-            EdgeRecord(
-                source=chunk_id,
-                target=target,
-                rel_type=edge_data.get(EDGE_ATTR_TYPE, "calls"),
-                line=edge_data.get(EDGE_ATTR_LINE, 0),
+            self._edge_record(chunk_id, target, key, edge_data)
+            for _, target, key, edge_data in self._keyed(
+                lambda **kw: self._graph.out_edges(chunk_id, **kw)
             )
-            for _, target, edge_data in self._graph.out_edges(chunk_id, data=True)
         ]
 
     def in_edges(self, chunk_id: str) -> list[EdgeRecord]:
@@ -186,13 +257,10 @@ class GraphView:
         if chunk_id not in self._graph:
             return []
         return [
-            EdgeRecord(
-                source=source,
-                target=chunk_id,
-                rel_type=edge_data.get(EDGE_ATTR_TYPE, "calls"),
-                line=edge_data.get(EDGE_ATTR_LINE, 0),
+            self._edge_record(source, chunk_id, key, edge_data)
+            for source, _, key, edge_data in self._keyed(
+                lambda **kw: self._graph.in_edges(chunk_id, **kw)
             )
-            for source, _, edge_data in self._graph.in_edges(chunk_id, data=True)
         ]
 
     def induced_topology(self, chunk_ids: list[str]) -> list[str]:

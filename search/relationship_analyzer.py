@@ -29,6 +29,7 @@ from search.graph_integration import (
     is_pseudo_language_node,
     prefer_real_language_nodes,
 )
+from search.graph_view import GraphView
 from search.types import BUILTIN_TYPES, ImpactReport
 
 
@@ -730,7 +731,7 @@ class RelationshipAnalyzer:
                 # Suffix scan: ":<name>" (bare) or ".<name>" (class-qualified)
                 matches = [
                     n
-                    for n in graph_storage.graph.nodes()
+                    for n in GraphView(graph_storage).node_ids()
                     if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
                 ]
                 if strict_name_match:

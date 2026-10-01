@@ -13,6 +13,7 @@ import networkx as nx
 
 from search.chunk_id import extract_line_count as _extract_chunk_lines_impl
 from search.chunk_id import extract_name as _extract_name_impl
+from search.graph_view import GraphView
 from search.ranking_policy import (
     NAME_OVERLAP_TIERS,
     TYPE_BOOSTS_CODE,
@@ -125,7 +126,7 @@ class CentralityRanker:
             return cached
 
         # Handle empty graph
-        if storage.graph.number_of_nodes() == 0:
+        if GraphView(storage).node_count() == 0:
             logger.debug("[CENTRALITY] Empty graph, returning empty scores")
             return {}
 

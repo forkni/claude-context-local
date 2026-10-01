@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from graph.schema import get_reverse_relation
 from search.filters import normalize_path
+from search.graph_view import EdgeRecord, GraphView
 from search.types import ResultSource
 
 
@@ -57,38 +58,35 @@ def _get_graph_data_for_chunk(
         dict mapping relationship names to lists of chunk_ids/symbols, or None
     """
     try:
-        graph = index_manager.graph_storage
+        graph = GraphView(index_manager.graph_storage)
         normalized = normalize_path(chunk_id)
         result: dict[str, list[str]] = {}
 
         # Early return if node not in graph
-        if normalized not in graph.graph:
+        if not graph.contains(normalized):
             return None
 
         # Outgoing edges (this chunk is source) -> forward relation names
-        for _, target, edge_data in graph.graph.out_edges(normalized, data=True):
-            rel_type = edge_data.get("type", "calls")
-            lst = result.setdefault(rel_type, [])
+        for edge in graph.out_edges(normalized):
+            lst = result.setdefault(edge.rel_type, [])
             if len(lst) < max_per_type:
-                lst.append(target)
+                lst.append(edge.target)
 
         # Incoming edges by chunk_id -> reverse relation names
-        for source, _, edge_data in graph.graph.in_edges(normalized, data=True):
-            rel_type = edge_data.get("type", "calls")
-            reverse = _get_reverse_relation_name(rel_type)
+        for edge in graph.in_edges(normalized):
+            reverse = _get_reverse_relation_name(edge.rel_type)
             lst = result.setdefault(reverse, [])
             if len(lst) < max_per_type:
-                lst.append(source)
+                lst.append(edge.source)
 
         # Incoming edges by symbol name (edges often target bare names)
         symbol_name = normalized.rsplit(":", 1)[-1] if ":" in normalized else None
-        if symbol_name and symbol_name != normalized and symbol_name in graph.graph:
-            for source, _, edge_data in graph.graph.in_edges(symbol_name, data=True):
-                rel_type = edge_data.get("type", "calls")
-                reverse = _get_reverse_relation_name(rel_type)
+        if symbol_name and symbol_name != normalized and graph.contains(symbol_name):
+            for edge in graph.in_edges(symbol_name):
+                reverse = _get_reverse_relation_name(edge.rel_type)
                 lst = result.setdefault(reverse, [])
-                if len(lst) < max_per_type and source not in lst:
-                    lst.append(source)
+                if len(lst) < max_per_type and edge.source not in lst:
+                    lst.append(edge.source)
 
         return result if result else None
     except Exception as e:  # noqa: BLE001 - resilience: optional graph enrichment, degrade to no graph data
@@ -442,20 +440,19 @@ def _enrich_results_with_top_callers(
     if not index_manager or index_manager.graph_storage is None:
         return results
 
-    graph = index_manager.graph_storage.graph
+    graph = GraphView(index_manager.graph_storage)
 
-    def _collect(node: str, seen: set[str], normalized: str) -> list[tuple[str, dict]]:
+    def _collect(node: str, seen: set[str], normalized: str) -> list[EdgeRecord]:
         """In-edge ``calls`` candidates at ``node``, deduped against ``seen``."""
-        found: list[tuple[str, dict]] = []
-        if node not in graph:
-            return found
-        for source, _, edge_data in graph.in_edges(node, data=True):
-            if edge_data.get("type", "calls") != "calls":
+        found: list[EdgeRecord] = []
+        for edge in graph.in_edges(node):
+            if edge.rel_type != "calls":
                 continue
+            source = edge.source
             if source in seen or source == normalized:
                 continue
             seen.add(source)
-            found.append((source, edge_data))
+            found.append(edge)
         return found
 
     def _annotate(item: dict, chunk_id: str) -> None:
@@ -465,7 +462,7 @@ def _enrich_results_with_top_callers(
         seen: set[str] = set()
         chunk_candidates = _collect(normalized, seen, normalized)
 
-        symbol_candidates: list[tuple[str, dict]] = []
+        symbol_candidates: list[EdgeRecord] = []
         if (
             len(chunk_candidates) < max_callers
             and symbol_name
@@ -474,7 +471,7 @@ def _enrich_results_with_top_callers(
             symbol_candidates = _collect(symbol_name, seen, normalized)
 
         hints = _render_call_hints(
-            graph, chunk_candidates, symbol_candidates, max_callers
+            graph, chunk_candidates, symbol_candidates, max_callers, callers=True
         )
         if hints:
             item["top_callers"] = hints
@@ -490,12 +487,14 @@ def _enrich_results_with_top_callers(
 
 
 def _render_call_hints(
-    graph,
-    primary: list[tuple[str, dict]],
-    secondary: list[tuple[str, dict]],
+    graph: GraphView,
+    primary: list[EdgeRecord],
+    secondary: list[EdgeRecord],
     limit: int,
+    *,
+    callers: bool,
 ) -> list[dict]:
-    """Rank two tiers of ``(node, edge_data)`` candidates and render ``{name, file}``.
+    """Rank two tiers of edge-record candidates and render ``{name, file}``.
 
     Shared by the caller and callee enrichers. ``primary`` always sorts
     before ``secondary``; within a tier, float-confident edges first
@@ -504,10 +503,11 @@ def _render_call_hints(
     render with ``file: ""``.
     """
     tiered = [(c, False) for c in primary] + [(c, True) for c in secondary]
-    tiered.sort(key=lambda t: (t[1], -(t[0][1].get("resolver_confidence") or 0.0)))
+    tiered.sort(key=lambda t: (t[1], -(t[0].resolver_confidence or 0.0)))
     hints = []
-    for (node, _), _is_secondary in tiered[:limit]:
-        node_name = graph.nodes[node].get("name") if node in graph else None
+    for edge, _is_secondary in tiered[:limit]:
+        node = edge.source if callers else edge.target
+        node_name = graph.node_attrs(node).get("name")
         hints.append(
             {
                 "name": node_name or (node.rsplit(":", 1)[-1] if ":" in node else node),
@@ -544,27 +544,30 @@ def _enrich_results_with_top_callees(
     if not index_manager or index_manager.graph_storage is None:
         return results
 
-    graph = index_manager.graph_storage.graph
+    graph = GraphView(index_manager.graph_storage)
 
     def _annotate(item: dict, chunk_id: str) -> None:
         normalized = normalize_path(chunk_id)
-        if normalized not in graph:
+        if not graph.contains(normalized):
             return
         seen: set[str] = set()
-        chunk_targets: list[tuple[str, dict]] = []
-        phantom_targets: list[tuple[str, dict]] = []
-        for _, target, edge_data in graph.out_edges(normalized, data=True):
-            if edge_data.get("type", "calls") != "calls":
+        chunk_targets: list[EdgeRecord] = []
+        phantom_targets: list[EdgeRecord] = []
+        for edge in graph.out_edges(normalized):
+            if edge.rel_type != "calls":
                 continue
+            target = edge.target
             if target in seen or target == normalized:
                 continue
             seen.add(target)
             if ":" in target:
-                chunk_targets.append((target, edge_data))
+                chunk_targets.append(edge)
             else:
-                phantom_targets.append((target, edge_data))
+                phantom_targets.append(edge)
 
-        hints = _render_call_hints(graph, chunk_targets, phantom_targets, max_callees)
+        hints = _render_call_hints(
+            graph, chunk_targets, phantom_targets, max_callees, callers=False
+        )
         if hints:
             item["top_callees"] = hints
 

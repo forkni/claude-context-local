@@ -27,6 +27,7 @@ from graph.schema import (
 )
 from search.chunk_id import is_chunk_id as _is_chunk_id
 from search.config import get_search_config
+from search.graph_view import GraphView
 from utils.path_utils import normalize_path
 
 
@@ -1094,21 +1095,20 @@ class GraphIntegration:
         """
         if self.storage is None:
             return 0
-        graph = self.storage.graph
+        view = GraphView(self.storage)
 
         pending = [
-            (source, target, key, data)
-            for source, target, key, data in graph.edges(keys=True, data=True)
-            if data.get(EDGE_ATTR_TYPE) == RelationshipType.SCRIPTED_BY.value
-            and data.get("via") == "file"
-            and not data.get("retargeted")
-            and is_phantom_node(graph.nodes[target])
+            (e.source, e.target, e.key, e.attrs)
+            for e in view.edges(RelationshipType.SCRIPTED_BY.value)
+            if e.attrs.get("via") == "file"
+            and not e.attrs.get("retargeted")
+            and is_phantom_node(view.node_attrs(e.target))
         ]
         if not pending:
             return 0
 
         file_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
-        for node_id, node_data in graph.nodes(data=True):
+        for node_id, node_data in view.nodes_with_attrs():
             if is_phantom_node(node_data):
                 continue
             if node_data.get(NODE_ATTR_LANGUAGE) in PSEUDO_LANGUAGES:
