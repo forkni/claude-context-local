@@ -130,8 +130,9 @@ class MultiHopSearcher:
                     k=expansion_k,
                 )
 
-                # Process batched results
-                for result in source_results:
+                # Process batched results. source_results is in hop-1 order, so
+                # the 1-based position is the anchor's hop1_rank.
+                for anchor_rank, result in enumerate(source_results, start=1):
                     similar_chunks_raw = batched_results.get(result.chunk_id, [])
 
                     # Convert raw results to SearchResult format
@@ -142,11 +143,19 @@ class MultiHopSearcher:
                             reranker_result = RerankerSearchResult(
                                 chunk_id=cid,
                                 score=similarity,
-                                metadata=metadata,
+                                metadata={**metadata, "anchor_rank": anchor_rank},
                                 source=ResultSource.MULTI_HOP,
                             )
                             all_results[cid] = reranker_result
                             hop_discovered += 1
+                        else:
+                            # Already claimed (e.g. by the graph channel, which
+                            # runs first under hybrid). Dedup stays first-claim;
+                            # only the anchor rank takes the min — see
+                            # _stamp_min_anchor_rank.
+                            self._stamp_min_anchor_rank(
+                                all_results.get(cid), anchor_rank
+                            )
 
             except Exception as e:  # noqa: BLE001 - resilience: per-hop expansion optional, continue without it
                 self._logger.warning(
@@ -163,6 +172,23 @@ class MultiHopSearcher:
             )
 
         return expansion_timings
+
+    @staticmethod
+    def _stamp_min_anchor_rank(existing: Any, anchor_rank: int) -> None:
+        """Lower an expansion candidate's ``anchor_rank`` to the best anchor seen.
+
+        ``anchor_rank`` is the lowest hop-1 rank of any anchor that produced the
+        candidate, in either channel (CONTEXT.md "Anchor rank"). Dedup claims a
+        chunk for whichever channel finds it first, so a later channel that
+        reaches the same chunk from a better-ranked anchor must still be able
+        to lower it. Hop-1 survivors carry no ``anchor_rank`` and are left
+        alone, as is a candidate that has not been stamped.
+        """
+        if existing is None:
+            return
+        current = existing.metadata.get("anchor_rank")
+        if current is not None and anchor_rank < current:
+            existing.metadata["anchor_rank"] = anchor_rank
 
     def _graph_expand(
         self,
@@ -219,7 +245,7 @@ class MultiHopSearcher:
         # when config is None).
         policy = TraversalPolicy.graph_hop(ge_cfg, edge_weights)
 
-        for result in source_results:
+        for anchor_rank, result in enumerate(source_results, start=1):
             # get_neighbors_ranked (not get_neighbors) so the `break` below
             # truncates by priority order, not Python's set-iteration order —
             # the latter made `added_for_source >= expansion_k` pick a
@@ -247,7 +273,15 @@ class MultiHopSearcher:
                     continue  # In graph but not in search index
 
                 all_chunk_ids.add(neighbor_id)
-                pending.append((neighbor_id, metadata, result.score))
+                # Graph runs first under hybrid and walks anchors in hop-1
+                # order, so the first claim is already the lowest anchor rank.
+                pending.append(
+                    (
+                        neighbor_id,
+                        {**metadata, "anchor_rank": anchor_rank},
+                        result.score,
+                    )
+                )
                 hop_discovered += 1
                 added_for_source += 1
 

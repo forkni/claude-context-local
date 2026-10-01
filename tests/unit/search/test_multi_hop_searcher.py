@@ -904,6 +904,130 @@ class TestMultiHopSearcher:
         assert all_results["src/b.py:20-30:function:bar"].source == "graph_hop"
         assert all_results["src/c.py:40-50:function:baz"].source == "multi_hop"
 
+    def test_semantic_expansion_stamps_anchor_rank_per_anchor(self):
+        """Each semantic candidate carries the 1-based hop-1 rank of its anchor."""
+        initial_results = [
+            SearchResult(chunk_id="a", score=0.9, metadata={"hop1_rank": 1}),
+            SearchResult(chunk_id="b", score=0.8, metadata={"hop1_rank": 2}),
+        ]
+        all_chunk_ids = {"a", "b"}
+        all_results = {r.chunk_id: r for r in initial_results}
+        self.mock_dense_index.get_similar_chunks_batched.return_value = {
+            "a": [("c", 0.7, {"file": "c.py"})],
+            "b": [("d", 0.6, {"file": "d.py"})],
+        }
+
+        self.searcher.expand_from_initial_results(
+            initial_results, all_chunk_ids, all_results, expansion_k=2, hops=2, k=2
+        )
+
+        assert all_results["c"].metadata["anchor_rank"] == 1
+        assert all_results["d"].metadata["anchor_rank"] == 2
+        # Hop-1 survivors are not frontier candidates: never stamped.
+        assert "anchor_rank" not in all_results["a"].metadata
+        assert "anchor_rank" not in all_results["b"].metadata
+
+    def test_anchor_stamp_does_not_mutate_source_metadata(self):
+        """Stamping copies the metadata dict instead of writing into the caller's."""
+        source_meta = {"file": "c.py"}
+        initial_results = [SearchResult(chunk_id="a", score=0.9, metadata={})]
+        all_results = {"a": initial_results[0]}
+        self.mock_dense_index.get_similar_chunks_batched.return_value = {
+            "a": [("c", 0.7, source_meta)],
+        }
+
+        self.searcher.expand_from_initial_results(
+            initial_results, {"a"}, all_results, expansion_k=2, hops=2, k=1
+        )
+
+        assert all_results["c"].metadata["anchor_rank"] == 1
+        assert source_meta == {"file": "c.py"}
+
+    def test_graph_expansion_stamps_anchor_rank(self):
+        """Graph candidates carry the rank of the first anchor that reaches them."""
+        initial_results = [
+            SearchResult(chunk_id="src/a.py:1-10:function:a", score=0.9, metadata={}),
+            SearchResult(chunk_id="src/b.py:1-10:function:b", score=0.8, metadata={}),
+        ]
+        all_chunk_ids = {r.chunk_id for r in initial_results}
+        all_results = {r.chunk_id: r for r in initial_results}
+        neighbors = {
+            "src/a.py:1-10:function:a": ["src/x.py:1-5:function:x"],
+            "src/b.py:1-10:function:b": [
+                "src/x.py:1-5:function:x",
+                "src/y.py:1-5:function:y",
+            ],
+        }
+        self.mock_graph_storage.get_neighbors_ranked.side_effect = (
+            lambda chunk_id, policy: neighbors[chunk_id]
+        )
+        self.mock_dense_index.get_chunk_by_id.return_value = {"file": "n.py"}
+
+        self.searcher._graph_expand(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=5,
+            k=2,
+        )
+
+        assert all_results["src/x.py:1-5:function:x"].metadata["anchor_rank"] == 1
+        assert all_results["src/y.py:1-5:function:y"].metadata["anchor_rank"] == 2
+
+    def test_hybrid_expand_anchor_rank_takes_min_across_channels(self):
+        """A chunk the graph found from anchor 2 and semantic found from anchor 1
+        keeps its graph claim (dedup unchanged) but gets anchor_rank 1."""
+        initial_results = [
+            SearchResult(chunk_id="src/a.py:1-10:function:a", score=0.9, metadata={}),
+            SearchResult(chunk_id="src/b.py:1-10:function:b", score=0.8, metadata={}),
+        ]
+        shared = "src/s.py:1-5:function:shared"
+        all_chunk_ids = {r.chunk_id for r in initial_results}
+        all_results = {r.chunk_id: r for r in initial_results}
+        # Graph reaches `shared` only from anchor 2.
+        self.mock_graph_storage.get_neighbors_ranked.side_effect = (
+            lambda chunk_id, policy: (
+                [shared] if chunk_id == "src/b.py:1-10:function:b" else []
+            )
+        )
+        self.mock_dense_index.get_chunk_by_id.return_value = {"file": "s.py"}
+        # Semantic reaches the same chunk from anchor 1.
+        self.mock_dense_index.get_similar_chunks_batched.return_value = {
+            "src/a.py:1-10:function:a": [(shared, 0.7, {"file": "s.py"})],
+            "src/b.py:1-10:function:b": [],
+        }
+
+        self.searcher._hybrid_expand(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=5,
+            hops=2,
+            k=2,
+        )
+
+        assert all_results[shared].source == "graph_hop"  # first claim still wins
+        assert all_results[shared].metadata["anchor_rank"] == 1
+
+    def test_anchor_rank_min_leaves_hop1_survivors_unstamped(self):
+        """A semantic hit on a hop-1 survivor must not give it an anchor_rank."""
+        survivor = SearchResult(chunk_id="b", score=0.8, metadata={"hop1_rank": 2})
+        initial_results = [
+            SearchResult(chunk_id="a", score=0.9, metadata={"hop1_rank": 1}),
+            survivor,
+        ]
+        all_results = {r.chunk_id: r for r in initial_results}
+        self.mock_dense_index.get_similar_chunks_batched.return_value = {
+            "a": [("b", 0.9, {})],
+            "b": [],
+        }
+
+        self.searcher.expand_from_initial_results(
+            initial_results, {"a", "b"}, all_results, expansion_k=2, hops=2, k=2
+        )
+
+        assert "anchor_rank" not in survivor.metadata
+
     def test_search_dispatches_graph_mode(self):
         """Test search() dispatches to graph expansion when mode is 'graph'."""
         config = MagicMock()
