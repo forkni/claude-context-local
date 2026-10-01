@@ -10,7 +10,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+
+if TYPE_CHECKING:
+    from chunking.repo_profiler import RepoProfile
+    from search.config import ChunkingConfig
 
 
 logger = logging.getLogger(__name__)
@@ -78,52 +84,117 @@ def estimate_characters(content: str, count_whitespace: bool = False) -> int:
     return len("".join(content.split()))
 
 
-def measure(nodes: list[Any], source_bytes: bytes, unit: str) -> int:
-    """Accumulated size of a run of sibling AST nodes.
+@dataclass(frozen=True)
+class SizePolicy:
+    """How big a group of nodes may get before it is cut, and in what unit.
 
-    Args:
-        nodes: Tree-sitter nodes in source order (the span first->last is measured).
-        source_bytes: Source code bytes.
-        unit: "lines" or "characters"; any other value falls back to lines.
+    One policy is built per call site (a function being split, a module
+    preamble run) so the threshold and the unit it is measured in always
+    travel together.
 
-    Returns:
-        The size of the span from the first node's start to the last node's end.
+    Attributes:
+        threshold: Size at which a group is closed.
+        unit: "lines" or "characters"; any other value falls back to lines
+            for both the measure and the threshold.
     """
-    if not nodes:
-        return 0
 
-    # Get text span from first to last node
-    start = nodes[0].start_byte
-    end = nodes[-1].end_byte
-    text = source_bytes[start:end].decode("utf-8", errors="ignore")
+    threshold: int
+    unit: str
 
-    if unit == "lines":
-        return text.count("\n") + 1
-    elif unit == "characters":
-        return estimate_characters(text)
-    return text.count("\n") + 1  # default fallback
+    @classmethod
+    def _of(cls, unit: str, max_lines: int, max_chars: int) -> SizePolicy:
+        """Pick the threshold that matches `unit` (unknown unit -> lines)."""
+        threshold = max_chars if unit == "characters" else max_lines
+        return cls(threshold=threshold, unit=unit)
+
+    @classmethod
+    def for_function(
+        cls,
+        config: ChunkingConfig,
+        repo_profile: RepoProfile | None,
+        node_complexity: Callable[[], int],
+    ) -> SizePolicy:
+        """Policy for splitting one oversized function.
+
+        - "fixed" sizing: the static ``max_split_chars``.
+        - "adaptive" sizing (with a usable profile): P75 of function sizes
+          modulated by this node's complexity. ``node_complexity`` is only
+          called in that case. The adaptive threshold is computed even when
+          the unit is lines, and is then ignored.
+        """
+        max_chars = config.max_split_chars
+        if (
+            config.sizing_mode == "adaptive"
+            and repo_profile is not None
+            and repo_profile.p75_chars > 0
+        ):
+            complexity = node_complexity()
+            max_chars = compute_adaptive_threshold(
+                complexity=complexity,
+                base_threshold=repo_profile.p75_chars,
+                max_complexity=repo_profile.max_complexity or config.max_complexity_cap,
+                multiplier_max=config.adaptive_multiplier_max,
+                multiplier_min=config.adaptive_multiplier_min,
+            )
+            logger.debug(
+                f"[ADAPTIVE] node CC={complexity}, P75={repo_profile.p75_chars}, "
+                f"threshold={max_chars} (static={config.max_split_chars})"
+            )
+        return cls._of(config.split_size_method, config.max_chunk_lines, max_chars)
+
+    @classmethod
+    def for_preamble(cls, config: ChunkingConfig) -> SizePolicy:
+        """Policy for splitting an oversized module-preamble run.
+
+        Always the static ``max_split_chars``, never adaptive: P75 is a
+        distribution of function sizes, and at low complexity it yields
+        pieces far too small for prose-shaped preamble runs.
+        """
+        return cls._of(
+            config.split_size_method, config.max_chunk_lines, config.max_split_chars
+        )
+
+    def measure(self, nodes: list[Any], source_bytes: bytes) -> int:
+        """Accumulated size of a run of sibling AST nodes, in this policy's unit.
+
+        Args:
+            nodes: Tree-sitter nodes in source order (the span first->last is measured).
+            source_bytes: Source code bytes.
+
+        Returns:
+            The size of the span from the first node's start to the last node's end.
+        """
+        if not nodes:
+            return 0
+
+        # Get text span from first to last node
+        start = nodes[0].start_byte
+        end = nodes[-1].end_byte
+        text = source_bytes[start:end].decode("utf-8", errors="ignore")
+
+        if self.unit == "characters":
+            return estimate_characters(text)
+        return text.count("\n") + 1  # "lines", and the fallback for unknown units
 
 
 def pack_by_size(
     nodes: list[Any],
     source_bytes: bytes,
-    threshold: int,
-    unit: str,
+    policy: SizePolicy,
     may_cut_before: Callable[[Any, Any], bool],
 ) -> list[list[Any]]:
     """Greedily pack sibling nodes into size-bounded groups.
 
     Accumulates `nodes` in order, cutting before a node only where
     `may_cut_before(current_group[-1], node)` allows a cut AND adding
-    the node would bring the accumulated size to `threshold` or beyond.
-    A cut never splits a single oversized node -- it always starts a
-    new group with that node instead.
+    the node would bring the accumulated size to `policy.threshold` or
+    beyond. A cut never splits a single oversized node -- it always starts
+    a new group with that node instead.
 
     Args:
         nodes: Sibling tree-sitter nodes to pack, in source order.
         source_bytes: Source code bytes.
-        threshold: Size at which a group is closed.
-        unit: "lines" or "characters", passed to `measure`.
+        policy: Threshold and unit deciding when a group is closed.
         may_cut_before: Predicate(prev_node, node) -- whether a cut is
             allowed immediately before `node`, given the last node
             accumulated so far.
@@ -137,8 +208,7 @@ def pack_by_size(
     for node in nodes:
         if current_nodes and may_cut_before(current_nodes[-1], node):
             test_nodes = current_nodes + [node]
-            test_size = measure(test_nodes, source_bytes, unit)
-            if test_size >= threshold:
+            if policy.measure(test_nodes, source_bytes) >= policy.threshold:
                 groups.append(current_nodes)
                 current_nodes = [node]
                 continue

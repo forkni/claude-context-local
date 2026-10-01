@@ -1119,7 +1119,7 @@ class ChunkingConfig:
             choices=("lines", "characters"),
             flat_alias="split_size_method",
             mcp="chunking",
-            reader="chunking/languages/base.py",
+            reader="chunking/sizing.py",
         ),
     )  # "lines" or "characters"
     max_split_chars: int = field(
@@ -1128,7 +1128,7 @@ class ChunkingConfig:
             range=(1000, 10000),
             flat_alias="max_split_chars",
             mcp="chunking",
-            reader="chunking/languages/base.py",
+            reader="chunking/sizing.py",
         ),
     )  # Character-based splitting (~750 tokens, optimal for retrieval)
 
@@ -1144,26 +1144,20 @@ class ChunkingConfig:
         metadata=spec(
             choices=("fixed", "adaptive"),
             mcp="chunking",
-            reader="chunking/languages/base.py",
+            reader="chunking/sizing.py",
         ),
     )  # "fixed" (static) or "adaptive" (repo-profiled)
     adaptive_multiplier_max: float = field(
         default=1.3,
-        metadata=spec(
-            range=(1.0, 2.0), mcp="chunking", reader="chunking/languages/base.py"
-        ),
+        metadata=spec(range=(1.0, 2.0), mcp="chunking", reader="chunking/sizing.py"),
     )  # T_max = P75_baseline × this (low-complexity)
     adaptive_multiplier_min: float = field(
         default=0.5,
-        metadata=spec(
-            range=(0.1, 1.0), mcp="chunking", reader="chunking/languages/base.py"
-        ),
+        metadata=spec(range=(0.1, 1.0), mcp="chunking", reader="chunking/sizing.py"),
     )  # T_min = P75_baseline × this (high-complexity)
     max_complexity_cap: int = field(
         default=30,
-        metadata=spec(
-            range=(5, 100), mcp="chunking", reader="chunking/languages/base.py"
-        ),
+        metadata=spec(range=(5, 100), mcp="chunking", reader="chunking/sizing.py"),
     )  # Cv normalization ceiling (CC >= cap → Cv = 1.0)
 
     # GLSL call-graph extraction (Phase 2b): filter TouchDesigner's TD-prefixed

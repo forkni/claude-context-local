@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 from abc import ABC
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -16,14 +15,14 @@ from tree_sitter import Language, Parser
 
 # Re-exported: chunking.repo_profiler, scripts/benchmark and tests import these from here.
 from chunking.sizing import (
+    SizePolicy,
+    pack_by_size,
+)
+from chunking.sizing import (
     compute_adaptive_threshold as compute_adaptive_threshold,
 )
 from chunking.sizing import (
     estimate_characters as estimate_characters,
-)
-from chunking.sizing import (
-    measure,
-    pack_by_size,
 )
 
 
@@ -681,9 +680,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         node: Any,
         source_bytes: bytes,
         parent_info: dict[str, Any] | None,
-        max_lines: int = 100,
-        split_size_method: str = "characters",
-        max_chars: int = 3000,
+        policy: SizePolicy,
     ) -> list[TreeSitterChunk]:
         """Split a large function node at logical AST boundaries with size-based accumulation.
 
@@ -698,9 +695,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
             node: Tree-sitter node exceeding size threshold
             source_bytes: Source code bytes
             parent_info: Parent class information for methods
-            max_lines: Maximum lines before split (for "lines" method)
-            split_size_method: "lines" or "characters"
-            max_chars: Maximum characters before split (for "characters" method)
+            policy: Size threshold and unit deciding where to cut
 
         Returns:
             List of TreeSitterChunk objects with split content,
@@ -718,14 +713,10 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         if not body_node:
             return []  # No body found, use default
 
-        # Determine threshold based on method
-        threshold = self._get_split_threshold(split_size_method, max_lines, max_chars)
-
-        groups = self._pack_by_size(
+        groups = pack_by_size(
             body_node.children,
             source_bytes,
-            threshold,
-            split_size_method,
+            policy,
             lambda _prev, child: child.type in split_types,
         )
 
@@ -736,109 +727,6 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
 
         # Only split if actually multiple chunks
         return chunks if len(chunks) > 1 else []
-
-    def _pack_by_size(
-        self,
-        nodes: list[Any],
-        source_bytes: bytes,
-        threshold: int,
-        split_size_method: str,
-        may_cut_before: Callable[[Any, Any], bool],
-    ) -> list[list[Any]]:
-        """Greedily pack sibling nodes into size-bounded groups.
-
-        Accumulates `nodes` in order, cutting before a node only where
-        `may_cut_before(current_group[-1], node)` allows a cut AND adding
-        the node would bring the accumulated size to `threshold` or beyond.
-        A cut never splits a single oversized node -- it always starts a
-        new group with that node instead.
-
-        Args:
-            nodes: Sibling tree-sitter nodes to pack, in source order.
-            source_bytes: Source code bytes.
-            threshold: Size threshold from _get_split_threshold.
-            split_size_method: "lines" or "characters", passed to
-                _calculate_accumulated_size.
-            may_cut_before: Predicate(prev_node, node) -- whether a cut is
-                allowed immediately before `node`, given the last node
-                accumulated so far.
-
-        Returns:
-            List of non-empty node groups covering `nodes` in order.
-        """
-        return pack_by_size(
-            nodes, source_bytes, threshold, split_size_method, may_cut_before
-        )
-
-    def _get_split_threshold(
-        self,
-        method: str,
-        max_lines: int,
-        max_chars: int,
-    ) -> int:
-        """Determine the size threshold based on the split method.
-
-        Args:
-            method: Split size method ("lines" or "characters")
-            max_lines: Maximum lines threshold
-            max_chars: Maximum characters threshold
-
-        Returns:
-            The threshold value for the specified method
-        """
-        if method == "lines":
-            return max_lines
-        elif method == "characters":
-            return max_chars
-        return max_lines  # default fallback
-
-    def _resolve_split_max_chars(
-        self,
-        node: Any,
-        config: ChunkingConfig,
-        repo_profile: RepoProfile | None,
-    ) -> int:
-        """Determine effective split threshold:
-        - "fixed" mode: use static max_split_chars from config
-        - "adaptive" mode: modulate based on P75 baseline + complexity
-        """
-        effective_max_chars = config.max_split_chars
-        if (
-            config.sizing_mode == "adaptive"
-            and repo_profile is not None
-            and repo_profile.p75_chars > 0
-        ):
-            complexity = self.get_node_complexity(node)
-            effective_max_chars = compute_adaptive_threshold(
-                complexity=complexity,
-                base_threshold=repo_profile.p75_chars,
-                max_complexity=repo_profile.max_complexity or config.max_complexity_cap,
-                multiplier_max=config.adaptive_multiplier_max,
-                multiplier_min=config.adaptive_multiplier_min,
-            )
-            logger.debug(
-                f"[ADAPTIVE] node CC={complexity}, P75={repo_profile.p75_chars}, "
-                f"threshold={effective_max_chars} (static={config.max_split_chars})"
-            )
-        return effective_max_chars
-
-    def _calculate_accumulated_size(
-        self,
-        nodes: list[Any],
-        source_bytes: bytes,
-        method: str,
-    ) -> int:
-        """Calculate the accumulated size of a list of AST nodes.
-
-        Args:
-            nodes: List of tree-sitter nodes
-            source_bytes: Source code bytes
-            method: Size calculation method ("lines" or "characters")
-
-        Returns:
-            The calculated size according to the specified method
-        """
-        return measure(nodes, source_bytes, method)
 
     def chunk_code(
         self,
@@ -930,17 +818,11 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                     and node.type in ("function_definition", "decorated_definition")
                     and self._container_traversal_root(node) is None
                 ):
-                    effective_max_chars = self._resolve_split_max_chars(
-                        node, config, repo_profile
+                    policy = SizePolicy.for_function(
+                        config, repo_profile, lambda: self.get_node_complexity(node)
                     )
-
                     split_chunks = self._split_large_node(
-                        node,
-                        source_bytes,
-                        parent_info,
-                        max_lines=config.max_chunk_lines,
-                        split_size_method=config.split_size_method,
-                        max_chars=effective_max_chars,
+                        node, source_bytes, parent_info, policy
                     )
                     if split_chunks:
                         chunks.extend(split_chunks)
@@ -1152,11 +1034,9 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         ``config.max_chunk_lines``. Otherwise returns ``[nodes]`` unchanged
         -- the pre-Card-B behavior of one verbatim chunk per run.
 
-        Uses the shared ``_pack_by_size`` packer at the *static*
-        ``max_split_chars`` threshold, never the adaptive one: P75 is a
-        distribution of function sizes, and at low complexity that produces
-        pieces far too small for prose-shaped preamble runs (see Card B
-        plan). Cuts are vetoed between a leading comment and the statement
+        Uses the shared ``pack_by_size`` packer with ``SizePolicy.for_preamble``
+        (the *static* ``max_split_chars`` threshold, never the adaptive one;
+        see Card B plan). Cuts are vetoed between a leading comment and the statement
         it documents (``_preamble_may_cut_before``).
         """
         if (
@@ -1169,14 +1049,10 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         end_line = nodes[-1].end_point[0] + 1
         if end_line - start_line + 1 <= config.max_chunk_lines:
             return [nodes]
-        threshold = self._get_split_threshold(
-            config.split_size_method, config.max_chunk_lines, config.max_split_chars
-        )
-        return self._pack_by_size(
+        return pack_by_size(
             nodes,
             source_bytes,
-            threshold,
-            config.split_size_method,
+            SizePolicy.for_preamble(config),
             self._preamble_may_cut_before,
         )
 

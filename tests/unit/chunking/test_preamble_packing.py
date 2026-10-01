@@ -3,7 +3,7 @@
 `_collect_module_preamble_chunks` (base.py) emits every root-level statement run
 not covered by function/class chunking as one verbatim chunk, with no size check
 -- unlike the function-split path. `split_oversized_preamble` (default off) packs
-an oversized run into size-bounded pieces at sibling boundaries via `_pack_by_size`,
+an oversized run into size-bounded pieces at sibling boundaries via `pack_by_size`,
 the same packer `_split_large_node` uses.
 """
 
@@ -37,7 +37,7 @@ def _prose_marker_source(num_pairs: int) -> str:
     comments get swallowed into the same ERROR production. A valid
     assignment statement between paragraphs acts as a circuit breaker,
     terminating error recovery and giving the run multiple distinct
-    root-level siblings, which is what `_pack_by_size` needs to cut between.
+    root-level siblings, which is what `pack_by_size` needs to cut between.
     """
     blocks = []
     for i in range(num_pairs):
