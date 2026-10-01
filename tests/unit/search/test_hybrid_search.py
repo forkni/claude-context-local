@@ -549,7 +549,7 @@ class TestHybridSearcher:
         count = searcher.resync_bm25_from_dense()
 
         assert count == 2
-        assert set(searcher.bm25_index._doc_ids) == {"chunk1", "chunk2"}
+        assert set(searcher.bm25_index.doc_ids) == {"chunk1", "chunk2"}
 
     def test_clear_index_clears_both_indices(self):
         """Test clear_index clears both BM25 and dense indices in place (ADR-0025)."""

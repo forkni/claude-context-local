@@ -343,6 +343,11 @@ class BM25Index:
         return len(self._documents) == 0
 
     @property
+    def doc_ids(self) -> list[str]:
+        """Document IDs in index order (read-only view; do not mutate)."""
+        return self._doc_ids
+
+    @property
     def size(self) -> int:
         """Get number of indexed documents."""
         return len(self._documents)

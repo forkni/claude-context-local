@@ -85,6 +85,10 @@ class FakeBM25Index:
         return len(self._documents) == 0
 
     @property
+    def doc_ids(self) -> list[str]:
+        return self._doc_ids
+
+    @property
     def size(self) -> int:
         return len(self._documents)
 

@@ -124,8 +124,8 @@ class TestIndexSynchronizer:
 
     def test_validate_index_sync_in_sync(self):
         """Test validation when indices are in sync."""
-        # Configure mocks - uses _doc_ids and ntotal property
-        self.mock_bm25_index._doc_ids = ["id1", "id2", "id3"]
+        # Configure mocks - uses doc_ids and ntotal property
+        self.mock_bm25_index.doc_ids = ["id1", "id2", "id3"]
         self.mock_dense_index.ntotal = 3
 
         # Execute validation
@@ -137,7 +137,7 @@ class TestIndexSynchronizer:
     def test_validate_index_sync_out_of_sync(self):
         """Test validation when indices are out of sync."""
         # Configure mocks - different sizes
-        self.mock_bm25_index._doc_ids = ["id1", "id2", "id3"]
+        self.mock_bm25_index.doc_ids = ["id1", "id2", "id3"]
         self.mock_dense_index.ntotal = 5
 
         # Execute validation
@@ -148,7 +148,7 @@ class TestIndexSynchronizer:
 
     def test_validate_index_sync_empty_dense(self):
         """Test validation when dense index is empty."""
-        self.mock_bm25_index._doc_ids = ["id1", "id2", "id3"]
+        self.mock_bm25_index.doc_ids = ["id1", "id2", "id3"]
         self.mock_dense_index.index = None
         self.mock_dense_index.ntotal = 0
 
@@ -171,7 +171,7 @@ class TestIndexSynchronizer:
         actual repair)."""
         import logging
 
-        self.mock_bm25_index._doc_ids = ["id1", "id2", "id2"]  # id2 duplicated
+        self.mock_bm25_index.doc_ids = ["id1", "id2", "id2"]  # id2 duplicated
         self.mock_dense_index.ntotal = 3
 
         with caplog.at_level(logging.WARNING):
@@ -188,7 +188,7 @@ class TestIndexSynchronizer:
         warning at all."""
         import logging
 
-        self.mock_bm25_index._doc_ids = ["id1", "id2", "id3"]
+        self.mock_bm25_index.doc_ids = ["id1", "id2", "id3"]
         self.mock_dense_index.ntotal = 3
 
         with caplog.at_level(logging.WARNING):
@@ -450,7 +450,7 @@ class TestResyncIfDesynced:
 
     def test_synced_returns_false_zero(self):
         """No resync when counts match."""
-        self.bm25._doc_ids = list(range(100))
+        self.bm25.doc_ids = list(range(100))
         self.dense.ntotal = 100
 
         resynced, count = self.sync.resync_if_desynced("TEST")
@@ -460,7 +460,7 @@ class TestResyncIfDesynced:
 
     def test_below_threshold_no_resync(self):
         """9% difference is below DESYNC_THRESHOLD — no action."""
-        self.bm25._doc_ids = list(range(91))
+        self.bm25.doc_ids = list(range(91))
         self.dense.ntotal = 100  # 9% diff
 
         resynced, count = self.sync.resync_if_desynced("TEST")
@@ -470,7 +470,7 @@ class TestResyncIfDesynced:
 
     def test_above_threshold_triggers_resync(self):
         """11% difference triggers resync and returns (True, rebuild_count)."""
-        self.bm25._doc_ids = list(range(89))
+        self.bm25.doc_ids = list(range(89))
         self.dense.ntotal = 100  # 11% diff > 0.10
 
         self.dense.chunk_ids = ["c1", "c2"]
@@ -488,7 +488,7 @@ class TestResyncIfDesynced:
 
     def test_dense_empty_skips_resync(self):
         """Dense count=0 → skip resync (no reference to divide by)."""
-        self.bm25._doc_ids = []
+        self.bm25.doc_ids = []
         self.dense.ntotal = 0
         self.dense.index = None
 
@@ -499,7 +499,7 @@ class TestResyncIfDesynced:
 
     def test_uses_live_counts_not_get_stats(self):
         """resync_if_desynced never calls get_stats() — live counts only."""
-        self.bm25._doc_ids = list(range(100))
+        self.bm25.doc_ids = list(range(100))
         self.dense.ntotal = 100
 
         self.sync.resync_if_desynced("TEST")

@@ -145,7 +145,7 @@ class IndexSynchronizer:
         Both callers (validate_index_sync and resync_if_desynced) use the same
         data source so the two can never silently disagree.
         """
-        bm25_count = len(self.bm25_index._doc_ids) if self.bm25_index else 0
+        bm25_count = len(self.bm25_index.doc_ids) if self.bm25_index else 0
         dense_count = self.dense_index.ntotal if self.dense_index else 0
         return bm25_count, dense_count
 
@@ -172,7 +172,7 @@ class IndexSynchronizer:
         # the symptom. Log only: resync_if_desynced rebuilds BM25 from dense
         # and cannot repair a duplicate id, so flipping `synced` here would
         # just churn without fixing anything.
-        ids = self.bm25_index._doc_ids if self.bm25_index else []
+        ids = self.bm25_index.doc_ids if self.bm25_index else []
         if len(ids) != len(set(ids)):
             self._logger.warning(
                 f"[SYNC_CHECK] Duplicate chunk_ids: {len(ids)} total, "
