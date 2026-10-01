@@ -18,7 +18,7 @@ for avoiding re-litigating settled questions.
 | [0010](0010-centrality-memo-invalidation.md) | Centrality memo invalidation: version counter, not node/edge counts | accepted | 2026-07-27 |
 | [0011](0011-listwise-reranker-doc-cap.md) | Cap JinaRerankerV3's listwise document budget at 1000 chars | accepted | 2026-07-28 |
 | [0012](0012-curated-vocabulary-query-expansion.md) | Curated-vocabulary query expansion over PRF or LLM query rewriting | accepted | 2026-07-28 |
-| [0013](0013-hop1-reserve-at-final-pool.md) | Reserve hop-1 winners at the multi-hop rerank window, not at hop-1 fusion | accepted | 2026-07-28 |
+| [0013](0013-hop1-reserve-at-final-pool.md) | Reserve hop-1 winners at the multi-hop rerank window, not at hop-1 fusion | superseded by 0079 | 2026-07-28 |
 | [0014](0014-per-project-search-config-overrides.md) | Per-project search config overrides via `search_overrides.json` | accepted | 2026-07-29 |
 | [0015](0015-remove-community-subsystem.md) | Remove the community-detection subsystem; cancel the Leiden migration | accepted | 2026-07-30 |
 | [0016](0016-remove-dspy-eval-subsystem.md) | Remove the DSPy eval subsystem | accepted | 2026-08-01 |
@@ -44,7 +44,7 @@ for avoiding re-litigating settled questions.
 | [0036](0036-include-dirs-additive-for-dependency-trees.md) | Make `include_dirs` additive for dependency trees, narrowing for source | accepted | 2026-08-07 |
 | [0037](0037-decline-index-version-bump-for-cpp-parity.md) | Decline an `INDEX_VERSION` bump for C++ chunking parity | accepted | 2026-08-12 |
 | [0038](0038-cpp-only-container-traversal-seam.md) | Fix the container-traversal seam for C++ only; defer the Rust/C# analogues | accepted | 2026-08-12 |
-| [0039](0039-merged-pool-provenance-bands.md) | Replace the merged-pool score sort's incidental graph band with an explicit one | accepted | 2026-08-15 |
+| [0039](0039-merged-pool-provenance-bands.md) | Replace the merged-pool score sort's incidental graph band with an explicit one | superseded by 0079 | 2026-08-15 |
 | [0040](0040-probe-harness-seam.md) | Shared interface for offline retrieval probes: `evaluation/probe_harness.py` | accepted | 2026-08-17 |
 | [0041](0041-find-connections-indirect-caller-fanout.md) | Dedup/sort `find_connections`' `indirect_callers`; decline the fan-out cap | accepted | 2026-08-18 |
 | [0042](0042-publish-invariants-not-values.md) | Derive the MCP tool schema's bounds/enums from `spec()`; never derive `default` | accepted | 2026-08-19 |
@@ -84,7 +84,7 @@ for avoiding re-litigating settled questions.
 | [0076](0076-bound-the-listwise-packed-window-by-tokens.md) | Bound the Jina listwise packed window by tokens | accepted | 2026-09-19 |
 | [0077](0077-single-block-listwise-invariant.md) | Make single-block listwise reranking an invariant | accepted | 2026-09-19 |
 | [0078](0078-reject-real-toon-text-output.md) | Reject real TOON v4.1 text output; keep the improved `ultra` | accepted | 2026-09-21 |
-| [0079](0079-gar-style-rerank-window-membership.md) | Decide rerank-window membership by interleaving, not by sorting mixed score scales | proposed | 2026-10-01 |
+| [0079](0079-gar-style-rerank-window-membership.md) | Decide rerank-window membership by interleaving, not by sorting mixed score scales | accepted | 2026-10-01 |
 
 ## Adding a new ADR
 

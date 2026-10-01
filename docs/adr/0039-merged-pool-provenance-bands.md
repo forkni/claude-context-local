@@ -1,6 +1,6 @@
 # Replace the merged-pool score sort's incidental graph band with an explicit one
 
-Status: accepted
+Status: superseded by [ADR-0079](0079-gar-style-rerank-window-membership.md)
 Date: 2026-08-15
 
 ## Context

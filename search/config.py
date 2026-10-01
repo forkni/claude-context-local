@@ -922,9 +922,11 @@ class RerankerConfig:
         ),
     )
     merged_pool_policy: str = field(
-        default="score",  # How RerankingEngine.rerank_by_query orders the
-        # merged multi-hop pool before the top_k_candidates cut. "score"
-        # (default, byte-identical) sorts by raw .score across three
+        default="gar_interleave",  # How RerankingEngine.rerank_by_query orders
+        # the merged multi-hop pool before the top_k_candidates cut. Default
+        # flipped from "score" to "gar_interleave" once its A/B passed
+        # (evaluation/GAR_WINDOW_AB_20261001.md, ADR-0079). "score"
+        # (legacy) sorts by raw .score across three
         # incommensurable scales -- hop-1 survivors carry an overwritten jina
         # relevance score (~-0.12..+0.22), semantic-expansion candidates carry
         # raw FAISS cosine (~0.5-0.9), graph-expansion candidates carry a
@@ -953,8 +955,7 @@ class RerankerConfig:
         # (by anchor_rank, graph/semantic alternating inside an anchor), never
         # comparing scores across channels; it bypasses hop1_reserved_slots
         # and graph_hop_window_cap, and candidates past the window are
-        # backfilled, not dropped. Opt-in until its A/B passes
-        # (evaluation/GAR_WINDOW_AB_20261001.md). Only MultiHopSearcher's Pass-2 rerank call
+        # backfilled, not dropped. Only MultiHopSearcher's Pass-2 rerank call
         # reads this; the ego-graph/parent-expansion tail rerank calls
         # (hybrid_searcher.py's two rerank_by_query call sites) don't pass it
         # and always take the "score" default. Not construction_baked -- live

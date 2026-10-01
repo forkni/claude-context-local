@@ -465,7 +465,7 @@ The Mixed approach demonstrates that **MCP semantic search is production-ready**
 
 ## SSCG Retrieval Benchmark
 
-**Added**: v0.9.0 | **Last run**: 2026-09-23 (see provenance below)
+**Added**: v0.9.0 | **Last run**: 2026-10-01 (see provenance below)
 
 Measures end-to-end retrieval quality for `search_code` queries: how well the ranked results cover the labeled relevant chunks for each query.
 
@@ -490,7 +490,21 @@ Relevance grades: 3 = primary target, 2 = expected, 1 = acceptable/hard-negative
 
 **Runner**: `scripts/benchmark/run_sscg_benchmark.py` (shell wrapper: `scripts/benchmark/run_benchmark.sh`)
 
-### Results (2026-09-23, hybrid-only, k=10, deterministic, `split_oversized_preamble` A/B adoption — current canon-of-record)
+### Results (2026-10-01, hybrid-only, k=10, deterministic, `gar_interleave` window membership adoption — current canon-of-record)
+
+Provenance: `evaluation/CANON_20261001_GAR_WINDOW.md` (protocol and movers in `evaluation/GAR_WINDOW_AB_20261001.md`, decision in ADR-0079), `scripts/benchmark/run_sscg_benchmark.py --project-path .`, `PYTHONHASHSEED=0`, `CLAUDE_AUTO_REINDEX=0`, HEAD index of 3,114 chunks. A 09-23 -> HEAD drop (63q MRR 0.8177 -> 0.7980 on the first run) traced to a latent defect in `_order_merged_pool("score")` + `_apply_hop1_reserve`: hop-1 jina scores, FAISS cosines and a literal 0.0 for graph expansions were sorted together, so hop-1 survivors (rank 1 included) fell to the window tail and the reserve then evicted them from the pool. Content drift changed how often it fires; the ranking code did not change. Replaced by `merged_pool_policy="gar_interleave"`: window membership by 1:1 alternation of hop-1 survivors and the anchor-ordered frontier, with backfill instead of dropping. Pre-registered A/B vs `"score"` on one index: all four gates **PASSED** (no negative-excluding CI; 133q recall@5/10/20 +0.061/+0.094/+0.091 with CIs excluding 0; graph_hop window occupancy median 10; 63q r1/r2 bit-identical).
+
+**Honest reading**: MRR deltas are positive but their CIs span 0 on all three views; the recall gain is significant on 133q only. Q12 regresses (0.2 -> 0) as it did under `channel_priority`, alongside 17 other lower-MRR queries (largest drops Q04, Q102, Q104, H062, H067 at -0.5 each) against 21 higher-MRR queries on 133q. The control here (63q MRR 0.8275) is not the first HEAD run (0.7980, same SHA); that gap is unexplained and does not affect the paired gate.
+
+| Dataset | Queries | MRR | Recall@5 | Recall@10 | Recall@20 | NDCG@5 | pool_hit_rate |
+|---|---|---|---|---|---|---|---|
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8415** | 0.6506 | 0.7631 | 0.8425 | — | 1.0000 |
+| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.6637** | 0.6558 | 0.7794 | 0.8427 | — | 0.9624 |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.8915** | 0.6459 | 0.7671 | 0.8163 | — | 1.0000 |
+
+The two caveats from the 2026-09-20 section below still apply unchanged.
+
+### Results (2026-09-23, hybrid-only, k=10, deterministic, `split_oversized_preamble` A/B adoption — superseded by the `gar_interleave` pin above)
 
 Provenance: `evaluation/CANON_20260923_PREAMBLE_PACKING.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`, `intent.enabled=true` matching the shipped default), PYTHONHASHSEED=0 deterministic harness (ADR-0021), `CLAUDE_AUTO_REINDEX=0` exported for every leg. Card B of the `study-session-log-md-log-sequential-lemur` plan: `_collect_module_preamble_chunks` (`chunking/languages/base.py`) emitted every root-level statement run not covered by function/class chunking as one verbatim `module_preamble` chunk with no size check — unlike the function-split path, which applies `max_chunk_lines`/`max_split_chars` — so a 1,034-line prose-as-`.py` file became a single chunk, silently truncated by the embedding composer. Fixed behind `ChunkingConfig.split_oversized_preamble` (packs oversized runs into size-bounded pieces at root sibling boundaries via the same packer `_split_large_node` uses; splitting inside a single giant node with no sibling boundary is a known, deliberate limitation), adopted as the default after a pre-registered A/B (control = knob off at clean HEAD `092f14ab`, treatment = knob on, identical substrate otherwise — 238 files, 3,075 vs 3,100 chunks, resolver mix `lsp 2046 / chunker 1137 / libcst 775 / pyan 574` on both arms): the **adoption gate** (no paired CI excluding 0 in the negative direction on MRR/recall@10/20, any of 3 views), the **drift gate** (control vs the `fill_budget` pin below, within ±0.02 MRR / −0.02 recall@20), and **determinism** (63q r1/r2 bit-identical, both arms) all **PASSED**.
 

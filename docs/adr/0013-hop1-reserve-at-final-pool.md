@@ -1,6 +1,6 @@
 # Reserve hop-1 winners at the multi-hop rerank window, not at hop-1 fusion
 
-Status: accepted
+Status: superseded by [ADR-0079](0079-gar-style-rerank-window-membership.md)
 Date: 2026-07-28
 
 Multi-hop search reserves up to `RerankerConfig.hop1_reserved_slots` (default

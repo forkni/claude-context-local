@@ -1,6 +1,6 @@
 # Decide rerank-window membership by interleaving, not by sorting mixed score scales
 
-Status: proposed
+Status: accepted
 Date: 2026-10-01
 
 Multi-hop's Pass-2 rerank decides which 30 of the merged pool the listwise model
@@ -9,10 +9,12 @@ on `.score`, then patching the result with the hop-1 reserve (ADR-0013), the
 `graph_hop_unscored` bands (ADR-0039) and `graph_hop_window_cap`. The three score
 scales are incomparable, so the sort is wrong for any composition and each patch
 treats a symptom. This ADR replaces the sort with window membership by
-interleaving (the GAR rule) and stops dropping candidates past the window. It stays
-**proposed** until the pre-registered A/B in
-`evaluation/GAR_WINDOW_AB_20261001.md` passes; the default remains `"score"` until
-then.
+interleaving (the GAR rule) and stops dropping candidates past the window. The
+pre-registered A/B in `evaluation/GAR_WINDOW_AB_20261001.md` passed all four gates
+(133q recall@5/10/20 up with CIs excluding 0; graph_hop window occupancy median 10;
+63q r1/r2 bit-identical), so the default is now `"gar_interleave"` and this ADR is
+**accepted**. ADR-0013 and ADR-0039 are superseded; the code they describe is deleted
+in a follow-up refactor.
 
 ## Context
 
@@ -98,14 +100,11 @@ keeps the mixed-scale sort underneath.
 
 ## Consequences
 
-- `reranker.merged_pool_policy` gains a value; it is `benchmark_locked`, so the
-  default flip, if the gate passes, is its own commit with a canon re-pin.
-- If the gate passes: this ADR becomes *accepted*, ADR-0013 and ADR-0039 are marked
-  superseded, and a follow-up refactor deletes the reserve, the bands, the cap, both
-  score policies and their config fields. The config loader drops unknown keys, so
-  existing config files keep loading.
-- If the gate fails: the result is recorded here, the default stays `"score"`, and
-  nothing is deleted.
+- `reranker.merged_pool_policy` gains a value and its default flips to it, with a canon
+  re-pin (`evaluation/CANON_20261001_GAR_WINDOW.md`).
+- ADR-0013 and ADR-0039 are superseded. A follow-up refactor deletes the reserve, the
+  bands, the cap, both score policies and their config fields. The config loader drops
+  unknown keys, so existing config files keep loading.
 - **Known follow-up, not in scope:** the Pass-3 ego tail rerank has the same
   mixed-scale defect class (Pass-2 outputs carry jina scores, ego neighbours carry
   embedding cosines, and the pool is plain-sorted). It is inert at k=10 (the pool is

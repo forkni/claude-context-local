@@ -75,4 +75,61 @@ plan's gate and were not used. A3 (self-validity) is the part that matters here,
 
 ## Results
 
-(pending)
+One run per leg on the HEAD index (3,114 chunks), `CLAUDE_AUTO_REINDEX=0 PYTHONHASHSEED=0`,
+paired bootstrap CIs from `run_sscg_benchmark.py --compare`. Control `"score"`, treatment
+`"gar_interleave"`.
+
+| view | metric | control | treatment | delta [95% CI] |
+|---|---|---|---|---|
+| 63q | MRR | 0.8275 | 0.8415 | +0.0140 [-0.018, +0.046] |
+| 63q | recall@5 / @10 / @20 | 0.6417 / 0.7537 / 0.8206 | 0.6506 / 0.7631 / 0.8425 | +0.009 / +0.010 / +0.022, all CIs span 0 |
+| 133q | MRR | 0.6268 | 0.6637 | +0.0369 [-0.003, +0.077] |
+| 133q | recall@5 | 0.5946 | 0.6558 | **+0.0612 [+0.018, +0.105]** |
+| 133q | recall@10 | 0.6859 | 0.7794 | **+0.0935 [+0.043, +0.144]** |
+| 133q | recall@20 | 0.7521 | 0.8427 | **+0.0906 [+0.046, +0.135]** |
+| F-via-similar | MRR | 0.8854 | 0.8915 | +0.0061 [-0.022, +0.034] |
+| F-via-similar | recall@5 / @10 / @20 | 0.6438 / 0.7578 / 0.7994 | 0.6459 / 0.7671 / 0.8163 | +0.002 / +0.009 / +0.017, all CIs span 0 |
+
+Window membership (`gold_in_window_rate`, control -> treatment): 63q 0.984 -> 1.000,
+133q 0.880 -> 0.970, F-via-similar 0.982 -> 1.000. Queries with a gold evicted by the reserve under
+the control: 8, 25, 6. The treatment has no reserve.
+
+### Gate
+
+1. No negative-excluding CI on MRR / recall@10 / recall@20, any view: **PASS** (no CI is negative
+   anywhere; the three 133q recall CIs exclude 0 on the positive side).
+2. recall@5 and 63q MRR on their own: **PASS**. 63q MRR CI [-0.018, +0.046] against
+   `channel_priority`'s [-0.0437, -0.0013]; recall@5 CIs span 0 on 63q and F-via-similar and are
+   positive on 133q.
+3. Graph_hop window occupancy: **PASS**. Measured with `probe_rerank_window.py --all
+   --set reranker.merged_pool_policy=gar_interleave` on the observed Pass-2 `window_ids` (124
+   queries): median **10**, mean 9.6, **0** queries with no graph_hop item (the offline
+   simulation predicted 10; control simulation median 1; `channel_priority` 0). Hop-1 rank 1 is
+   in the window on 124/124.
+4. 63q r1 vs r2: **PASS**, aggregates and retrieved lists bit-identical.
+
+The probe's own A1/A3 gate prints ABORT/HALT on that run. That is expected and not a result: its
+self-validity check compares the observed window to the simulated `"score"` window, and the live
+policy is no longer `"score"`. Only the observed `window_ids` were used.
+
+### Movers
+
+- Gains: Q106, H029, H048, Q126 (0 -> 1.0); Q99, Q133, H022, H066 (0 -> 0.5); H006, Q54, Q77
+  (0.5 -> 1.0); H034 (0 -> 0.25); H039, H045, H009 smaller.
+- Losses: Q04, Q102, Q104, H062, H067 (1.0 -> 0.5), Q119 (0.33 -> 0.08), Q127 (0.5 -> 0.25),
+  H035 (0.33 -> 0.14), Q12 (0.2 -> 0). Q12 regressed under `channel_priority` too, but here it
+  is one query among 39 movers and the aggregate CIs are not negative.
+- 63q changed on 9 queries, 133q on 39.
+- The one gold `"score"` had in the window and `gar_interleave` lost is the offline
+  simulation's `lost_vs_score=1`; the observed run does not name it per query.
+
+### Caveat: control drift
+
+The control scores 63q MRR 0.8275, but the first HEAD run of this investigation (02:56, same SHA,
+same 3,114 chunks, same policy) scored 0.7980. Nine queries differ between the two, including Q07
+(0 -> 1.0). The 0.8275 reproduces in the A0 same-index run, so it is stable now. The cause of the
+earlier lower value is **unresolved**; an index rebuild between the two runs (embedding
+batch-composition noise, ~1e-3 in 1-cos) is the leading but unconfirmed suspect. The A/B is
+unaffected, since both legs share one index. It does weaken the claim that the 0.7980 drop was
+entirely this defect: the control is now above the 09-23 canon on 63q (0.8275 vs 0.8177) and still
+below it on 133q (0.6268 vs 0.6527).
