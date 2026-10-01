@@ -29,7 +29,7 @@ set. This keeps the advertised tool count small without removing the capability.
 | configure_reranking | Config | Configure neural reranker settings (BGE OR Jina v3, runtime configurable) | enabled, model_name, top_k_candidates=30 |
 | configure_chunking | Config | Configure code chunking settings | enable_large_node_splitting, max_chunk_lines, split_size_method, max_split_chars, enable_file_summaries, sizing_mode |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
-| get_index_status | Status | Check index health & model info; returns `index_is_current` (True/False/null — content-only Merkle diff vs the working tree, ADR-0058) and `pending_changes` `{added, modified, removed}` | job_id (optional — status of a background index job) |
+| get_index_status | Status | Check index health & model info; `index_statistics` includes `index_kind` (`flat` or `ivf`) and, for IVF indexes, `ivf_nlist` and `ivf_nprobe`; also returns `index_is_current` (True/False/null — content-only Merkle diff vs the working tree, ADR-0058) and `pending_changes` `{added, modified, removed}` | job_id (optional — status of a background index job) |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
 | list_projects | Management | Show indexed projects grouped by path | check_freshness=False (True adds the per-model `index_is_current` verdict for every project without switching) |
 | switch_project | Management | Change active project | project_path (required) |
