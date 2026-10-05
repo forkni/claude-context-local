@@ -136,7 +136,7 @@ Git workflow automation and safety.
 | ---------- | ------------- |
 | **[auto-git-workflow SKILL.md](../.claude/skills/auto-git-workflow/SKILL.md)** | Step-by-step git workflow rule book for Claude Code |
 | **[GIT_WORKFLOW.md](GIT_WORKFLOW.md)** | Troubleshooting and advanced operations |
-| **[PRE_COMMIT_HOOKS.md](PRE_COMMIT_HOOKS.md)** | Pre-commit hook configuration |
+| **[Pre-commit Hooks](../CONTRIBUTING.md#pre-commit-hooks-optional)** | Installation and manual-run guidance for the hooks configured in [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) |
 
 ### Git Scripts
 
