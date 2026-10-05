@@ -157,17 +157,3 @@ class TestRelationFilter:
         assert filter.should_include_in_graph(
             ".relative", include_stdlib=True, include_third_party=True
         )
-
-
-class TestGraphSizeReduction:
-    """Benchmark graph edge count reduction."""
-
-    def test_graph_edge_reduction_placeholder(self):
-        """Placeholder for graph edge reduction benchmarking.
-
-        This test will measure actual reduction after indexing a real project.
-        Expected: 30-50% reduction in edge count when filtering stdlib/third-party.
-        """
-        # This will be implemented after full integration
-        # Requires indexing a project with the new filtering enabled
-        pass

@@ -79,8 +79,10 @@ class TestIndexWriteLockInProcessContention:
         storage_dir = tmp_path / "index"
         with index_write_lock(storage_dir):
             pass
+        assert not is_index_write_locked(storage_dir)
         with index_write_lock(storage_dir):
             pass  # no IndexWriteLockHeldError -- the first lock let go
+        assert not is_index_write_locked(storage_dir)
 
     def test_released_even_when_the_held_block_raises(self, tmp_path):
         storage_dir = tmp_path / "index"

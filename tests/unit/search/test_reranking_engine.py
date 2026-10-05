@@ -193,6 +193,7 @@ class TestRerankingEngine:
         """Test shutdown without neural reranker doesn't error."""
         self.engine.neural_reranker = None
         self.engine.shutdown()  # Should not raise
+        assert self.engine.neural_reranker is None
 
     @patch("search.reranking_engine.torch")
     @patch("search.neural_reranker.NeuralReranker")

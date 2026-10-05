@@ -65,11 +65,12 @@ class TestModelLoader:
         assert loader._cache_manager == cache_manager
 
     @patch("embeddings.model_loader.torch")
-    def test_log_gpu_memory_no_cuda(self, mock_torch, model_loader):
+    def test_log_gpu_memory_no_cuda(self, mock_torch, model_loader, caplog):
         """Test GPU memory logging when CUDA not available."""
+        caplog.set_level("INFO", logger="embeddings.model_loader")
         mock_torch.cuda.is_available.return_value = False
-        # Should not raise exception
         model_loader.log_gpu_memory("TEST_STAGE")
+        assert not any("TEST_STAGE" in record.message for record in caplog.records)
 
     @patch("embeddings.model_loader.torch")
     def test_log_gpu_memory_with_cuda(self, mock_torch, model_loader, caplog):

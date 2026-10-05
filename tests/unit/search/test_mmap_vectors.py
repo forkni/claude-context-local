@@ -244,9 +244,13 @@ class TestMmapVectorStorage(unittest.TestCase):
         storage.close()
         storage.close()  # Should not raise
         storage.close()  # Should not raise
+        self.assertFalse(storage.is_loaded)
+        self.assertEqual(storage.count, 0)
 
     def test_destructor_cleanup(self):
         """Test destructor calls close."""
+        import gc
+
         storage = MmapVectorStorage(self.test_file, self.dimension)
         embeddings = np.random.randn(5, self.dimension).astype(np.float32)
         chunk_ids = [f"file{i}.py:1-10:function:func{i}" for i in range(5)]
@@ -256,7 +260,10 @@ class TestMmapVectorStorage(unittest.TestCase):
 
         # Trigger destructor
         del storage
-        # No assertion - just verify no errors
+        gc.collect()
+        # Verify file is unlocked and can be unlinked on Windows
+        self.test_file.unlink()
+        self.assertFalse(self.test_file.exists())
 
     # === Windows Share-Delete Tests ===
     #

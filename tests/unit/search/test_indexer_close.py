@@ -19,6 +19,7 @@ class TestCodeIndexManagerClose:
 
         manager.close()
         manager.close()  # must not raise
+        assert manager.storage_dir == storage_dir
 
     def test_close_releases_metadata_lock_for_probe(self, tmp_path):
         """The manual check named in ADR-0025's plan: after close(),
@@ -35,7 +36,8 @@ class TestCodeIndexManagerClose:
         manager.close()
 
         # Raises if the file is still locked/undeletable.
-        probe_metadata_deletable(manager.metadata_path)
+        deleting_path = probe_metadata_deletable(manager.metadata_path)
+        assert deleting_path.exists()
 
     def test_close_then_metadata_access_lazily_reopens(self, tmp_path):
         """Identity stays stable per ADR-0025 -- the store is not replaced,

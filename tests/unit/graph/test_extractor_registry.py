@@ -199,4 +199,4 @@ def test_glsl_relationship_strings_are_valid_relationship_types():
     }
     for rel_type_str in glsl_relationship_strings:
         # Raises ValueError if rel_type_str is not a valid RelationshipType value.
-        RelationshipType(rel_type_str)
+        assert RelationshipType(rel_type_str).value == rel_type_str

@@ -630,8 +630,10 @@ class TestBM25Index:
         self.index.index_documents(special_docs, special_ids)
 
         # Should be able to search
-        self.index.search("123", k=5)
+        results = self.index.search("123", k=5)
         # Results depend on preprocessing, but shouldn't crash
+        assert isinstance(results, list)
+        assert len(self.index.doc_ids) == len(special_docs)
 
     def test_stemming_configuration(self):
         """Test that stemming configuration is properly applied."""
@@ -976,3 +978,115 @@ class TestBM25ScoringParams:
 
             shutil.rmtree(dir_b0, ignore_errors=True)
             shutil.rmtree(dir_b1, ignore_errors=True)
+
+
+class TestBM25FileRemovalAndConsistency:
+    """Tests for BM25Index.remove_files and BM25Index.validate_index_consistency."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_bm25(self, tmp_path: Path):
+        self.temp_dir = tmp_path
+        self.index = BM25Index(self.temp_dir)
+
+    def test_remove_files_empty_and_no_match(self):
+        """remove_files returns 0 when no docs, empty targets, or unmatched files."""
+        # Non-empty index, empty targets
+        assert self.index.remove_files(set()) == 0
+        # Non-empty index, non-matching targets
+        assert self.index.remove_files({"nonexistent_file.py"}) == 0
+        # Empty index
+        empty_index = BM25Index(self.temp_dir / "empty")
+        assert empty_index.remove_files({"file1.py"}) == 0
+
+    def test_remove_files_multi_and_rebuild(self):
+        """remove_files removes matching chunks and rebuilds the BM25 model."""
+        docs = [
+            "def apple_fn(): return 'apple'",
+            "def banana_fn(): return 'banana'",
+            "def carrot_fn(): return 'carrot'",
+            "def date_fn(): return 'date'",
+            "def elderberry_fn(): return 'elderberry'",
+        ]
+        ids = [
+            "src/a.py:1-5:function:apple_fn",
+            "src/a.py:6-10:function:banana_fn",
+            "src/b.py:1-5:function:carrot_fn",
+            "src/c.py:1-5:function:date_fn",
+            "src/d.py:1-5:function:elderberry_fn",
+        ]
+        self.index.index_documents(docs, ids)
+        assert len(self.index.doc_ids) == 5
+
+        # Remove src/a.py (2 chunks)
+        removed = self.index.remove_files({"src/a.py"})
+        assert removed == 2
+        assert len(self.index.doc_ids) == 3
+        assert "src/a.py:1-5:function:apple_fn" not in self.index.doc_ids
+        assert "src/a.py:6-10:function:banana_fn" not in self.index.doc_ids
+        # N=3 surviving docs ensures positive Okapi IDF for single-doc terms
+        carrot_results = self.index.search("carrot", k=1)
+        assert len(carrot_results) >= 1
+        assert "carrot_fn" in carrot_results[0][0]
+        assert carrot_results[0][1] > 0.0
+
+        # Remove all remaining files in one batch
+        removed_remaining = self.index.remove_files(
+            {"src/b.py", "src/c.py", "src/d.py"}
+        )
+        assert removed_remaining == 3
+        assert len(self.index.doc_ids) == 0
+        assert self.index._bm25 is None
+        assert self.index._documents == []
+
+    def test_remove_files_cleans_metadata(self):
+        """remove_files prunes metadata for removed chunks while preserving survivors."""
+        docs = ["def foo(): pass", "def bar(): pass"]
+        ids = ["mod_a.py:1-5:function:foo", "mod_b.py:1-5:function:bar"]
+        self.index.index_documents(docs, ids)
+        self.index._metadata["mod_a.py:1-5:function:foo"] = {"key": "val_a"}
+        self.index._metadata["mod_b.py:1-5:function:bar"] = {"key": "val_b"}
+
+        self.index.remove_files({"mod_a.py"})
+        assert "mod_a.py:1-5:function:foo" not in self.index._metadata
+        assert "mod_b.py:1-5:function:bar" in self.index._metadata
+
+    def test_validate_index_consistency_valid(self):
+        """validate_index_consistency reports valid on an aligned index."""
+        docs = ["def run(): pass", "def stop(): pass"]
+        ids = ["proc.py:1-5:function:run", "proc.py:6-10:function:stop"]
+        self.index.index_documents(docs, ids)
+        self.index._metadata[ids[0]] = {"file": "proc.py"}
+        self.index._metadata[ids[1]] = {"file": "proc.py"}
+
+        is_valid, issues = self.index.validate_index_consistency()
+        assert is_valid is True
+        assert issues == []
+
+    def test_validate_index_consistency_detects_mismatches(self):
+        """validate_index_consistency detects mismatched lengths, missing BM25, and missing metadata."""
+        docs = ["def run(): pass"]
+        ids = ["proc.py:1-5:function:run"]
+        self.index.index_documents(docs, ids)
+        self.index._metadata[ids[0]] = {"file": "proc.py"}
+
+        # 1. Corrupt length mismatch
+        self.index._doc_ids.append("orphan_id")
+        is_valid, issues = self.index.validate_index_consistency()
+        assert is_valid is False
+        assert any("doc_ids length" in issue for issue in issues)
+
+        # Revert
+        self.index._doc_ids.pop()
+
+        # 2. Corrupt BM25 model missing
+        self.index._bm25 = None
+        is_valid, issues = self.index.validate_index_consistency()
+        assert is_valid is False
+        assert any("BM25 index is None" in issue for issue in issues)
+
+        # 3. Missing metadata
+        self.index._bm25 = object()  # dummy to unblock check 2
+        self.index._metadata.clear()
+        is_valid, issues = self.index.validate_index_consistency()
+        assert is_valid is False
+        assert any("Missing metadata" in issue for issue in issues)

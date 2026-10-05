@@ -4,8 +4,6 @@ All tests use a lightweight fake CodeGraphStorage that wraps a hand-built
 NetworkX MultiDiGraph, so no real index is required.
 """
 
-import contextlib
-
 import networkx as nx
 import pytest
 
@@ -385,7 +383,7 @@ class TestPersonalizedPagerank:
             g.add_edge(b, a)
         view = GraphView(FakeStorage(g))
         # Force non-convergence with max_iter=1; exception must propagate cleanly
-        with contextlib.suppress(PPRConvergenceError):
+        with pytest.raises(PPRConvergenceError):
             view.personalized_pagerank(
                 personalization={list(g.nodes)[0]: 1.0},
                 alpha=0.85,

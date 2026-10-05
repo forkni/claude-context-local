@@ -133,6 +133,8 @@ class TestEmbedderConcurrencyRace:
         _ = emb.model
         emb.cleanup()
         emb.cleanup()  # must not raise
+        assert emb._model is None
+        assert emb._model_loader is None
 
     def test_lifecycle_lock_is_rlock(self):
         """_lifecycle_lock must be an RLock (reentrant) so cleanup() from __exit__

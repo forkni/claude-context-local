@@ -137,6 +137,8 @@ class TestGraphIntegration(TestCase):
 
         # Should not raise error
         graph.add_chunk("test.py:1-10:function:test_function", metadata)
+        assert graph.storage is None
+        assert graph.node_count == 0
 
     @patch("search.graph_integration.CodeGraphStorage")
     @patch("search.graph_integration.GRAPH_STORAGE_AVAILABLE", True)
@@ -196,6 +198,7 @@ class TestGraphIntegration(TestCase):
 
         # Should not raise error
         graph.save()
+        assert graph.storage is None
 
     @patch("search.graph_integration.CodeGraphStorage")
     @patch("search.graph_integration.GRAPH_STORAGE_AVAILABLE", True)
@@ -216,6 +219,7 @@ class TestGraphIntegration(TestCase):
 
         # Should not raise error
         graph.clear()
+        assert graph.storage is None
 
     @patch("search.graph_integration.CodeGraphStorage")
     @patch("search.graph_integration.GRAPH_STORAGE_AVAILABLE", True)
@@ -352,6 +356,8 @@ class TestPopulateFromEmbeddings(TestCase):
         graph = GraphIntegration.from_storage(None)
         result = _make_result("f.py:1-5:function:foo")
         graph.populate_from_embeddings([result])  # must not raise
+        assert graph.storage is None
+        assert graph.node_count == 0
 
     def test_empty_list_is_noop(self):
         """Empty embedding_results list should not touch storage."""
@@ -951,6 +957,8 @@ class TestBuildGraphFromChunks(TestCase):
         graph = GraphIntegration.from_storage(None)
         chunk = _make_chunk("f.py:1-5:function:foo")
         graph.build_graph_from_chunks([chunk])  # must not raise
+        assert graph.storage is None
+        assert graph.node_count == 0
 
     def test_clears_graph_on_call(self):
         """build_graph_from_chunks always calls storage.clear() for a fresh build."""

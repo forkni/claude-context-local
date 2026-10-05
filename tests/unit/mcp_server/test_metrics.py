@@ -100,12 +100,15 @@ def test_get_stats_reflects_active_and_completed_sessions():
     assert isinstance(stats["avg_duration_seconds"], float)
 
 
-def test_log_summary_does_not_raise():
+def test_log_summary_does_not_raise(caplog):
     metrics = SessionMetrics()
     metrics.start_session("session-1")
     metrics.end_session("session-1")
 
-    metrics.log_summary()
+    with caplog.at_level("INFO"):
+        metrics.log_summary()
+
+    assert "[METRICS SUMMARY]" in caplog.text
 
 
 def test_get_session_metrics_returns_singleton():

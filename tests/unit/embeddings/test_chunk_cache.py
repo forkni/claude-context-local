@@ -1,5 +1,7 @@
 """Unit tests for ChunkEmbeddingCache (persistent content-hash embedding cache)."""
 
+import logging
+
 import numpy as np
 
 from embeddings import chunk_cache as chunk_cache_module
@@ -120,7 +122,7 @@ class TestSaveLoadRoundTrip:
         )
         assert reloaded.get_stats()["cache_size"] == 0
 
-    def test_save_failure_does_not_raise(self, tmp_path, monkeypatch):
+    def test_save_failure_does_not_raise(self, tmp_path, caplog):
         # Point the cache at a path whose parent cannot be created (a file,
         # not a directory), forcing save() to hit its except branch.
         blocker = tmp_path / "blocker"
@@ -131,7 +133,11 @@ class TestSaveLoadRoundTrip:
             cache_path, model_name="BAAI/bge-m3", dimension=4, provenance=_PROV
         )
         cache.put("k" * 32, _vec(4, 1.0))
-        cache.save({"k" * 32}, pass_kind=PassKind.FULL)  # must not raise
+        with caplog.at_level(logging.WARNING):
+            cache.save({"k" * 32}, pass_kind=PassKind.FULL)
+
+        assert "Failed to save chunk embedding cache" in caplog.text
+        assert not cache_path.exists()
 
 
 class TestProvenance:

@@ -682,6 +682,13 @@ max-complexity = 15
 "search/parallel_chunker.py" = ["C901"]                           # chunk_files (17)
 "search/relationship_analyzer.py" = ["C901"]                      # _build_graph_relationships (18)
 "search/subgraph_extractor.py" = ["C901"]                         # extract_subgraph (20)
+# Phase 15.3 CRAP-gate debt additions (harden-test-suite audit 2026-10-01)
+"chunking/multi_language_chunker.py" = ["C901"]                   # _extract_phase3_relationships (16)
+"chunking/td_network_chunker.py" = ["C901"]                       # _build_relationship_edges (26), _build_operator_chunk (24), _json_element_spans (20)
+"evaluation/tracer/build.py" = ["C901"]                           # build_traced_callgraph (16)
+"mcp_server/tools/search_handlers.py" = ["C901"]                  # handle_find_path (18)
+"mcp_server/tools/status_handlers.py" = ["C901"]                  # handle_get_index_status (18), handle_list_projects (20)
+"search/intent_classifier.py" = ["C901"]                          # _load_anchor_embeddings (18)
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
@@ -849,7 +856,8 @@ source = [
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 84  # Re-scoped 2026-08-20 (Phase 13.1): "tools" dropped from [tool.coverage.run]
+fail_under = 86  # Ratchet 2026-10-01 (Phase 15.4): bumped 84 -> 86 following clean baseline audit (87.39% measured across 20,766 statements)
+# Re-scoped 2026-08-20 (Phase 13.1): "tools" dropped from [tool.coverage.run]
 # source= above (see that comment). This is a pure denominator correction, not an earned ratchet
 # -- the same code is tested to exactly the same degree before and after; only the statement
 # count in the denominator changed (19,861 -> 17,451 measured). The prior fail_under=73 was set
@@ -882,3 +890,11 @@ exclude_lines = [
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
 ]
+
+# ---------------------------------------------------------------------------
+# Test Smell Ratchet (scan_test_smells.py - Koskela / Osherove catalogue)
+# ---------------------------------------------------------------------------
+
+[tool.scan_test_smells]
+baseline = ".smell-baseline.json"
+

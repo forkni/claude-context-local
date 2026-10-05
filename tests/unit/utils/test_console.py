@@ -96,5 +96,7 @@ class TestSpinnerEncodingUnderCp1252:
     def test_line_spinner_is_cp1252_encodable(self):
         """production now passes spinner_name="line" at both call sites."""
         frames = self._rendered_frames("line")
+        assert len(frames) > 0
         for frame in frames:
-            frame.encode("cp1252")  # must not raise
+            encoded = frame.encode("cp1252")  # must not raise
+            assert isinstance(encoded, bytes)

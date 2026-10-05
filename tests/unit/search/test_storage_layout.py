@@ -71,7 +71,8 @@ def test_project_id_from_model_dir_name_matches_rsplit(name: str) -> None:
 def test_project_id_from_model_dir_name_is_total() -> None:
     """Total function — never raises, including on inputs with no underscore."""
     for name in ("", "no-underscore", "_", "__"):
-        project_id_from_model_dir_name(name)  # must not raise
+        result = project_id_from_model_dir_name(name)  # must not raise
+        assert isinstance(result, str)
 
 
 def test_project_id_from_index_dir_uses_parent_name(tmp_path: Path) -> None:

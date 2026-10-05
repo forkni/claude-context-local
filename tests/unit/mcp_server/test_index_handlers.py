@@ -76,6 +76,9 @@ class TestCheckFileAccessibility:
         with patch("builtins.open", side_effect=counting_open):
             _check_file_accessibility(files, sample_size=10)
 
+        assert open_count[0] <= 10
+        assert open_count[0] > 0
+
 
 # ---------------------------------------------------------------------------
 # _purge_index_dir — path-safety assertion
@@ -106,7 +109,8 @@ class TestPurgeIndexDirStorageRootGuard:
             "mcp_server.tools.index_handlers.get_storage_dir",
             return_value=tmp_path / "storage",
         ):
-            _purge_index_dir(index_dir, keep_chunk_cache=True)
+            deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
+            assert failed == []
 
     def test_path_outside_storage_raises(self, tmp_path: Path) -> None:
         from mcp_server.tools.index_handlers import _purge_index_dir
@@ -386,8 +390,12 @@ class TestReleaseGpuMemory:
         """Survives gracefully when torch is not installed (ImportError)."""
         from mcp_server.tools.index_handlers import _release_gpu_memory
 
-        with patch("search.gpu_monitor.torch", None):
+        with (
+            patch("search.gpu_monitor.torch", None),
+            patch("search.gpu_monitor.gc") as mock_gc,
+        ):
             _release_gpu_memory()  # Must not raise
+            mock_gc.collect.assert_called_once()
 
 
 class TestHandlerChunkerOwnership:

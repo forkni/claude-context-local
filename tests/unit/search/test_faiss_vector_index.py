@@ -242,14 +242,17 @@ class TestFaissVectorIndexPersistence:
             assert index.index is None
             assert index.ntotal == 0
 
-    def test_save_without_index(self):
+    def test_save_without_index(self, caplog):
         """Test saving when no index exists logs warning."""
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
 
-            # Should not raise, just log warning
-            index.save()
+            with caplog.at_level("WARNING"):
+                index.save()
+
+            assert not index_path.exists()
+            assert "No index to save" in caplog.text
 
     def test_dimension_mismatch_detection(self):
         """Test that dimension mismatch is detected when loading with embedder."""

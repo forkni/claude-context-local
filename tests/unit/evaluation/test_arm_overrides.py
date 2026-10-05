@@ -101,7 +101,7 @@ def test_merge_overrides_preserves_sibling_fields_in_same_section():
 
 
 def test_validate_overrides_accepts_in_range_value():
-    validate_overrides({"search_mode.bm25_weight": 0.5})  # no raise
+    assert validate_overrides({"search_mode.bm25_weight": 0.5}) is None
 
 
 def test_validate_overrides_rejects_out_of_range_value():

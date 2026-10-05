@@ -149,6 +149,8 @@ class TestStampFilterSemanticsVersion:
         ):
             stamp_filter_semantics_version(str(project_path))  # must not raise
 
+        assert info_file.read_text() == "{not valid json"
+
 
 class TestUpdateProjectFiltersDeferredStamp:
     def test_stamp_semantics_version_false_leaves_field_untouched(self, tmp_path: Path):

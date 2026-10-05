@@ -91,7 +91,7 @@ class TestNoopPath:
         from utils.observability import _NoopSpan
 
         span = _NoopSpan()
-        span.set_attribute("key", "value")  # must not raise
+        assert span.set_attribute("key", "value") is None  # must not raise
 
     def test_traced_block_propagates_caller_exception_when_disabled(self):
         from utils.observability import traced_block
