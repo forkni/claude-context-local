@@ -897,4 +897,3 @@ exclude_lines = [
 
 [tool.scan_test_smells]
 baseline = ".smell-baseline.json"
-
