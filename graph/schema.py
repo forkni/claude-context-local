@@ -23,6 +23,10 @@ that every enum value is present, so adding a new ``RelationshipType`` will
 fail CI until a corresponding entry is added here.
 """
 
+from collections.abc import Mapping
+from typing import Any
+
+
 # NOTE: REVERSE_RELATIONS currently has 30 entries (21 core + 9 TouchDesigner
 # network types: 8 added by ADR-0062 Part C, plus "clones" added by ADR-0072).
 # Adding another RelationshipType member bumps this count again -- see
@@ -106,7 +110,7 @@ REVERSE_RELATIONS: dict[str, str] = {
 }
 
 
-def is_phantom_node(node_data: dict) -> bool:
+def is_phantom_node(node_data: Mapping[str, Any]) -> bool:
     """True for placeholder symbol nodes (unresolved call/symbol targets).
 
     Single source of truth for the phantom-node predicate. Previously
@@ -128,7 +132,7 @@ def is_phantom_node(node_data: dict) -> bool:
     )
 
 
-def edge_relation_type(edge_data: dict) -> "str | None":
+def edge_relation_type(edge_data: Mapping[str, Any]) -> "str | None":
     """Single reader of an edge's relation type, tolerating both key spellings.
 
     On-disk edges may carry the type under ``"relationship_type"`` (the canonical

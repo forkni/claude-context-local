@@ -1305,6 +1305,7 @@ class CodeEmbedder:
                     assert result is not None
                     cache.put(key, result.embedding)
             live_keys = {key for key in cache_keys if key is not None}
+            assert pass_kind is not None
             cache.save(live_keys, pass_kind=pass_kind)
             self._log_chunk_cache_stats(cache, "run complete")
 
