@@ -2,6 +2,10 @@
 // See: https://github.com/DavidAnson/markdownlint-cli2
 
 {
+  // Skip gitignored files: the "**/*.md" glob otherwise lints local-only docs
+  // (e.g. .claude/SLASH_COMMAND_TESTING_PROTOCOL.md) and blocks pushes on them.
+  "gitignore": true,
+
   // Exclude patterns (directories to ignore)
   "ignores": [
     "_archive",

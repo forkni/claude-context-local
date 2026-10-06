@@ -25,6 +25,18 @@ jobs:
         with:
           fetch-depth: 0  # Full history for branch comparison
 
+      - name: Check for CRLF in the index
+        run: |
+          # `* text=auto` (.gitattributes) keeps blobs LF; CRLF here means a client bypassed it.
+          CRLF_FILES=$(git ls-files --eol | grep '^i/crlf' || true)
+          if [ -n "$CRLF_FILES" ]; then
+            echo "❌ ERROR: CRLF line endings committed:"
+            echo "$CRLF_FILES"
+            echo "Fix: git add --renormalize <files> && commit"
+            exit 1
+          fi
+          echo "✅ No CRLF files in the index"
+
       - name: Check for local-only files
         run: |
           echo "Checking for accidentally committed local files..."
