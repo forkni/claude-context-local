@@ -63,3 +63,12 @@ removal, and a project that started small and grew stayed flat. `index_kind_for(
 first batch and `FaissVectorIndex.remove_positions()` consult it, retraining IVF cells at each
 rebuild. IVF searches `nprobe = 16` lists (FAISS defaults to 1) and carries a direct map so
 `reconstruct()` works without the mmap file. The Decision (FAISS over turbovec) is unchanged.
+
+## Amendment (2026-10-05): parameters superseded by ADR-0083
+
+The numbers in the amendment above are no longer current. A measured sweep
+(`evaluation/FAISS_INDEX_PARAMS_20261005.md`) moved the flat ceiling to `IVF_MIN_VECTORS = 50_000`
+and replaced the fixed `nlist = 100` / `nprobe = 16` with `ivf_nlist_for()` / `ivf_nprobe_for()`
+derived from the vector count; IVF indexes are now built with `METRIC_INNER_PRODUCT` (they were
+L2). See [ADR-0083](0083-faiss-index-parameter-policy.md). The rule that the kind follows size at
+every rebuild point, and the Decision, are unchanged.

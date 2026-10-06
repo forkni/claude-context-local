@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **FAISS index parameter probe** (`scripts/benchmark/probe_faiss_index_params.py`,
+  [ADR-0083](docs/adr/0083-faiss-index-parameter-policy.md)) — read-only harness that pulls every
+  vector out of an on-disk index, builds exact ground truth at the leg-depth ceiling (420) and
+  sweeps inner-product `IndexIVFFlat` over `nlist` x `nprobe` x `parallel_mode` with
+  `knn_intersection_measure` recall, `-1` padding rate, imbalance factor and p50/p95 latency; also
+  times flat search by OpenMP thread count and synthetic corpora at any size. Report:
+  `evaluation/FAISS_INDEX_PARAMS_20261005.md`; summary in `docs/BENCHMARKS.md`.
+
+- **`FaissVectorIndex.position_of()` / `reconstruct_batch()`** — cached chunk-id -> position
+  lookup (invalidated on create/clear/load/add/remove) and a bulk reconstruct (mmap fast path, else
+  FAISS `reconstruct_batch`), replacing the per-call `{chunk_id: position}` dict rebuild and
+  per-row `reconstruct()` loop in `CodeIndexManager.reconstruct_embeddings`.
+
 - **Legacy SSE transport served alongside StreamableHTTP** (`mcp_server/server.py`) — the
   `--transport http` server now also exposes `GET /sse` + `POST /messages/` (via
   `SseServerTransport`) next to `/mcp`, so SSE-only clients such as Antigravity IDE
@@ -217,6 +230,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **IVF indexes were built with `METRIC_L2` and returned squared distances as "similarities"**
+  (`search/faiss_index.py`, [ADR-0083](docs/adr/0083-faiss-index-parameter-policy.md)) —
+  `faiss.IndexIVFFlat` defaults to L2 when the metric is omitted, so every project above the IVF
+  threshold scored 0.0 for an exact match and larger-is-worse, while ranking boosts, TM2C2 dense
+  normalisation and the descending sort all assume inner products. `create()` now passes
+  `METRIC_INNER_PRODUCT`; an on-disk legacy L2 index is detected on `load()` (one WARNING,
+  `describe()["metric"] == "l2_legacy"`) and its scores converted with `ip = 1 - d^2/2` until it is
+  reindexed. `get_similar_chunks_batched` now goes through the wrapper so the shim applies there too.
+
+- **`remove_positions` could silently desync FAISS from metadata** — the per-position
+  `reconstruct()` loop skipped failures with a warning while `BatchOperations.remove_files`
+  renumbered survivors assuming none were skipped. Kept vectors are now pulled with a single
+  `reconstruct_n` + boolean mask and a reconstruct failure raises.
+
+- **Metadata-filtered dense search could starve** — `CodeIndexManager.search` fetched `k*3`
+  candidates and post-filtered in Python with no widening, so a selective filter returned fewer
+  than `k` hits even when matches existed. It now widens x4 up to `FILTERED_SEARCH_CAP = 4096` (or
+  `ntotal`) until `k` survivors, mirroring the ADR-0067 loop in `get_similar_chunks`.
+
 - **Cross-process reindex race deleted every metadata row while FAISS/BM25 saved on top of the
   empty store** (2026-09-25 twozero-dev incident, H1) — a CLI force-full reindex held
   `metadata.db` open while the MCP server's own auto-reindex raced it on the same storage
@@ -384,6 +416,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   edges; 12 new/rewritten unit tests derive expected spans from the fixture text.
 
 ### Changed
+
+- **Flat/IVF policy is measured, not guessed** ([ADR-0083](docs/adr/0083-faiss-index-parameter-policy.md)) —
+  `IVF_MIN_VECTORS` 10,000 -> 50,000 (exact flat search is ~5 ms/query at 50K x 1024-d; IVF at equal
+  recall was no faster than flat at 17K). Above it, `nlist = round(4 sqrt N)` capped at `N // 39`
+  (`ivf_nlist_for`) replaces the fixed 100, and `nprobe = max(ceil(nlist/2), ceil(420 nlist/N))`
+  (`ivf_nprobe_for`) replaces the fixed 16, which scored recall@210 = 0.94 against exact search on
+  a 17K real corpus (real code embeddings need ~half the lists probed; synthetic data needs 3%).
+  `nprobe` is re-derived from `ntotal` on every `load()`. **API:** `FaissVectorIndex.create(...,
+  "ivf")` and `CodeIndexManager.create_index(..., "ivf")` now require `expected_count`
+  (`ValueError` otherwise). Existing IVF indexes keep working via the legacy shim; reindexing makes
+  them flat.
 
 - **`ultra` output format: insertion-order headers, nested field groups, configurable sparse
   threshold** (2026-09-21) — **wire-format change for every existing `ultra` consumer.** Field

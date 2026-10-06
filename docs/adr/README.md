@@ -88,6 +88,7 @@ for avoiding re-litigating settled questions.
 | [0080](0080-hide-faiss-positions-behind-code-index-manager.md) | Hide FAISS positions behind `CodeIndexManager` | accepted | 2026-10-01 |
 | [0081](0081-graph-view-owns-all-graph-reads.md) | `GraphView` owns every code-graph read outside `graph/` | accepted | 2026-10-01 |
 | [0082](0082-explicit-cache-pass-kind-and-index-kind-invariant.md) | Explicit `PassKind` for the chunk cache; index-kind invariant pinned | accepted | 2026-10-01 |
+| [0083](0083-faiss-index-parameter-policy.md) | FAISS index parameter policy: inner-product IVF, 50K flat ceiling, size-derived `nlist`/`nprobe` | accepted | 2026-10-05 |
 
 ## Adding a new ADR
 

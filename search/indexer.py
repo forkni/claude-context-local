@@ -35,6 +35,12 @@ from search.graph_integration import GraphIntegration
 from search.metadata import MetadataStore
 
 
+# Ceiling for the filtered-search widening loop in ``CodeIndexManager.search``
+# (candidates fetched from FAISS before the metadata post-filter). Bounds the
+# Python-side filter pass on a very selective filter over a large index.
+FILTERED_SEARCH_CAP = 4096
+
+
 def probe_metadata_deletable(metadata_path: Path) -> Path:
     """Rename metadata.db out of the way as a fail-fast deletability probe.
 
@@ -181,14 +187,20 @@ class CodeIndexManager:
         """
         return self._metadata_store
 
-    def create_index(self, embedding_dimension: int, index_type: str = "flat") -> None:
+    def create_index(
+        self,
+        embedding_dimension: int,
+        index_type: str = "flat",
+        expected_count: int | None = None,
+    ) -> None:
         """Create a new FAISS index.
 
         Args:
             embedding_dimension: Dimension of embedding vectors
             index_type: Type of index to create ("flat" or "ivf")
+            expected_count: Vectors the index will hold (required for "ivf")
         """
-        self._faiss_index.create(embedding_dimension, index_type)
+        self._faiss_index.create(embedding_dimension, index_type, expected_count)
 
     def add_embeddings(self, embedding_results: list[EmbeddingResult]) -> None:
         """Add embeddings to the index and metadata to the database.
@@ -245,7 +257,9 @@ class CodeIndexManager:
 
         # Initialize index if needed
         if self.index is None:
-            self.create_index(embedding_dim, index_kind_for(num_new_vectors))
+            self.create_index(
+                embedding_dim, index_kind_for(num_new_vectors), num_new_vectors
+            )
 
         # Prepare embeddings and metadata
         embeddings = np.array([result.embedding for result in embedding_results])
@@ -316,21 +330,56 @@ class CodeIndexManager:
 
         self._logger.info(f"Index has {self._faiss_index.ntotal} total vectors")
 
-        # Search in FAISS index (handles normalization internally)
-        search_k = min(
-            k * 3, self._faiss_index.ntotal
-        )  # Get more results for filtering
-        similarities, indices = self._faiss_index.search(query_embedding, search_k)
-
         # Build the filter engine once — filters are loop-invariant, so rebuilding
         # it per-candidate inside the loop below was wasted work on every hit.
         filter_engine = FilterEngine.from_dict(filters) if filters else None
 
-        results = []
-        for _i, (similarity, index_id) in enumerate(
-            zip(similarities, indices, strict=False)
-        ):
+        # Unfiltered: one FAISS call at k*3 (the depth the funnel tests pin).
+        # Filtered: the same first pass, then widen x4 up to FILTERED_SEARCH_CAP
+        # while the post-filter has not yet produced k survivors. A selective
+        # filter (one directory in a large index) otherwise returns a handful
+        # of hits, or none, from a fixed k*3 window -- the same starvation
+        # ``get_similar_chunks`` guards against (ADR-0067). The unstarved case
+        # returns on the first pass, so the loop costs nothing there.
+        ntotal = self._faiss_index.ntotal
+        search_k = min(k * 3, ntotal)
+        cap = (
+            min(FILTERED_SEARCH_CAP, ntotal) if filter_engine is not None else search_k
+        )
+        while True:
+            similarities, indices = self._faiss_index.search(query_embedding, search_k)
+            results, exhausted = self._collect_filtered(
+                similarities, indices, filter_engine, k
+            )
+            if len(results) >= k or exhausted or search_k >= cap:
+                break
+            search_k = min(search_k * 4, cap)
+        if filter_engine is not None and len(results) < k and search_k >= cap:
+            self._logger.info(
+                f"Filtered search returned {len(results)}/{k} after widening to "
+                f"{search_k} of {ntotal} vectors"
+            )
+        return results
+
+    def _collect_filtered(
+        self,
+        similarities: np.ndarray,
+        indices: np.ndarray,
+        filter_engine: FilterEngine | None,
+        k: int,
+    ) -> tuple[list[tuple[str, float, dict[str, Any]]], bool]:
+        """Map one FAISS result row to ``(chunk_id, score, metadata)`` survivors.
+
+        Returns the first ``k`` candidates that have metadata and pass
+        ``filter_engine``, plus ``exhausted``: True when FAISS padded the row
+        with ``-1`` (the index has no more vectors to offer), so widening
+        further cannot help.
+        """
+        results: list[tuple[str, float, dict[str, Any]]] = []
+        exhausted = False
+        for similarity, index_id in zip(similarities, indices, strict=False):
             if index_id == -1:  # No more results
+                exhausted = True
                 break
 
             chunk_id = self.chunk_ids[index_id]
@@ -350,7 +399,7 @@ class CodeIndexManager:
             if len(results) >= k:
                 break
 
-        return results
+        return results, exhausted
 
     def reconstruct_embeddings(
         self, chunk_ids: Sequence[str]
@@ -370,14 +419,16 @@ class CodeIndexManager:
             ``(len(rows), dim)`` embeddings aligned with ``rows``, or ``None``
             when no ID is indexed. FAISS reconstruction errors propagate.
         """
-        position_of = {cid: i for i, cid in enumerate(self._faiss_index.chunk_ids)}
-        rows = [i for i, cid in enumerate(chunk_ids) if cid in position_of]
+        rows: list[int] = []
+        positions: list[int] = []
+        for i, cid in enumerate(chunk_ids):
+            pos = self._faiss_index.position_of(cid)
+            if pos is not None:
+                rows.append(i)
+                positions.append(pos)
         if not rows:
             return [], None
-        matrix = np.stack(
-            [self._faiss_index.reconstruct(position_of[chunk_ids[i]]) for i in rows]
-        )
-        return rows, matrix
+        return rows, self._faiss_index.reconstruct_batch(positions)
 
     def matches_filters(
         self, metadata: dict[str, Any], filters: dict[str, Any]
@@ -517,7 +568,7 @@ class CodeIndexManager:
             return {cid: [] for cid in chunk_ids}
 
         # Collect embeddings and track original -> variant mapping
-        embeddings = []
+        positions: list[int] = []
         valid_chunk_ids = []
         original_to_variant = {}  # Track mapping for correct key lookup
 
@@ -535,23 +586,23 @@ class CodeIndexManager:
             if index_id >= index.ntotal:
                 continue
 
-            # Get the embedding for this chunk
-            embedding = self._faiss_index.reconstruct(index_id)
-            embeddings.append(embedding)
+            positions.append(int(index_id))
             valid_chunk_ids.append(resolved_chunk_id)
             original_to_variant[original_chunk_id] = resolved_chunk_id
 
-        if not embeddings:
+        if not positions:
             return {cid: [] for cid in chunk_ids}
 
-        # Perform batched search
-        query_embeddings = np.array(embeddings, dtype=np.float32)
-        # pyrefly: ignore [missing-attribute]
-        faiss.normalize_L2(query_embeddings)
+        # One batched reconstruct, then one batched search through the wrapper
+        # (which normalizes and applies the legacy-metric conversion). The
+        # wrapper returns 1D arrays for a single query; lift back to [n, k].
+        query_embeddings = self._faiss_index.reconstruct_batch(positions)
 
         # Search for k+1 to account for excluding the query chunk itself
         search_k = min(k + 1, index.ntotal)
-        similarities, indices = index.search(query_embeddings, search_k)
+        similarities, indices = self._faiss_index.search(query_embeddings, search_k)
+        similarities = np.atleast_2d(similarities)
+        indices = np.atleast_2d(indices)
 
         # Process results - key by original chunk_id for correct caller lookup
         results_dict = {}

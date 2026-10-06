@@ -873,6 +873,41 @@ Baseline results: `results/caller_recall_pyan.json`
 
 ---
 
+## FAISS Index Parameter Probe
+
+**Harness:** `scripts/benchmark/probe_faiss_index_params.py`
+**Report:** `evaluation/FAISS_INDEX_PARAMS_20261005.md`; raw JSON in `benchmark_results/faiss_index_params_<ts>.json`
+**Decision record:** [ADR-0083](adr/0083-faiss-index-parameter-policy.md)
+
+Read-only probe of the dense index parameters. It pulls every vector out of an existing on-disk
+index with `reconstruct_n` (or generates a clustered synthetic corpus), holds out `--nq` vectors as
+queries, builds exact ground truth with `IndexFlatIP` at depth 420 (the `leg_search_depth` ceiling),
+then times flat search by OpenMP thread count and sweeps inner-product `IndexIVFFlat` over
+`nlist` x `nprobe` x `parallel_mode`. Recall is `knn_intersection_measure` against the exact top-k
+at k in {1, 10, 35, 70, 210}; it also reports the rate of `-1` padding, the inverted-list imbalance
+factor, train+add time and p50/p95 latency.
+
+```bash
+.venv/Scripts/python.exe scripts/benchmark/probe_faiss_index_params.py --project TD_Glossary --project claude-context-local --combine-all --synthetic 50000 --synthetic 100000
+```
+
+Headline results (2026-10-05, d=1024, 24 threads, faiss-cpu 1.15.1):
+
+| Finding | Value |
+|---|---|
+| Flat nq=1 p50 at 17K / 50K / 100K vectors | 3.7 / 5.5 / 9.4 ms |
+| Flat nq=35 (multi-hop batch) p50 at 17K / 50K / 100K | 14.5 / 54.4 / 135.8 ms |
+| Old IVF policy (nlist 100, nprobe 16) recall@210 on 17K real vectors | 0.941 |
+| Lists probed for recall@210 >= 0.99 on real data | 29-64% of `nlist` (synthetic: ~3%) |
+| IVF vs flat at equal recall, 17K | no faster (nq=1 ~3 ms either way) |
+| `parallel_mode = 1` | slower at every nq |
+
+Shipped policy: flat up to 50,000 vectors; above, `nlist = round(4 sqrt N)` capped at `N // 39`,
+`nprobe = max(ceil(nlist / 2), ceil(420 nlist / N))`. Re-run the probe when a real corpus above
+50K vectors exists or `faiss-gpu` is installed.
+
+---
+
 ## Appendix: Benchmark Data
 
 ### Full Result Files

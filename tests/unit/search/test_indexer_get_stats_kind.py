@@ -13,7 +13,7 @@ def _manager(tmp_path) -> CodeIndexManager:
 
 def _load_vectors(manager: CodeIndexManager, kind: str, n: int = 200) -> None:
     rng = np.random.RandomState(1)
-    manager._faiss_index.create(8, kind)
+    manager._faiss_index.create(8, kind, expected_count=n)
     manager._faiss_index.add(
         rng.randn(n, 8).astype(np.float32), [f"c{i}" for i in range(n)]
     )
@@ -30,8 +30,8 @@ def test_get_stats_overlays_live_ivf_parameters(tmp_path):
     stats = manager.get_stats()
 
     assert stats["index_kind"] == "ivf"
-    assert stats["ivf_nlist"] == 10
-    assert stats["ivf_nprobe"] == 10  # min(IVF_NPROBE, nlist)
+    assert stats["ivf_nlist"] == 5  # ivf_nlist_for(200): 200 // 39
+    assert stats["ivf_nprobe"] == 5  # ivf_nprobe_for(5, 200): capped at nlist
 
 
 def test_get_stats_reports_flat(tmp_path):

@@ -5,7 +5,9 @@ with support for saving, loading, searching, and dimension tracking.
 """
 
 import logging
+import math
 import pickle
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -33,16 +35,27 @@ except ImportError:
 # Mmap auto-threshold: Only use mmap for indices >10K vectors (performance benefit)
 MMAP_THRESHOLD = 10000
 
-# IVF clusters probed per query. IndexIVFFlat defaults to nprobe=1 (1% of a
-# 100-list index), which starves dense recall -- e.g. 4 hits for k=60 on a
-# 21,910-vector index. Applied on create() and on every load() (the value is
-# not persisted usefully: indexes already on disk were saved with nprobe=1).
-IVF_NPROBE = 16
+# Flat/IVF policy (ADR-0083; measured by scripts/benchmark/probe_faiss_index_params.py,
+# evaluation/FAISS_INDEX_PARAMS_20261005.md). Exact search is preferred until it
+# is genuinely slow: flat IndexFlatIP at 50K x 1024-d vectors is ~5 ms for one
+# query and ~55 ms for a 35-query multi-hop batch; at 17K it is 3-4 ms, which
+# IVF cannot beat at equal recall. Real code embeddings are far less clustered
+# than synthetic data: reaching recall@210 >= 0.99 against exact search needs
+# about half of the inverted lists probed (synthetic needs 3%), so the old
+# fixed nlist=100 / nprobe=16 scored recall@210 = 0.94 on a real corpus.
+IVF_MIN_VECTORS = 50_000
 
-# Above this many vectors the dense index is IVF (approximate, faster scan);
-# at or below it, flat (exact). Measured: flat stays fast and exact well past
-# 10K on this hardware, so IVF only pays off for very large indexes.
-IVF_MIN_VECTORS = 10000
+# FAISS warns below this many training points per centroid; nlist is capped
+# so that every centroid has at least this many.
+IVF_MIN_TRAIN_PER_CENTROID = 39
+
+# Fraction of the inverted lists probed per query. Smallest fraction reaching
+# recall@210 >= 0.99 on the 17K real corpus was 0.29-0.64 depending on nlist.
+IVF_PROBE_FRACTION = 0.5
+
+# A probe must be able to visit at least this many vectors (the leg-depth
+# ceiling, search_executor.leg_search_depth at k=84), or FAISS pads with -1.
+IVF_MIN_VISITED = 420
 
 
 def index_kind_for(vector_count: int) -> str:
@@ -54,6 +67,33 @@ def index_kind_for(vector_count: int) -> str:
     than the size of whichever batch happened to arrive first.
     """
     return "ivf" if vector_count > IVF_MIN_VECTORS else "flat"
+
+
+def ivf_nlist_for(vector_count: int) -> int:
+    """Number of IVF centroids for ``vector_count`` vectors.
+
+    The FAISS rule of thumb ``4 * sqrt(N)`` (the low end of its 4-16 sqrt(N)
+    range: fewer, larger lists keep recall high on weakly clustered code
+    embeddings), capped so every centroid has ``IVF_MIN_TRAIN_PER_CENTROID``
+    training points. Always at least 1.
+    """
+    n = max(0, vector_count)
+    by_sqrt = round(4 * math.sqrt(n))
+    by_training = n // IVF_MIN_TRAIN_PER_CENTROID
+    return max(1, min(by_sqrt, by_training))
+
+
+def ivf_nprobe_for(nlist: int, vector_count: int) -> int:
+    """Lists probed per query for ``nlist`` lists holding ``vector_count`` vectors.
+
+    ``IVF_PROBE_FRACTION`` of the lists, raised when needed so the probe can
+    visit ``IVF_MIN_VISITED`` vectors (no ``-1`` padding at the leg-depth
+    ceiling), never more than ``nlist``.
+    """
+    nlist = max(1, nlist)
+    by_fraction = math.ceil(IVF_PROBE_FRACTION * nlist)
+    by_depth = math.ceil(IVF_MIN_VISITED * nlist / max(1, vector_count))
+    return max(1, min(nlist, max(by_fraction, by_depth)))
 
 
 def get_available_memory() -> dict[str, int]:
@@ -161,6 +201,11 @@ class FaissVectorIndex:
         self._chunk_ids: list = []
         self._on_gpu: bool = False
         self._logger = logging.getLogger(__name__)
+        # True when the loaded IVF index was built with METRIC_L2 (indexes
+        # created before the metric fix); search() converts its distances.
+        self._legacy_l2: bool = False
+        # Lazily built chunk_id -> position map; reset whenever _chunk_ids changes.
+        self._position_index: dict[str, int] | None = None
 
         # Memory-mapped vector storage (auto-enabled for >10K vectors)
         self._mmap_storage: Any | None = None  # MmapVectorStorage
@@ -197,15 +242,24 @@ class FaissVectorIndex:
         """Get the list of chunk IDs."""
         return self._chunk_ids
 
-    def create(self, dimension: int, index_type: str = "flat") -> None:
+    def create(
+        self,
+        dimension: int,
+        index_type: str = "flat",
+        expected_count: int | None = None,
+    ) -> None:
         """Create a new FAISS index.
 
         Args:
             dimension: Embedding dimension
             index_type: Type of index to create ("flat" or "ivf")
+            expected_count: Number of vectors the index will hold; required
+                for ``"ivf"`` (sizes ``nlist``/``nprobe``, see
+                ``ivf_nlist_for``/``ivf_nprobe_for``), ignored for ``"flat"``.
 
         Raises:
-            ValueError: If index_type is not supported
+            ValueError: If index_type is not supported, or ``"ivf"`` without
+                ``expected_count``
         """
         if faiss is None:
             raise SearchIndexError(
@@ -219,31 +273,38 @@ class FaissVectorIndex:
             )  # Inner product (cosine similarity)
         elif index_type == "ivf":
             # IVF index for faster approximate search on large datasets
+            if expected_count is None:
+                raise ValueError("expected_count is required for an IVF index")
             quantizer = faiss.IndexFlatIP(dimension)
-            n_centroids = min(
-                100, max(10, dimension // 8)
-            )  # Adaptive number of centroids
-            self._index = faiss.IndexIVFFlat(quantizer, dimension, n_centroids)
+            n_centroids = ivf_nlist_for(expected_count)
+            self._index = faiss.IndexIVFFlat(
+                quantizer, dimension, n_centroids, faiss.METRIC_INNER_PRODUCT
+            )
         else:
             raise ValueError(f"Unsupported index type: {index_type}")
 
         self._chunk_ids = []
+        self._position_index = None
         self._on_gpu = False
-        self._configure_ivf()
+        self._configure_ivf(expected_count)
         self._logger.info(f"Created {index_type} index with dimension {dimension}")
 
         # Move to GPU if available
         self.move_to_gpu()
 
-    def _configure_ivf(self) -> None:
+    def _configure_ivf(self, expected_count: int | None = None) -> None:
         """Make an IVF index reconstructable and widen its search (no-op for flat).
 
         ``IndexIVFFlat`` cannot ``reconstruct(i)`` without a direct map, and
         defaults to ``nprobe=1``. The direct map is the FAISS-side fallback for
         ``reconstruct()`` whenever the mmap vector storage is absent or
         discarded as stale; a no-op if the loaded index already carries one.
+        ``nprobe`` is set from the policy (``ivf_nprobe_for``) on every create
+        and load, sized by ``ntotal`` when vectors are present, else by
+        ``expected_count``; whatever was persisted on disk is ignored.
         Must run before ``move_to_gpu()`` (the GPU wrapper has no such knobs).
         """
+        self._legacy_l2 = False
         if faiss is None or self._index is None:
             return
         ivf = faiss.try_extract_index_ivf(self._index)
@@ -251,7 +312,18 @@ class FaissVectorIndex:
             return
         if ivf.direct_map.type == faiss.DirectMap.NoMap:
             ivf.make_direct_map()
-        ivf.nprobe = min(IVF_NPROBE, ivf.nlist)
+        count = ivf.ntotal if ivf.ntotal > 0 else (expected_count or 0)
+        ivf.nprobe = ivf_nprobe_for(ivf.nlist, count)
+        if ivf.metric_type == faiss.METRIC_L2:
+            # IVF indexes created before the METRIC_INNER_PRODUCT fix return
+            # squared L2 distances (smaller = better). search() converts them
+            # to inner products so score consumers see one convention.
+            self._legacy_l2 = True
+            self._logger.warning(
+                "Legacy L2-metric IVF index loaded; scores are converted to "
+                "inner products on search. Reindex the project to rebuild it "
+                "with the inner-product metric."
+            )
 
     def close(self) -> None:
         """Release the mmap handle without deleting any files.
@@ -280,6 +352,7 @@ class FaissVectorIndex:
             self._chunk_ids = []
             return False
 
+        self._position_index = None
         try:
             self._logger.info(f"Loading existing index from {self.index_path}")
             # pyrefly: ignore [missing-attribute]
@@ -515,6 +588,7 @@ class FaissVectorIndex:
         # Add to index
         self._index.add(embeddings)
         self._chunk_ids.extend(chunk_ids)
+        self._position_index = None
 
         self._logger.debug(f"Added {len(embeddings)} vectors to index")
 
@@ -558,6 +632,10 @@ class FaissVectorIndex:
         faiss.normalize_L2(query)
 
         distances, indices = self._index.search(query, k)
+        if self._legacy_l2:
+            # Unit-norm vectors: ||q - x||^2 = 2 - 2<q, x>  =>  <q, x> = 1 - d^2 / 2.
+            distances = 1.0 - distances / 2.0
+            distances[indices == -1] = -1.0
         if batched:
             return distances, indices
         return distances[0], indices[0]
@@ -587,6 +665,40 @@ class FaissVectorIndex:
         # Fallback: FAISS reconstruct
         return self._index.reconstruct(int(idx))
 
+    def position_of(self, chunk_id: str) -> int | None:
+        """Index position of ``chunk_id``, or None when it is not indexed.
+
+        Backed by a lazily built dict that is invalidated by every mutation
+        of the id list (create/load/add/clear), so repeated lookups cost O(1)
+        instead of a linear scan or a per-call rebuild.
+        """
+        if self._position_index is None:
+            self._position_index = {cid: pos for pos, cid in enumerate(self._chunk_ids)}
+        return self._position_index.get(chunk_id)
+
+    def reconstruct_batch(self, positions: Sequence[int]) -> np.ndarray:
+        """Reconstruct the vectors at ``positions`` as one ``(n, d)`` matrix.
+
+        Uses the mmap sidecar when every row is available there, otherwise a
+        single FAISS ``reconstruct_batch`` call (direct map required for IVF,
+        see ``_configure_ivf``). Returns an empty ``(0, d)`` array for no
+        positions. Reconstruction errors propagate.
+        """
+        if self._index is None:
+            raise ValueError("No index exists")
+        if len(positions) == 0:
+            return np.empty((0, self._index.d), dtype=np.float32)
+
+        if self._mmap_storage and self._mmap_storage.is_loaded:
+            rows = [self._mmap_storage.get_vector(int(p)) for p in positions]
+            if all(r is not None for r in rows):
+                return np.stack(rows).astype(np.float32, copy=False)
+
+        ids = np.asarray(list(positions), dtype=np.int64)
+        if hasattr(self._index, "reconstruct_batch"):
+            return self._index.reconstruct_batch(ids)
+        return np.stack([self._index.reconstruct(int(p)) for p in ids])
+
     def describe(self) -> dict[str, Any]:
         """Report the live index kind and IVF search parameters.
 
@@ -597,10 +709,11 @@ class FaissVectorIndex:
         if self._index is None:
             return {"index_kind": None}
         if "IVF" not in type(self._index).__name__:
-            return {"index_kind": "flat"}
+            return {"index_kind": "flat", "metric": "ip"}
         ivf = faiss.try_extract_index_ivf(self._index) if faiss is not None else None
         return {
             "index_kind": "ivf",
+            "metric": "l2" if self._legacy_l2 else "ip",
             "ivf_nlist": ivf.nlist if ivf is not None else None,
             "ivf_nprobe": ivf.nprobe if ivf is not None else None,
         }
@@ -608,44 +721,52 @@ class FaissVectorIndex:
     def remove_positions(self, positions_to_remove: set[int]) -> bool:
         """Drop the vectors at ``positions_to_remove`` by rebuilding the index.
 
-        Reads every kept vector back, recreates the index and re-adds them,
-        restoring GPU placement. Unreconstructable vectors are skipped (and
-        logged) like the legacy per-vector loop did.
+        Reads every stored vector back in one ``reconstruct_n`` call, masks
+        out the dropped positions, recreates the index and re-adds the rest,
+        restoring GPU placement. The caller renumbers metadata assuming every
+        kept position survives, so a reconstruction failure or an id-list /
+        index size mismatch raises instead of silently skipping vectors.
 
         Args:
             positions_to_remove: Index positions to exclude.
 
         Returns:
             True if the index was rebuilt with the remaining vectors; False if
-            nothing remained (all removed or none reconstructable). On False the
-            index is left untouched and the caller owns the index clear.
+            every position was removed. On False the index is left untouched
+            and the caller owns the index clear.
+
+        Raises:
+            RuntimeError: chunk-id list and FAISS index disagree on size.
         """
-        positions_to_keep = [
-            i for i in range(len(self._chunk_ids)) if i not in positions_to_remove
+        if self._index is None:
+            raise ValueError("No index exists")
+        n = len(self._chunk_ids)
+        if self._index.ntotal != n:
+            raise RuntimeError(
+                f"Index/id-list size mismatch: {self._index.ntotal} vectors vs "
+                f"{n} chunk ids; refusing to rebuild"
+            )
+        keep = np.ones(n, dtype=bool)
+        drop = [p for p in positions_to_remove if 0 <= p < n]
+        keep[drop] = False
+        if not keep.any():
+            return False
+
+        source = self._index
+        if self._on_gpu and hasattr(faiss, "index_gpu_to_cpu"):
+            source = faiss.index_gpu_to_cpu(self._index)
+        all_vectors = source.reconstruct_n(0, n)
+        embeddings_array = np.ascontiguousarray(all_vectors[keep], dtype=np.float32)
+        chunk_ids_to_keep = [
+            cid for cid, kept in zip(self._chunk_ids, keep, strict=True) if kept
         ]
-        if not positions_to_keep:
-            return False
-
-        embeddings_to_keep = []
-        chunk_ids_to_keep = []
-        for pos in positions_to_keep:
-            try:
-                embeddings_to_keep.append(self.reconstruct(int(pos)))
-                chunk_ids_to_keep.append(self._chunk_ids[pos])
-            except Exception as e:  # noqa: BLE001 - resilience: skip unreconstructable embedding, continue rebuild
-                self._logger.warning(
-                    f"Failed to reconstruct embedding at position {pos}: {e}"
-                )
-
-        if not embeddings_to_keep:
-            self._logger.warning("No valid embeddings to keep, clearing index")
-            return False
-
-        embeddings_array = np.array(embeddings_to_keep, dtype=np.float32)
         was_on_gpu = self._on_gpu
 
         self.clear()
-        self.create(embeddings_array.shape[1], index_kind_for(len(embeddings_array)))
+        kept = len(embeddings_array)
+        self.create(
+            embeddings_array.shape[1], index_kind_for(kept), expected_count=kept
+        )
         self.add(embeddings_array, chunk_ids_to_keep)
 
         if was_on_gpu:
@@ -670,6 +791,7 @@ class FaissVectorIndex:
 
         self._index = None
         self._chunk_ids = []
+        self._position_index = None
 
         # Close and release the mmap handle, then unlink it FIRST, before
         # index_path/chunk_id_path below. A residual WinError 32 here (this
