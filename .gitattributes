@@ -7,6 +7,10 @@
 # LINE ENDINGS
 # ============================================================================
 
+# Normalize text files to LF in the index for every client (working-tree endings still
+# follow core.autocrlf); CI fails if a CRLF blob reaches the index.
+* text=auto
+
 # Shell scripts must use LF line endings (fix for bash shebang interpretation)
 *.sh text eol=lf
 
