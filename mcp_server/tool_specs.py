@@ -1175,6 +1175,12 @@ TOOL_DISPATCH: dict[str, Callable[[dict], Awaitable[dict | list]]] = {
 """name -> handler, derived from TOOL_SPECS. Used by handle_call_tool
 (server.py) and the HTTP switch_project route."""
 
+TOOL_INPUT_SCHEMAS: dict[str, dict[str, Any]] = {
+    s.name: s.input_schema for s in TOOL_SPECS
+}
+"""name -> published inputSchema, derived from TOOL_SPECS. Used by
+handle_call_tool to name missing required arguments before dispatch."""
+
 ADVANCED_TOOLS: frozenset[str] = frozenset(s.name for s in TOOL_SPECS if s.advanced)
 """Tools gated behind MCP_EXPOSE_ADVANCED_TOOLS (default: hidden from
 list_tools). Derived from each row's advanced= flag — see module docstring
@@ -1212,6 +1218,7 @@ __all__ = [
     "ToolSpec",
     "TOOL_SPECS",
     "TOOL_DISPATCH",
+    "TOOL_INPUT_SCHEMAS",
     "ADVANCED_TOOLS",
     "build_tool_list",
     *(s.handler.__name__ for s in TOOL_SPECS),

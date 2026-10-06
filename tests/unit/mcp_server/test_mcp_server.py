@@ -530,6 +530,24 @@ class TestHandleCallToolErrorClassification:
         assert result.is_error is True
 
     @pytest.mark.asyncio
+    async def test_missing_required_argument_is_named_in_error(self):
+        """A wrong argument name returns the missing + accepted names, not a bare KeyError."""
+        from mcp_server.server import handle_call_tool
+
+        with patch(
+            "search.config.get_search_config",
+            return_value=self._mock_output_config(),
+        ):
+            result = await handle_call_tool(
+                MagicMock(), self._params("switch_project", {"path": "/some/dir"})
+            )
+
+        assert result.is_error is True
+        text = result.content[0].text
+        assert "Missing required argument(s) for 'switch_project': project_path" in text
+        assert "Accepted arguments: project_path" in text
+
+    @pytest.mark.asyncio
     async def test_failed_job_status_poll_stays_is_error_false(self):
         """Carve-out 1: get_index_status(job_id=...) on a failed job."""
         from mcp_server.server import handle_call_tool

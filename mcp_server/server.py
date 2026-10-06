@@ -496,6 +496,19 @@ async def handle_call_tool(
         if handler is None:
             raise ValueError(f"Unknown tool: {name}")
 
+        # Fail with the missing argument names instead of a bare KeyError text
+        # (e.g. "'project_path'") raised from deep inside the handler.
+        from mcp_server.tool_specs import TOOL_INPUT_SCHEMAS
+
+        schema = TOOL_INPUT_SCHEMAS.get(name, {})
+        missing = [a for a in schema.get("required", ()) if a not in arguments]
+        if missing:
+            accepted = ", ".join(schema.get("properties", {}))
+            raise ValueError(
+                f"Missing required argument(s) for '{name}': {', '.join(missing)}. "
+                f"Accepted arguments: {accepted}"
+            )
+
         # Extract output_format BEFORE dispatch so handlers never receive the
         # key (all current handlers ignore it, but future ones might not) (#36).
         from search.config import get_search_config
