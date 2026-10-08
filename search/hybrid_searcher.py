@@ -988,6 +988,10 @@ class HybridSearcher(BaseSearcher):
         if not meta or not content:
             self._logger.debug("[SIMILAR] instructed probe skipped: no bm25_text")
             return None
+        if content == meta.get("content_preview"):
+            # bm25_text fell back to the <=200-char preview at index time
+            self._logger.debug("[SIMILAR] instructed probe skipped: preview-only text")
+            return None
 
         from chunking.python_ast_chunker import CodeChunk
 
@@ -1008,9 +1012,15 @@ class HybridSearcher(BaseSearcher):
             tags=meta.get("tags"),
             language=meta.get("language", "python"),
         )
-        probe = self.embedder.embed_code_query(
-            self.embedder.create_embedding_content(chunk)
-        )
+        try:
+            probe = self.embedder.embed_code_query(
+                self.embedder.create_embedding_content(chunk)
+            )
+        except Exception as e:  # noqa: BLE001 - resilience: optional probe, stored vector on failure
+            self._logger.warning(
+                "[SIMILAR] instructed probe failed (%s); using stored vector", e
+            )
+            return None
         if probe is None:
             self._logger.debug("[SIMILAR] instructed probe skipped: no instruction")
         return probe

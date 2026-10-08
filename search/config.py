@@ -60,9 +60,12 @@ MODEL_REGISTRY = {
         "instruction_mode": "custom",  # "custom" or "prompt_name"
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",  # Alternative: model's built-in generic passage prompt
-        # Code->code (find_similar) query side; F2LLM-v2 trained code2code with an
-        # instructed query and a raw passage (see EmbeddingConfig.instructed_similar)
-        "code2code_instruction": "Instruct: Retrieve the most relevant code snippet for the given code snippet\nQuery: ",
+        # Code->code (find_similar) query side. F2LLM-v2's xCodeEval Code2Code pool
+        # ("retrieve similar code", other solutions to the same problem) matches
+        # similar-code retrieval; the CodeSearchNet-CCR pool ("most relevant code
+        # snippet") trains prefix->continuation and ranks callers over siblings
+        # (see EmbeddingConfig.instructed_similar)
+        "code2code_instruction": "Instruct: Retrieve similar code given the following code\nQuery: ",
     },
     "codefuse-ai/F2LLM-v2-330M": {
         "dimension": 896,
@@ -74,7 +77,7 @@ MODEL_REGISTRY = {
         "instruction_mode": "custom",  # same template as F2LLM-v2-0.6B
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",
-        "code2code_instruction": "Instruct: Retrieve the most relevant code snippet for the given code snippet\nQuery: ",
+        "code2code_instruction": "Instruct: Retrieve similar code given the following code\nQuery: ",
     },
     "codefuse-ai/F2LLM-v2-160M": {
         "dimension": 640,
@@ -86,7 +89,7 @@ MODEL_REGISTRY = {
         "instruction_mode": "custom",  # same template as F2LLM-v2-0.6B
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",
-        "code2code_instruction": "Instruct: Retrieve the most relevant code snippet for the given code snippet\nQuery: ",
+        "code2code_instruction": "Instruct: Retrieve similar code given the following code\nQuery: ",
     },
 }
 

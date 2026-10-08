@@ -526,6 +526,25 @@ class TestHybridSearcher:
         embedder.embed_code_query.assert_called_once()
         spy.assert_called_once_with("doc1", 3, exclude_same_file=False)
 
+    def test_find_similar_instructed_preview_only_text_falls_back(self):
+        searcher, embedder, spy = self._instructed_searcher()
+        searcher.dense_index.get_chunk_by_id.return_value["content_preview"] = (
+            "def a(): pass"
+        )
+
+        searcher.find_similar_to_chunk("doc1", k=3)
+
+        embedder.embed_code_query.assert_not_called()
+        spy.assert_called_once_with("doc1", 3, exclude_same_file=False)
+
+    def test_find_similar_instructed_embed_failure_falls_back(self):
+        searcher, embedder, spy = self._instructed_searcher()
+        embedder.embed_code_query.side_effect = RuntimeError("CUDA out of memory")
+
+        searcher.find_similar_to_chunk("doc1", k=3)
+
+        spy.assert_called_once_with("doc1", 3, exclude_same_file=False)
+
     def test_multi_hop_uses_batched_search(self):
         """Multi-hop expansion fans out neighbor lookups through
         get_similar_chunks_batched rather than one call per hop-1 result.
