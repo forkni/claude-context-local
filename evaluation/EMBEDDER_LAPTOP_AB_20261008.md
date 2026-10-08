@@ -95,7 +95,8 @@ Reranker effect (gte on minus off), recall@20:
   With gte on, the 330M's first-stage recall gain carries through.
 - The 330M peaks at 4.24 GB against 1.9 GB for bge-m3, because of its larger activation footprint at
   batch 4. Fit holds, but there is less spare VRAM for other GPU users.
-- Single corpus (this repo, Python-heavy). 160M was not run because the 330M passed the VRAM gate.
+- Single corpus (this repo, Python-heavy). 160M was first skipped because the 330M passed the VRAM gate; it
+  was run afterwards, see the addendum.
 
 ## Gotcha found: per-model storage dirs start with no exclude filters
 
@@ -104,3 +105,40 @@ dir has no `user_excluded_dirs`, so the first reindex fell back to defaults and 
 10,810 chunks instead of 243 / 3,146. That run was discarded. Fix applied: seed the new project_info.json
 with the existing filters (`tests`, `logs`, `benchmark_results`, `audit_reports`). Compare file and chunk counts
 across legs before reading any metric.
+
+## Addendum: F2LLM-v2-160M legs (C1 = 160M + gte, C0 = 160M with the reranker off)
+
+Run the same day on the same corpus (243 files / 3146 chunks) with the same flags. The harness
+`[CONFOUND]` flag fires on these comparisons only because `embedding_model` differs, which is the
+variable under test.
+
+| View | Leg | MRR | R@5 | R@10 | R@20 | Hit@5 | Latency |
+|---|---|---|---|---|---|---|---|
+| 63q | C1 | 0.7115 | 0.5611 | 0.6997 | 0.8107 | 0.9365 | 385 ms |
+| 63q | C0 | 0.6182 | 0.5178 | 0.6008 | 0.6318 | 0.8889 | 123 ms |
+| 133q | C1 | 0.5017 | 0.5155 | 0.6452 | 0.7384 | 0.7895 | 399 ms |
+| 133q | C0 | 0.4993 | 0.4875 | 0.5346 | 0.5686 | 0.7669 | 121 ms |
+| fsim | C1 | 0.7478 | 0.5631 | 0.7035 | 0.7754 | 0.9524 | 329 ms |
+| fsim | C0 | 0.6276 | 0.5210 | 0.6143 | 0.6413 | 0.9206 | 104 ms |
+
+Peak VRAM: 3.86 GB at search and 3.65 GB at index (330M: 4.24 / 4.04 GB; bge-m3: 1.9 GB at search).
+
+Paired deltas for C1; no 95% CI excludes 0:
+
+| Contrast | View | MRR | R@10 | R@20 |
+|---|---|---|---|---|
+| C1 - B1 (160M vs 330M, gte on) | 63q | +0.007 | -0.015 | -0.009 |
+| | 133q | -0.006 | -0.020 | -0.019 |
+| | fsim | +0.005 | -0.020 | -0.015 |
+| C1 - A1 (160M vs bge-m3, gte on) | 63q | +0.012 | +0.007 | +0.007 |
+| | 133q | -0.002 | -0.009 | -0.002 |
+| | fsim | +0.026 | +0.016 | +0.016 |
+
+With the reranker off (C0 - B0), MRR is +0.016 / +0.023 / +0.009 and R@20 is -0.011 / +0.009 / -0.000
+on 63q / 133q / fsim, none significant.
+
+Reading: the 160M ties bge-m3 and sits slightly below the 330M on R@10 and R@20 on all three views
+(-0.01 to -0.02, inside the CIs). It saves only about 0.4 GB of peak VRAM against the 330M, because the
+reranker and activation buffers dominate the peak rather than the weights. On 8 GB the 330M stays the
+recall-first choice (ADR-0084). The 160M is the fallback if a card under 6 GB OOMs, and that card was
+not tested.
