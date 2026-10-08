@@ -970,6 +970,51 @@ class HybridSearcher(BaseSearcher):
             )
             return results
 
+    def _instructed_anchor_embedding(self, chunk_id: str) -> np.ndarray | None:
+        """Instructed code->code probe vector for an anchor, or None to fall back.
+
+        Gated by ``EmbeddingConfig.instructed_similar``. Rebuilds the anchor's
+        index-time document from the persisted ``bm25_text`` and embeds it as an
+        instructed query (F2LLM-v2's code2code training shape). Any missing
+        precondition returns None so the caller reuses the stored vector.
+        """
+        if not self.config.embedding.instructed_similar:
+            return None
+        if self.embedder is None:
+            self._logger.debug("[SIMILAR] instructed probe skipped: no embedder")
+            return None
+        meta = self.dense_index.get_chunk_by_id(chunk_id, warn_on_miss=False)
+        content = meta.get("bm25_text") if meta else None
+        if not meta or not content:
+            self._logger.debug("[SIMILAR] instructed probe skipped: no bm25_text")
+            return None
+
+        from chunking.python_ast_chunker import CodeChunk
+
+        chunk = CodeChunk(
+            content=content,
+            chunk_type=meta.get("chunk_type", "function"),
+            start_line=meta.get("start_line", 0),
+            end_line=meta.get("end_line", 0),
+            file_path=meta.get("file_path", ""),
+            relative_path=meta.get("relative_path", ""),
+            folder_structure=meta.get("folder_structure") or [],
+            name=meta.get("name"),
+            parent_name=meta.get("parent_name"),
+            parent_chunk_id=meta.get("parent_chunk_id"),
+            docstring=meta.get("docstring"),
+            decorators=meta.get("decorators"),
+            imports=meta.get("imports"),
+            tags=meta.get("tags"),
+            language=meta.get("language", "python"),
+        )
+        probe = self.embedder.embed_code_query(
+            self.embedder.create_embedding_content(chunk)
+        )
+        if probe is None:
+            self._logger.debug("[SIMILAR] instructed probe skipped: no instruction")
+        return probe
+
     def find_similar_to_chunk(
         self,
         chunk_id: str,
@@ -993,8 +1038,12 @@ class HybridSearcher(BaseSearcher):
         """
         # Fetch more candidates when reranking to improve quality
         fetch_k = k * 2 if rerank else k
+        similar_kwargs: dict[str, Any] = {}
+        probe = self._instructed_anchor_embedding(chunk_id)
+        if probe is not None:
+            similar_kwargs["query_embedding"] = probe
         similar_chunks = self.dense_index.get_similar_chunks(
-            chunk_id, fetch_k, exclude_same_file=exclude_same_file
+            chunk_id, fetch_k, exclude_same_file=exclude_same_file, **similar_kwargs
         )
 
         results = ResultFactory.from_similarity_results(similar_chunks)

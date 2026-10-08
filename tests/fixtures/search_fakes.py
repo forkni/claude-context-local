@@ -350,7 +350,11 @@ class FakeDenseIndex:
         return entry["metadata"] if entry else None
 
     def get_similar_chunks(
-        self, chunk_id: str, k: int = 5, exclude_same_file: bool = False
+        self,
+        chunk_id: str,
+        k: int = 5,
+        exclude_same_file: bool = False,
+        query_embedding: Any = None,
     ) -> list[tuple[str, float, dict[str, Any]]]:
         entry = self.metadata_store.get(chunk_id)
         if not entry or self._vectors is None:
@@ -358,7 +362,9 @@ class FakeDenseIndex:
         index_id = entry["index_id"]
         if index_id >= len(self.chunk_ids):
             return []
-        anchor_embedding = self._vectors[index_id]
+        anchor_embedding = (
+            query_embedding if query_embedding is not None else self._vectors[index_id]
+        )
 
         if exclude_same_file:
             # Mirrors search.indexer.CodeIndexManager.get_similar_chunks'

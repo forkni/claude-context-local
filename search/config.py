@@ -60,6 +60,9 @@ MODEL_REGISTRY = {
         "instruction_mode": "custom",  # "custom" or "prompt_name"
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",  # Alternative: model's built-in generic passage prompt
+        # Code->code (find_similar) query side; F2LLM-v2 trained code2code with an
+        # instructed query and a raw passage (see EmbeddingConfig.instructed_similar)
+        "code2code_instruction": "Instruct: Retrieve the most relevant code snippet for the given code snippet\nQuery: ",
     },
     "codefuse-ai/F2LLM-v2-330M": {
         "dimension": 896,
@@ -71,6 +74,7 @@ MODEL_REGISTRY = {
         "instruction_mode": "custom",  # same template as F2LLM-v2-0.6B
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",
+        "code2code_instruction": "Instruct: Retrieve the most relevant code snippet for the given code snippet\nQuery: ",
     },
     "codefuse-ai/F2LLM-v2-160M": {
         "dimension": 640,
@@ -82,6 +86,7 @@ MODEL_REGISTRY = {
         "instruction_mode": "custom",  # same template as F2LLM-v2-0.6B
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",
+        "code2code_instruction": "Instruct: Retrieve the most relevant code snippet for the given code snippet\nQuery: ",
     },
 }
 
@@ -149,7 +154,7 @@ def spec(
 
 @dataclass
 class EmbeddingConfig:
-    """Embedding model configuration (12 fields)."""
+    """Embedding model configuration (13 fields)."""
 
     model_name: str = field(
         default="BAAI/bge-m3",
@@ -257,6 +262,18 @@ class EmbeddingConfig:
         default=0,  # 0 = auto (max(2 * live_keys, 2_000), 32MB clamp)
         metadata=spec(reader="embeddings/chunk_cache.py"),
     )
+    instructed_similar: bool = field(
+        default=False,  # find_similar_code reuses the anchor's stored document vector
+        metadata=spec(
+            flat_alias="instructed_similar",
+            env="CLAUDE_INSTRUCTED_SIMILAR",
+            reader="search/hybrid_searcher.py",
+        ),
+    )  # When True and the model registry entry has "code2code_instruction",
+    # HybridSearcher.find_similar_to_chunk re-embeds the anchor chunk's composed
+    # document as an *instructed query* (F2LLM-v2's code2code training shape:
+    # instructed query, raw passage) instead of reusing its stored document
+    # vector. Needs the anchor's persisted bm25_text (hybrid-path indexes).
 
 
 class SearchMode(StrEnum):

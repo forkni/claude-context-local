@@ -1417,6 +1417,48 @@ class CodeEmbedder:
 
         return embedding
 
+    def embed_code_query(self, code: str) -> np.ndarray | None:
+        """Embed a code snippet as an instructed code->code *query*.
+
+        F2LLM-v2 trained code2code retrieval with an instructed query and a raw
+        passage. Returns None when the model has no ``code2code_instruction``
+        (callers fall back to the stored document vector).
+
+        Args:
+            code: Composed document text of the anchor chunk.
+
+        Returns:
+            ``(embedding_dim,)`` float32 vector, or None if unsupported.
+        """
+        model_config = self._get_model_config()
+        instruction = model_config.get("code2code_instruction", "")
+        if not instruction:
+            return None
+
+        cache_kwargs: dict[str, Any] = {
+            "query": code,
+            "model_name": self.model_name,
+            "instruction_mode": "code2code",
+            "query_instruction": instruction,
+        }
+        cached_embedding = self._query_cache.get(**cache_kwargs)
+        if cached_embedding is not None:
+            return cached_embedding
+
+        encode_kwargs: dict[str, Any] = {"show_progress_bar": False}
+        if self._is_gpu_device():
+            encode_kwargs["convert_to_tensor"] = True
+            encode_kwargs["device"] = self.device
+
+        # pyrefly: ignore [missing-attribute]
+        with self._lifecycle_lock:
+            # pyrefly: ignore [missing-attribute]
+            embedding = self.model.encode([instruction + code], **encode_kwargs)[0]
+        embedding = self._tensor_to_numpy(embedding)
+
+        self._query_cache.put(embedding=embedding, **cache_kwargs)
+        return embedding
+
     def embed_queries_batch(self, queries: list[str]) -> np.ndarray:
         """Embed N queries in one forward pass; cache hits skip the model call.
 

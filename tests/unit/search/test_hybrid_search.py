@@ -470,6 +470,62 @@ class TestHybridSearcher:
 
         spy.assert_called_once_with("doc1", 6, exclude_same_file=True)
 
+    def _instructed_searcher(self, *, flag=True, probe=True, bm25_text="def a(): pass"):
+        """HybridSearcher with a spy on get_similar_chunks and a stubbed anchor."""
+        embedder, config = self._stub_search_deps()
+        config.embedding.instructed_similar = flag
+        embedder.create_embedding_content.return_value = "composed doc"
+        embedder.embed_code_query.return_value = (
+            np.full(768, 0.5, dtype=np.float32) if probe else None
+        )
+        searcher = HybridSearcher(self.temp_dir, embedder=embedder, config=config)
+        searcher.index_documents(
+            self.documents, self.doc_ids, self.embeddings, self.metadata
+        )
+        anchor_meta = {"chunk_type": "function", "name": "a", "relative_path": "a.py"}
+        if bm25_text is not None:
+            anchor_meta["bm25_text"] = bm25_text
+        searcher.dense_index.get_chunk_by_id = Mock(return_value=anchor_meta)
+        spy = Mock(wraps=searcher.dense_index.get_similar_chunks)
+        searcher.dense_index.get_similar_chunks = spy
+        return searcher, embedder, spy
+
+    def test_find_similar_instructed_probe_forwarded(self):
+        searcher, embedder, spy = self._instructed_searcher()
+
+        searcher.find_similar_to_chunk("doc1", k=3)
+
+        embedder.embed_code_query.assert_called_once_with("composed doc")
+        chunk = embedder.create_embedding_content.call_args[0][0]
+        assert chunk.content == "def a(): pass"
+        assert chunk.name == "a"
+        kwargs = spy.call_args.kwargs
+        assert kwargs["query_embedding"] is embedder.embed_code_query.return_value
+
+    def test_find_similar_instructed_flag_off_falls_back(self):
+        searcher, embedder, spy = self._instructed_searcher(flag=False)
+
+        searcher.find_similar_to_chunk("doc1", k=3)
+
+        embedder.embed_code_query.assert_not_called()
+        spy.assert_called_once_with("doc1", 3, exclude_same_file=False)
+
+    def test_find_similar_instructed_without_bm25_text_falls_back(self):
+        searcher, embedder, spy = self._instructed_searcher(bm25_text=None)
+
+        searcher.find_similar_to_chunk("doc1", k=3)
+
+        embedder.embed_code_query.assert_not_called()
+        spy.assert_called_once_with("doc1", 3, exclude_same_file=False)
+
+    def test_find_similar_instructed_without_instruction_falls_back(self):
+        searcher, embedder, spy = self._instructed_searcher(probe=False)
+
+        searcher.find_similar_to_chunk("doc1", k=3)
+
+        embedder.embed_code_query.assert_called_once()
+        spy.assert_called_once_with("doc1", 3, exclude_same_file=False)
+
     def test_multi_hop_uses_batched_search(self):
         """Multi-hop expansion fans out neighbor lookups through
         get_similar_chunks_batched rather than one call per hop-1 result.

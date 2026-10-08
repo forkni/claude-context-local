@@ -470,7 +470,11 @@ class CodeIndexManager:
         return None
 
     def get_similar_chunks(
-        self, chunk_id: str, k: int = 5, exclude_same_file: bool = False
+        self,
+        chunk_id: str,
+        k: int = 5,
+        exclude_same_file: bool = False,
+        query_embedding: np.ndarray | None = None,
     ) -> list[tuple[str, float, dict[str, Any]]]:
         """Find chunks similar to a given chunk via symbol hash cache (O(1) lookup).
 
@@ -484,6 +488,10 @@ class CodeIndexManager:
                 evaluation/SIMILAR_DIVERSITY_20260728.md). Not offered on
                 ``get_similar_chunks_batched``: its only production caller is
                 multi-hop semantic expansion, which carries no such intent.
+            query_embedding: Probe vector to search with instead of the anchor's
+                stored document vector (e.g. an instructed code->code query
+                embedding). The anchor is still located by ``chunk_id`` and
+                dropped from the results.
         """
         # MetadataStore.get() now handles hash cache lookup + variant fallback internally
         metadata_entry = self.metadata_store.get(chunk_id)
@@ -495,8 +503,12 @@ class CodeIndexManager:
         if self.index is None or index_id >= self.index.ntotal:
             return []
 
-        # Get the embedding for this chunk
-        embedding = self._faiss_index.reconstruct(index_id)
+        # Probe with the caller's vector, else the chunk's stored embedding
+        embedding = (
+            query_embedding
+            if query_embedding is not None
+            else self._faiss_index.reconstruct(index_id)
+        )
 
         if exclude_same_file:
             # Same-file neighbors can dominate the top ranks (5-8 of top-10 for

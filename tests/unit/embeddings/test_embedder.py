@@ -1917,6 +1917,92 @@ class TestCacheKeyInstructionMode:
         )
 
 
+class TestEmbedCodeQuery:
+    """embed_code_query: instructed code->code probe (F2LLM-v2 code2code shape)."""
+
+    _INSTR = "Instruct: Retrieve the most relevant code snippet\nQuery: "
+
+    @staticmethod
+    def _make(mock_st, mock_loader_st, dim: int = 8):
+        seen: list = []
+
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
+            seen.append((list(sentences), kwargs))
+            return np.ones((len(sentences), dim), dtype=np.float32)
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_model.device = "cpu"
+        mock_st.return_value = mock_model
+        mock_loader_st.return_value = mock_model
+        embedder = CodeEmbedder(model_name="Qwen/Qwen3-Embedding-0.6B")
+        _ = embedder.model  # trigger warm-up
+        seen.clear()
+        return embedder, seen
+
+    @_patch_model_loader_st
+    @_patch_embedder_st
+    def test_applies_instruction_without_prompt_name(self, mock_st, mock_loader_st):
+        embedder, seen = self._make(mock_st, mock_loader_st)
+        embedder._model_config = {
+            "dimension": 8,
+            "instruction_mode": "custom",
+            "query_instruction": "Instruct: NL\nQuery: ",
+            "prompt_name": "query",
+            "code2code_instruction": self._INSTR,
+        }
+
+        out = embedder.embed_code_query("def f(): pass")
+
+        assert out is not None
+        assert seen[0][0] == [self._INSTR + "def f(): pass"]
+        assert "prompt_name" not in seen[0][1]
+
+    @_patch_model_loader_st
+    @_patch_embedder_st
+    def test_returns_none_without_instruction(self, mock_st, mock_loader_st):
+        embedder, seen = self._make(mock_st, mock_loader_st)
+        embedder._model_config = {"dimension": 8, "instruction_mode": "custom"}
+
+        assert embedder.embed_code_query("def f(): pass") is None
+        assert seen == []
+
+    @_patch_model_loader_st
+    @_patch_embedder_st
+    def test_cache_hit_and_no_collision_with_embed_query(self, mock_st, mock_loader_st):
+        embedder, seen = self._make(mock_st, mock_loader_st)
+        embedder._model_config = {
+            "dimension": 8,
+            "instruction_mode": "custom",
+            "query_instruction": self._INSTR,
+            "code2code_instruction": self._INSTR,
+        }
+
+        embedder.embed_code_query("same text")
+        embedder.embed_code_query("same text")
+        assert len(seen) == 1, "second code-query call must hit the cache"
+
+        embedder.embed_query("same text")
+        assert len(seen) == 2, "embed_query must not reuse the code-query entry"
+
+    def test_f2llm_registry_entries_declare_code2code_instruction(self):
+        from search.config import MODEL_REGISTRY
+
+        f2llm = [n for n in MODEL_REGISTRY if "F2LLM-v2" in n]
+        assert len(f2llm) >= 3
+        for name in f2llm:
+            cfg = MODEL_REGISTRY[name]
+            assert cfg["instruction_mode"] == "custom"
+            assert cfg["code2code_instruction"].startswith("Instruct: ")
+            assert cfg["code2code_instruction"].endswith("\nQuery: ")
+
+
 class TestBuildChunkId:
     """Unit tests for CodeEmbedder._build_chunk_id — no model load required."""
 

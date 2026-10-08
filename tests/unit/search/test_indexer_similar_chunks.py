@@ -69,6 +69,38 @@ MIXED_RESULTS = [
 ]
 
 
+class TestGetSimilarChunksQueryEmbedding:
+    def test_query_embedding_replaces_reconstruct(self, tmp_path):
+        """A caller-supplied probe vector is searched instead of the stored one."""
+        manager = _make_manager(tmp_path, ntotal=100, search_results=MIXED_RESULTS)
+        probe = np.ones(768, dtype=np.float32)
+
+        results = manager.get_similar_chunks(ANCHOR, k=3, query_embedding=probe)
+
+        manager._faiss_index.reconstruct.assert_not_called()
+        assert manager.search.call_args[0][0] is probe
+        assert ANCHOR not in [cid for cid, _, _ in results]
+
+    def test_query_embedding_composes_with_exclude_same_file(self, tmp_path):
+        """The probe vector also drives the exclude_same_file widening path."""
+        manager = _make_manager(tmp_path, ntotal=100, search_results=MIXED_RESULTS)
+        probe = np.ones(768, dtype=np.float32)
+
+        results = manager.get_similar_chunks(
+            ANCHOR, k=2, exclude_same_file=True, query_embedding=probe
+        )
+
+        manager._faiss_index.reconstruct.assert_not_called()
+        assert all(meta["relative_path"] != "pkg/anchor.py" for _, _, meta in results)
+
+    def test_default_still_reconstructs(self, tmp_path):
+        manager = _make_manager(tmp_path, ntotal=100, search_results=MIXED_RESULTS)
+
+        manager.get_similar_chunks(ANCHOR, k=3)
+
+        manager._faiss_index.reconstruct.assert_called_once_with(0)
+
+
 class TestGetSimilarChunksDefault:
     def test_default_fetches_k_plus_one(self, tmp_path):
         """Default path must keep the historical k+1 fetch depth."""

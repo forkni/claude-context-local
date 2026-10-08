@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Instructed `find_similar_code` probe, off by default** (`EmbeddingConfig.instructed_similar`, env
+  `CLAUDE_INSTRUCTED_SIMILAR`, [ADR-0085](docs/adr/0085-instructed-find-similar-flag-off.md)) —
+  `CodeEmbedder.embed_code_query` embeds the anchor's composed document with the F2LLM-v2
+  `code2code_instruction` as a query, and `CodeIndexManager.get_similar_chunks(query_embedding=)`
+  searches with it instead of the stored vector. A/B on the 330M failed the gate (fsim MRR -0.026), so the
+  default is unchanged; the NL query wording was also A/B'd against the paper's and kept. Report:
+  `evaluation/F2LLM_SETTINGS_AUDIT_20261008.md`.
+
 - **F2LLM-v2-330M embedder** (`search/config.py`, [ADR-0084](docs/adr/0084-f2llm-330m-for-laptop-and-minimal-tiers.md)) — registry entry for `codefuse-ai/F2LLM-v2-330M` (dim 896, 0.67 GB bf16, MTEB-Code 75.74), now the `recommended_model` for the laptop and minimal VRAM tiers (`search/vram_manager.py`) instead of `BAAI/bge-m3`. Laptop 2x2 A/B with and without gte: at least as good as bge-m3 + gte on MRR and R@20 on 63q, 133q and F-via-similar, peak VRAM 4.24 GB, gte still adds +0.15-0.20 R@20. Existing bge-m3 indexes need a reindex; `search_config.json.example` stays on bge-m3. Report: `evaluation/EMBEDDER_LAPTOP_AB_20261008.md`.
 
 - **FAISS index parameter probe** (`scripts/benchmark/probe_faiss_index_params.py`,
