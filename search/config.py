@@ -61,6 +61,17 @@ MODEL_REGISTRY = {
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",  # Alternative: model's built-in generic passage prompt
     },
+    "codefuse-ai/F2LLM-v2-330M": {
+        "dimension": 896,
+        "max_context": 40960,
+        "description": "Pruned F2LLM-v2-0.6B (16 layers, MTEB-Code 75.74); laptop-class",
+        "vram_gb": "~0.7GB",  # 668.7 MB bf16 weights
+        "fallback_batch_size": 256,
+        "vram_tier": "minimal",  # Usable on all GPUs
+        "instruction_mode": "custom",  # same template as F2LLM-v2-0.6B
+        "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
+        "prompt_name": "query",
+    },
 }
 
 

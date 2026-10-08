@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from search.config import MODEL_REGISTRY
 from search.vram_manager import VRAM_TIERS, VRAMTierManager
 
 
@@ -38,13 +39,15 @@ class TestVRAMTiers:
     def test_recommended_models(self):
         """Test that each tier has a recommended model."""
         for tier in VRAM_TIERS:
-            # Models can be BGE-M3 or Qwen variants
+            # Models can be F2LLM-330M, BGE-M3 or Qwen variants
             assert tier.recommended_model in [
+                "codefuse-ai/F2LLM-v2-330M",
                 "BAAI/bge-m3",
                 "Qwen/Qwen3-Embedding-0.6B",
                 "jinaai/jina-embeddings-v5-text-small-retrieval",
             ]
             assert len(tier.recommended_model) > 5
+            assert tier.recommended_model in MODEL_REGISTRY
 
     def test_feature_enablement_progression(self):
         """Test that reranking is enabled progressively with higher tiers."""
@@ -91,7 +94,7 @@ class TestVRAMTierManager:
             tier = manager.detect_tier()
 
             assert tier.name == "minimal"
-            assert tier.recommended_model == "BAAI/bge-m3"
+            assert tier.recommended_model == "codefuse-ai/F2LLM-v2-330M"
             assert tier.neural_reranking_enabled is False
 
     def test_detect_tier_laptop(self):
@@ -109,7 +112,7 @@ class TestVRAMTierManager:
             tier = manager.detect_tier()
 
             assert tier.name == "laptop"
-            assert tier.recommended_model == "BAAI/bge-m3"
+            assert tier.recommended_model == "codefuse-ai/F2LLM-v2-330M"
             assert tier.neural_reranking_enabled is True
             assert tier.reranker_model == "lightweight"
 
@@ -180,7 +183,7 @@ class TestVRAMTierManager:
 
             # Should fall back to minimal tier
             assert tier.name == "minimal"
-            assert tier.recommended_model == "BAAI/bge-m3"
+            assert tier.recommended_model == "codefuse-ai/F2LLM-v2-330M"
 
     def test_torch_not_available(self):
         """Test behavior when PyTorch is not installed."""
@@ -196,8 +199,8 @@ class TestVRAMTierManager:
         """Test getting model for specific tier."""
         manager = VRAMTierManager()
 
-        assert manager.get_model_for_tier("minimal") == "BAAI/bge-m3"
-        assert manager.get_model_for_tier("laptop") == "BAAI/bge-m3"
+        assert manager.get_model_for_tier("minimal") == "codefuse-ai/F2LLM-v2-330M"
+        assert manager.get_model_for_tier("laptop") == "codefuse-ai/F2LLM-v2-330M"
         assert manager.get_model_for_tier("desktop") == "Qwen/Qwen3-Embedding-0.6B"
         assert manager.get_model_for_tier("workstation") == "Qwen/Qwen3-Embedding-0.6B"
 
@@ -272,7 +275,7 @@ class TestVRAMTierManager:
             manager_4060 = VRAMTierManager()
             tier_4060 = manager_4060.detect_tier()
             assert tier_4060.name == "laptop"
-            assert tier_4060.recommended_model == "BAAI/bge-m3"
+            assert tier_4060.recommended_model == "codefuse-ai/F2LLM-v2-330M"
 
             # RTX 3090 (24GB)
             mock_props.total_memory = 24 * (1024**3)

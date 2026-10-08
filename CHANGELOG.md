@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **F2LLM-v2-330M embedder** (`search/config.py`, [ADR-0084](docs/adr/0084-f2llm-330m-for-laptop-and-minimal-tiers.md)) — registry entry for `codefuse-ai/F2LLM-v2-330M` (dim 896, 0.67 GB bf16, MTEB-Code 75.74), now the `recommended_model` for the laptop and minimal VRAM tiers (`search/vram_manager.py`) instead of `BAAI/bge-m3`. Laptop 2x2 A/B with and without gte: at least as good as bge-m3 + gte on MRR and R@20 on 63q, 133q and F-via-similar, peak VRAM 4.24 GB, gte still adds +0.15-0.20 R@20. Existing bge-m3 indexes need a reindex; `search_config.json.example` stays on bge-m3. Report: `evaluation/EMBEDDER_LAPTOP_AB_20261008.md`.
+
 - **FAISS index parameter probe** (`scripts/benchmark/probe_faiss_index_params.py`,
   [ADR-0083](docs/adr/0083-faiss-index-parameter-policy.md)) — read-only harness that pulls every
   vector out of an on-disk index, builds exact ground truth at the leg-depth ceiling (420) and

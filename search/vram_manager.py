@@ -29,7 +29,7 @@ class VRAMTier:
 
 
 # VRAM tier definitions based on GPU capabilities
-# RTX 3060/4060 (8GB) → laptop tier → BGE-M3
+# RTX 3060/4060 (8GB) → laptop tier → F2LLM-v2-330M (ADR-0084; BGE-M3 before 2026-10-08)
 # RTX 3060 12GB (12GB) → desktop tier → Qwen3-0.6B
 # RTX 3090/4090 (24GB) → workstation tier → Qwen3-0.6B (single-model + reranker, ~2.5GB)
 VRAM_TIERS: list[VRAMTier] = [
@@ -37,7 +37,7 @@ VRAM_TIERS: list[VRAMTier] = [
         name="minimal",
         min_vram_gb=0,
         max_vram_gb=6,
-        recommended_model="BAAI/bge-m3",  # Smallest viable model (1.07GB)
+        recommended_model="codefuse-ai/F2LLM-v2-330M",  # 0.67GB weights, MTEB-Code 75.74 (ADR-0084)
         neural_reranking_enabled=False,  # Disable to conserve VRAM
         reranker_model=None,  # Reranking disabled
     ),
@@ -45,7 +45,7 @@ VRAM_TIERS: list[VRAMTier] = [
         name="laptop",
         min_vram_gb=6,
         max_vram_gb=10,
-        recommended_model="BAAI/bge-m3",  # Base model for 8GB GPUs
+        recommended_model="codefuse-ai/F2LLM-v2-330M",  # 8GB GPUs: 4.24GB peak with gte (ADR-0084)
         neural_reranking_enabled=True,  # Lightweight reranker (0.3GB)
         reranker_model="lightweight",  # Use gte-reranker-modernbert-base
     ),
