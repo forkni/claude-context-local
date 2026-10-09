@@ -23,6 +23,16 @@ MODEL_REGISTRY = {
         "vram": "2.2GB",
         "short": "f2llm-v2-0.6b",
     },
+    "codefuse-ai/F2LLM-v2-330M": {
+        "dim": 896,
+        "vram": "~0.7GB",
+        "short": "f2llm-v2-330m",
+    },
+    "codefuse-ai/F2LLM-v2-160M": {
+        "dim": 640,
+        "vram": "~0.35GB",
+        "short": "f2llm-v2-160m",
+    },
 }
 
 DEFAULT_STORAGE_DIR = Path.home() / ".claude_code_search"

@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **F2LLM-v2-330M in the launcher's Quick Model Switch** (`start_mcp_server.cmd`) — option 2 in the 8GB
+  block, marked recommended per [ADR-0084](docs/adr/0084-f2llm-330m-for-laptop-and-minimal-tiers.md);
+  the other options shift to 3-5. `scripts/get_system_status_fast.py` now mirrors the 330M and 160M so the
+  status panel no longer shows `(?d, ?)`, and a parity test keeps the copy in sync with `MODEL_REGISTRY`.
+
 - **Instructed `find_similar_code` probe, off by default** (`EmbeddingConfig.instructed_similar`, env
   `CLAUDE_INSTRUCTED_SIMILAR`, [ADR-0085](docs/adr/0085-instructed-find-similar-flag-off.md)) —
   `CodeEmbedder.embed_code_query` embeds the anchor's composed document with the F2LLM-v2
@@ -239,6 +244,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `evaluation/CANON_GATE_FANOUT_CAP_20260903.md`).
 
 ### Fixed
+
+- **`code2code_instruction` is the xCodeEval similar-code string** (`search/config.py`, all three F2LLM
+  entries) — it was the CodeSearchNet-CCR prefix-to-continuation string, which ranked callers over
+  structural siblings. The instructed `find_similar` probe now also skips a truncated preview-only
+  `bm25_text` and falls back to the stored vector on an embedder error, and no longer skips chunks of 200
+  characters or fewer (their preview is the full text). Re-test on the 330M (E2b): null result, flag stays
+  off ([ADR-0085](docs/adr/0085-instructed-find-similar-flag-off.md)).
 
 - **IVF indexes were built with `METRIC_L2` and returned squared distances as "similarities"**
   (`search/faiss_index.py`, [ADR-0083](docs/adr/0083-faiss-index-parameter-policy.md)) —

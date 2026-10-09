@@ -988,8 +988,9 @@ class HybridSearcher(BaseSearcher):
         if not meta or not content:
             self._logger.debug("[SIMILAR] instructed probe skipped: no bm25_text")
             return None
-        if content == meta.get("content_preview"):
-            # bm25_text fell back to the <=200-char preview at index time
+        if content == meta.get("content_preview") and len(content) > 200:
+            # bm25_text fell back to the truncated preview ("<200 chars>...") at
+            # index time; a chunk of <=200 chars has preview == full content
             self._logger.debug("[SIMILAR] instructed probe skipped: preview-only text")
             return None
 

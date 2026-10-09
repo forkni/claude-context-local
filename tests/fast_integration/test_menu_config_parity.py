@@ -167,3 +167,29 @@ def test_menu_choice_ranges_match_handlers_and_guards() -> None:
         f"{len(problems)} menu prompt/handler/guard mismatch(es) in "
         f"{CMD_PATH.name}:\n" + "\n".join(problems)
     )
+
+
+def test_status_script_registry_mirrors_model_registry() -> None:
+    """scripts/get_system_status_fast.py keeps a zero-dependency copy of
+    MODEL_REGISTRY for the launcher's status panel; a model missing from the
+    copy renders as '(?d, ?)', so every registered model must be mirrored."""
+    import importlib.util
+
+    from search.config import MODEL_REGISTRY
+
+    script = CMD_PATH.parent / "scripts" / "get_system_status_fast.py"
+    spec = importlib.util.spec_from_file_location("get_system_status_fast", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    problems = []
+    for name, entry in MODEL_REGISTRY.items():
+        mirrored = module.MODEL_REGISTRY.get(name)
+        if mirrored is None:
+            problems.append(f"  {name}: missing from the status script copy")
+        elif mirrored["dim"] != entry["dimension"]:
+            problems.append(
+                f"  {name}: dim {mirrored['dim']} != registry {entry['dimension']}"
+            )
+    assert not problems, "get_system_status_fast.py drifted:\n" + "\n".join(problems)
