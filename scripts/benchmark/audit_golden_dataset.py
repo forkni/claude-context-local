@@ -43,6 +43,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from evaluation.index_locator import find_index  # noqa: E402
 from evaluation.metrics import normalize_chunk_id  # noqa: E402
 from search.metadata import MetadataStore  # noqa: E402
 
@@ -51,28 +52,6 @@ DEFAULT_DATASETS = [
     "evaluation/golden_dataset.json",
     "evaluation/golden_dataset_expanded.json",
 ]
-
-
-def locate_metadata_db(project_root: Path, model_name: str) -> Path | None:
-    """Find the live index metadata.db for this project + embedding model."""
-    import os
-
-    storage_root = Path(
-        os.environ.get("CODE_SEARCH_STORAGE", Path.home() / ".claude_code_search")
-    )
-    projects_dir = storage_root / "projects"
-    if not projects_dir.exists():
-        return None
-    slug = model_name.split("/")[-1].lower()
-    candidates = sorted(
-        d
-        for d in projects_dir.iterdir()
-        if d.is_dir() and d.name.startswith(f"{project_root.name}_") and slug in d.name
-    )
-    if not candidates:
-        return None
-    db = candidates[-1] / "index" / "metadata.db"
-    return db if db.exists() else None
 
 
 def gold_ids(query: dict) -> set[str]:
@@ -212,9 +191,13 @@ def main() -> int:
             (project_root / "search_config.json").read_text(encoding="utf-8")
         )
         model_name = config["embedding"]["model_name"]
-        db_path = locate_metadata_db(project_root, model_name)
-    if db_path is None or not db_path.exists():
-        print(f"ERROR: metadata.db not found (looked via {project_root})")
+        try:
+            db_path = find_index(project_root.name, model_slug=model_name).metadata_db
+        except LookupError as exc:
+            print(f"ERROR: metadata.db not found (looked via {project_root}): {exc}")
+            return 2
+    if not db_path.exists():
+        print(f"ERROR: metadata.db not found: {db_path}")
         return 2
 
     store = MetadataStore(db_path)

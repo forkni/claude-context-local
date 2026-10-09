@@ -15,8 +15,9 @@ hardcoded ``5``; a probe testing that knob via ``--set`` would silently
 report the same ``search_k`` regardless of the override). Two independent
 rerank-instrumentation adapters (``probe_final_pool_reserve.py``'s
 ``instrument_rerank`` and ``probe_duplicate_crowding.py``'s
-``Instrumentation`` class) had also converged on the same design without
-either knowing about the other.
+``Instrumentation`` class; the latter script was later deleted in
+``eccf0c9c``) had also converged on the same design without either
+knowing about the other.
 
 This module is the seam that ends the hand-copying, modeled on
 ``evaluation/arm_overrides.py``'s shape: module-level functions plus small
@@ -369,10 +370,10 @@ class ProbeSession:
 
         Yields the list of per-call records, which grows for the context
         manager's duration; patches are restored on exit even if the body
-        raises. Generalizes two independent adapters that had converged on
+        raises. Replaced two independent adapters that had converged on
         the same design: ``probe_final_pool_reserve.py``'s
         ``instrument_rerank`` and ``probe_duplicate_crowding.py``'s
-        ``Instrumentation`` class.
+        ``Instrumentation`` class (the latter deleted in ``eccf0c9c``).
 
         Each record: ``is_merged_pass`` (the pass-identity discriminator --
         ``True`` iff the ``rerank_by_query`` call passed a ``window=``
