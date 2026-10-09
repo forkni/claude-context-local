@@ -45,16 +45,12 @@ from pathlib import Path
 import networkx as nx
 
 from chunking.relationships.relationship_types import RelationshipType
+from evaluation.index_locator import find_index, load_call_graph
 from evaluation.metrics import normalize_chunk_id
 from graph.graph_queries import GraphQueryEngine
 from graph.graph_storage import CodeGraphStorage
 from graph.schema import EDGE_ATTR_TYPE
 from graph.schema import is_phantom_node as is_phantom
-from scripts.benchmark.graph_phantom_preflight import (
-    DEFAULT_STORAGE_DIR,
-    find_call_graph_dir,
-    load_storage,
-)
 from search.config import GraphEnhancedConfig
 
 
@@ -219,15 +215,25 @@ def run_probe(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-name", required=True)
-    parser.add_argument("--storage-dir", type=Path, default=DEFAULT_STORAGE_DIR)
+    parser.add_argument(
+        "--storage-dir",
+        type=Path,
+        default=None,
+        help="Storage root containing 'projects/' "
+        "(default: $CODE_SEARCH_STORAGE or ~/.claude_code_search)",
+    )
     parser.add_argument("--canon", type=Path, nargs="*", default=list(DEFAULT_CANONS))
     parser.add_argument("--golden", type=Path, nargs="*", default=list(DEFAULT_GOLDENS))
     parser.add_argument("--top-n", type=int, default=20)
     parser.add_argument("--json", type=Path, default=None)
     args = parser.parse_args()
 
-    project_dir = find_call_graph_dir(args.storage_dir, args.project_name)
-    storage = load_storage(project_dir)
+    try:
+        paths = find_index(args.project_name, storage=args.storage_dir)
+        storage = load_call_graph(paths)
+    except LookupError as exc:
+        raise SystemExit(str(exc)) from exc
+    project_dir = paths.project_dir
     cfg = GraphEnhancedConfig()
     relevant = load_relevant_ids(args.canon, args.golden)
     result = run_probe(storage, cfg, relevant, args.top_n)

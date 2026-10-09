@@ -45,44 +45,11 @@ import argparse
 import json
 from pathlib import Path
 
+from evaluation.index_locator import find_index, load_call_graph
 from graph.graph_queries import GraphQueryEngine
 from graph.graph_storage import CodeGraphStorage
 from graph.schema import is_phantom_node as is_phantom
 from search.config import GraphEnhancedConfig
-
-
-DEFAULT_STORAGE_DIR = Path.home() / ".claude_code_search" / "projects"
-
-
-def find_call_graph_dir(storage_root: Path, project_name: str) -> Path:
-    """Locate a project's storage dir under ``.../projects/`` by substring
-    match on the directory name (e.g. "claude-context-local" matches
-    "claude-context-local_9e7f0a98_f2llm-v2-0.6b_1024d")."""
-    matches = sorted(
-        d for d in storage_root.iterdir() if d.is_dir() and project_name in d.name
-    )
-    if not matches:
-        raise SystemExit(
-            f"No project directory containing {project_name!r} found under {storage_root}"
-        )
-    if len(matches) > 1:
-        names = ", ".join(m.name for m in matches)
-        raise SystemExit(
-            f"Ambiguous --project-name {project_name!r}, matches: {names}. "
-            f"Pass a more specific substring."
-        )
-    return matches[0]
-
-
-def load_storage(project_dir: Path) -> CodeGraphStorage:
-    graph_files = list(project_dir.glob("*_call_graph.json"))
-    if not graph_files:
-        raise SystemExit(f"No *_call_graph.json found under {project_dir}")
-    project_id = graph_files[0].name[: -len("_call_graph.json")]
-    storage = CodeGraphStorage(project_id, storage_dir=project_dir)
-    if not storage.load():
-        raise SystemExit(f"Failed to load call graph from {graph_files[0]}")
-    return storage
 
 
 def run_diagnostic(storage: CodeGraphStorage, top_n: int, threshold: float) -> dict:
@@ -145,13 +112,14 @@ def main() -> None:
     parser.add_argument(
         "--project-name",
         required=True,
-        help="Substring to match a project directory under --storage-dir",
+        help="Substring to match a project directory under <storage>/projects",
     )
     parser.add_argument(
         "--storage-dir",
         type=Path,
-        default=DEFAULT_STORAGE_DIR,
-        help=f"Root 'projects' dir to search under (default: {DEFAULT_STORAGE_DIR})",
+        default=None,
+        help="Storage root containing 'projects/' "
+        "(default: $CODE_SEARCH_STORAGE or ~/.claude_code_search)",
     )
     parser.add_argument("--top-n", type=int, default=20)
     parser.add_argument(
@@ -163,8 +131,12 @@ def main() -> None:
     parser.add_argument("--json", type=Path, default=None, help="Optional output path")
     args = parser.parse_args()
 
-    project_dir = find_call_graph_dir(args.storage_dir, args.project_name)
-    storage = load_storage(project_dir)
+    try:
+        paths = find_index(args.project_name, storage=args.storage_dir)
+        storage = load_call_graph(paths)
+    except LookupError as exc:
+        raise SystemExit(str(exc)) from exc
+    project_dir = paths.project_dir
     result = run_diagnostic(storage, args.top_n, args.threshold)
 
     print(f"Project dir: {project_dir}")
