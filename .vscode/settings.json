@@ -1,6 +1,6 @@
 {
   // Python interpreter - use project's virtual environment
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.defaultInterpreterPath": ".venv/Scripts/python.exe",
   // Ruff extension configuration
   "ruff.enable": true,
   "ruff.path": [
