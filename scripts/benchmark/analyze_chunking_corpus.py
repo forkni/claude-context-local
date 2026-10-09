@@ -34,7 +34,6 @@ import ast as pyast
 import json
 import logging
 import math
-import os
 import sys
 from collections import Counter, defaultdict
 from collections.abc import Sequence
@@ -416,22 +415,6 @@ def audit_produced_chunks(
 # ---------------------------------------------------------------------------
 
 
-def locate_graph_storage(project_root: Path, model_name: str) -> Path | None:
-    storage_root = Path(
-        os.environ.get("CODE_SEARCH_STORAGE", Path.home() / ".claude_code_search")
-    )
-    projects_dir = storage_root / "projects"
-    if not projects_dir.exists():
-        return None
-    slug = model_name.split("/")[-1].lower()
-    candidates = sorted(
-        d
-        for d in projects_dir.iterdir()
-        if d.is_dir() and d.name.startswith(f"{project_root.name}_") and slug in d.name
-    )
-    return candidates[-1] if candidates else None
-
-
 def collapse_graph(nx_graph, max_phantom_degree: int):
     """Replicates CommunityDetector.detect_communities preprocessing exactly
     (graph/community_detector.py) so the sweep runs on the same collapsed graph
@@ -643,6 +626,7 @@ def main() -> int:
     project_root = Path(args.project).resolve()
     logger.info(f"Project: {project_root}")
 
+    from evaluation.index_locator import find_index, load_call_graph
     from search.config import get_search_config
 
     config = get_search_config()
@@ -666,7 +650,12 @@ def main() -> int:
     counter = TokenCounter(model_name)
 
     # Pass 0 + 1 — corpus scoped to the live index's exclusions when available
-    storage_dir = locate_graph_storage(project_root, model_name)
+    try:
+        index_paths = find_index(project_root.name, model_slug=model_name)
+    except LookupError as exc:
+        logger.warning(f"No usable stored index ({exc}); skipping index-derived passes")
+        index_paths = None
+    storage_dir = index_paths.project_dir if index_paths else None
     extra_excluded = load_index_exclusions(storage_dir)
     if extra_excluded:
         logger.info(
@@ -742,48 +731,47 @@ def main() -> int:
     graph_result = None
     gamma_rows = []
     community_map = None
-    if storage_dir is not None:
-        from graph.graph_storage import CodeGraphStorage
+    if index_paths is not None:
+        try:
+            storage = load_call_graph(index_paths)
+        except LookupError as exc:
+            logger.warning(f"Call graph not loadable ({exc}); skipping graph pass")
+            storage = None
+        if storage is not None:
+            # Community detection/storage was removed from the codebase
+            # (`35d2f4f` cull + a later graph_storage.py refactor —
+            # `CodeGraphStorage.load_community_map` no longer exists).
+            # community_map stays None; the `if community_map:` branches
+            # below degrade to their documented empty state (0 stored
+            # communities, no budget block) rather than crashing.
+            # max_phantom_degree was a ChunkingConfig field (default 20)
+            # before the community-detection field cull (`35d2f4f`); it is
+            # no longer live-tunable, so this analysis-only pass keeps the
+            # old default as a literal.
+            collapsed, collapse_meta = collapse_graph(storage.graph, 20)
+            import networkx as nx
 
-        graph_files = list(storage_dir.glob("*_call_graph.json"))
-        if graph_files:
-            project_id = graph_files[0].name[: -len("_call_graph.json")]
-            storage = CodeGraphStorage(project_id, storage_dir=storage_dir)
-            if storage.load():
-                # Community detection/storage was removed from the codebase
-                # (`35d2f4f` cull + a later graph_storage.py refactor —
-                # `CodeGraphStorage.load_community_map` no longer exists).
-                # community_map stays None; the `if community_map:` branches
-                # below degrade to their documented empty state (0 stored
-                # communities, no budget block) rather than crashing.
-                # max_phantom_degree was a ChunkingConfig field (default 20)
-                # before the community-detection field cull (`35d2f4f`); it is
-                # no longer live-tunable, so this analysis-only pass keeps the
-                # old default as a literal.
-                collapsed, collapse_meta = collapse_graph(storage.graph, 20)
-                import networkx as nx
-
-                graph_result = {
-                    "storage_dir": str(storage_dir),
-                    "nodes": storage.graph.number_of_nodes(),
-                    "edges": storage.graph.number_of_edges(),
-                    **collapse_meta,
-                    "collapsed_nodes": collapsed.number_of_nodes(),
-                    "collapsed_edges": collapsed.number_of_edges(),
-                    "collapsed_density": round(nx.density(collapsed), 5),
-                    "avg_clustering": round(nx.average_clustering(collapsed), 4),
-                    "connected_components": nx.number_connected_components(collapsed),
-                    "stored_communities": len(set(community_map.values()))
-                    if community_map
-                    else 0,
-                }
-                if not args.skip_gamma_sweep:
-                    logger.info("Running Louvain gamma sweep (7 gammas x 5 seeds)")
-                    gamma_rows = gamma_sweep(
-                        collapsed,
-                        gammas=[0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0],
-                        seeds=[1, 7, 13, 42, 99],
-                    )
+            graph_result = {
+                "storage_dir": str(storage_dir),
+                "nodes": storage.graph.number_of_nodes(),
+                "edges": storage.graph.number_of_edges(),
+                **collapse_meta,
+                "collapsed_nodes": collapsed.number_of_nodes(),
+                "collapsed_edges": collapsed.number_of_edges(),
+                "collapsed_density": round(nx.density(collapsed), 5),
+                "avg_clustering": round(nx.average_clustering(collapsed), 4),
+                "connected_components": nx.number_connected_components(collapsed),
+                "stored_communities": len(set(community_map.values()))
+                if community_map
+                else 0,
+            }
+            if not args.skip_gamma_sweep:
+                logger.info("Running Louvain gamma sweep (7 gammas x 5 seeds)")
+                gamma_rows = gamma_sweep(
+                    collapsed,
+                    gammas=[0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0],
+                    seeds=[1, 7, 13, 42, 99],
+                )
     else:
         logger.info(
             "No stored index found for this project/model — skipping graph pass"
