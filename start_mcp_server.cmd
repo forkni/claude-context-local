@@ -318,7 +318,7 @@ echo === Search Configuration ===
 echo.
 echo   1. View Current Configuration       - Show all active settings
 echo   2. Search Mode Configuration        - Mode, weights, parallel search
-echo   3. Select Embedding Model           - Choose model by VRAM ^(BGE-M3/Gemma/Qwen3/F2LLM^)
+echo   3. Select Embedding Model           - Choose model by VRAM ^(BGE-M3/F2LLM/Gemma/Qwen3^)
 echo   4. Configure Neural Reranker        - Cross-encoder reranking ^(+15-25%% quality^)
 echo   5. Entity Tracking Configuration    - Symbol tracking, import/class context
 echo   6. Configure Chunking Settings      - Chunk merging, AST splitting ^(+4.3 Recall@5^)
@@ -2228,20 +2228,23 @@ echo   [8GB VRAM] ^(RTX 3060, RTX 4060 Laptop, GTX 1080^)
 echo   1. BGE-M3 ^(1024d, 1-1.5GB^) [DEFAULT]
 echo      Production-validated, optimal for hybrid search; shipped default in the example config
 echo.
-echo   2. EmbeddingGemma ^(768d, ~1.2GB^)
+echo   2. F2LLM-v2-330M ^(896d, ~0.7GB^) [RECOMMENDED 8GB]
+echo      Laptop A/B 2026-10-08 ^(ADR-0084^): MRR 0.7047 / R@20 0.8199 SSCG 63q vs BGE-M3 0.7000 / 0.8040
+echo.
+echo   3. EmbeddingGemma ^(768d, ~1.2GB^)
 echo      Lightweight general-purpose
 echo.
 echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
-echo   3. Qwen3-Embedding-0.6B ^(1024d, 2.3GB^)
+echo   4. Qwen3-Embedding-0.6B ^(1024d, 2.3GB^)
 echo      Qwen3-0.6B-based embedding model
 echo.
-echo   4. F2LLM-v2-0.6B ^(1024d, 2.2GB^) [RECOMMENDED 12GB+]
+echo   5. F2LLM-v2-0.6B ^(1024d, 2.2GB^) [RECOMMENDED 12GB+]
 echo      MRR 0.8419 SSCG 63q canon ^(2026-09-01^); +0.026 vs Qwen3-0.6B in A/B
 echo.
 echo   0. Back to Main Menu
 echo.
 set "model_choice="
-set /p model_choice="Select model (0-4): "
+set /p model_choice="Select model (0-5): "
 
 REM Handle empty input or back
 if not defined model_choice goto menu_restart
@@ -2251,9 +2254,10 @@ if "!model_choice!"=="0" goto menu_restart
 REM Map choices to model names
 set "SELECTED_MODEL="
 if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
-if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
-if "!model_choice!"=="3" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
-if "!model_choice!"=="4" set "SELECTED_MODEL=codefuse-ai/F2LLM-v2-0.6B"
+if "!model_choice!"=="2" set "SELECTED_MODEL=codefuse-ai/F2LLM-v2-330M"
+if "!model_choice!"=="3" set "SELECTED_MODEL=google/embeddinggemma-300m"
+if "!model_choice!"=="4" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
+if "!model_choice!"=="5" set "SELECTED_MODEL=codefuse-ai/F2LLM-v2-0.6B"
 
 REM Perform model switch
 if defined SELECTED_MODEL (
@@ -2985,7 +2989,7 @@ echo.
 echo Key Features:
 echo   - 20 MCP Tools: Index, search, configure, manage projects
 echo   - Low-Level MCP SDK: Official Anthropic implementation
-echo   - Single-Model: selectable from 4 models ^(BGE-M3, EmbeddingGemma, Qwen3-0.6B, F2LLM-v2-0.6B^)
+echo   - Single-Model: selectable from 5 models ^(BGE-M3, F2LLM-v2-330M, EmbeddingGemma, Qwen3-0.6B, F2LLM-v2-0.6B^)
 echo   - Neural Reranking: Cross-encoder model ^(15-25%% quality boost^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
 echo   - 85-95%% Token Reduction: Validated benchmark results
