@@ -70,7 +70,7 @@ Automatically blocks commits containing local-only files:
 7. **MODEL_MIGRATION_GUIDE.md** - Model switching guide
 8. **PYTORCH_COMPATIBILITY.md** - PyTorch compatibility guide
 
-**All other docs/ files** (VSCODE_SETUP.md, TESTING_GUIDE.md, PRE_COMMIT_HOOKS.md, etc.) are **development-only** and must remain on development branch only.
+**All other docs/ files** (VSCODE_SETUP.md, PRE_COMMIT_HOOKS.md, etc.) are **maintainer-local** and must never reach main.
 
 ### Why This Matters
 
@@ -81,20 +81,14 @@ Automatically blocks commits containing local-only files:
 
 ### Development-Only Documentation
 
-These files exist only on the development branch:
-
-- **docs/VSCODE_SETUP.md** - VSCode configuration and Ruff setup
-- **docs/PRE_COMMIT_HOOKS.md** - Pre-commit hook documentation
-- **docs/GPU_MEMORY_LEAK_FIX.md** - GPU memory optimization details
-- **docs/PER_MODEL_INDICES_IMPLEMENTATION.md** - Per-model index technical details
-- **docs/PER_MODEL_INDICES_PLAN.md** - Per-model index planning document
-- **docs/Current_State.md** - Current development state tracking
-- **docs/GIT_WORKFLOW_ENHANCEMENT_PLAN.md** - Workflow enhancement planning
-- **docs/GIT_WORKFLOW_CRITICAL_REVIEW.md** - Critical workflow review
+The docs listed in `.gitattributes` with `merge=ours` (VSCODE_SETUP, PRE_COMMIT_HOOKS,
+GPU_MEMORY_LEAK_FIX, PER_MODEL_INDICES_*, Current_State, GIT_WORKFLOW_*_PLAN/REVIEW) are
+maintainer-local: they are not tracked and some are gitignored, so they are absent from a fresh
+clone. Do not link to them from tracked docs.
 
 **Note**: Testing documentation moved to `tests/TESTING_GUIDE.md` (production-ready, available on all branches).
 
-These are automatically excluded from main branch via `.gitattributes` merge strategy.
+The `.gitattributes` merge strategy keeps them off main if they are ever force-added.
 
 ## 🚀 Workflow Scripts
 

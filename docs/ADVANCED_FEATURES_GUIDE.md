@@ -184,7 +184,7 @@ When a project is indexed with a `project_id`, `search_code()` automatically inc
 
 ### Implementation Details
 
-**Complete technical documentation**: `docs/PER_MODEL_INDICES_IMPLEMENTATION.md`
+**History**: per-model index changes are recorded in `CHANGELOG.md`.
 
 ---
 
