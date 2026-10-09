@@ -1029,23 +1029,27 @@ echo previous index of this project (this menu always indexes "new").
 echo.
 set "include_filter="
 set "exclude_filter="
-set /p include_filter="Include directories (comma-separated; non-dependency paths NARROW to just them, Enter=index everything): "
-set /p exclude_filter="Exclude directories (comma-separated, added to built-in exclusions, Enter=none): "
+set /p include_filter="Include directories (comma- or space-separated; non-dependency paths NARROW to just them, Enter=index everything): "
+set /p exclude_filter="Exclude directories (comma- or space-separated, added to built-in exclusions, Enter=none): "
 
 REM Strip spaces after commas for proper argument parsing
 if defined include_filter set "include_filter=!include_filter:, =,!"
 if defined exclude_filter set "exclude_filter=!exclude_filter:, =,!"
 
+REM A trailing backslash would escape the closing quote of the quoted argv value
+if defined include_filter if "!include_filter:~-1!"=="\" set "include_filter=!include_filter:~0,-1!"
+if defined exclude_filter if "!exclude_filter:~-1!"=="\" set "exclude_filter=!exclude_filter:~0,-1!"
+
 REM Build filter arguments
 set "filter_args="
 if defined include_filter if not "!include_filter!"=="" (
-    set "filter_args=--include-dirs !include_filter!"
+    set "filter_args=--include-dirs "!include_filter!""
 )
 if defined exclude_filter if not "!exclude_filter!"=="" (
     if defined filter_args (
-        set "filter_args=!filter_args! --exclude-dirs !exclude_filter!"
+        set "filter_args=!filter_args! --exclude-dirs "!exclude_filter!""
     ) else (
-        set "filter_args=--exclude-dirs !exclude_filter!"
+        set "filter_args=--exclude-dirs "!exclude_filter!""
     )
 )
 

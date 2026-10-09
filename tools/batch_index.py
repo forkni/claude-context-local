@@ -18,6 +18,34 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from mcp_server.tool_specs import handle_index_directory
 
 
+def _split_dir_list(raw: str, project_path: Path) -> list[str]:
+    """Split a user-typed directory list into individual patterns.
+
+    Commas are the canonical separator. With no comma present, whitespace is
+    accepted as a separator too (the interactive menu passes the raw line as one
+    value, and users naturally type ``a b c``) -- unless the whole string names
+    an existing path, which is kept intact so ``My Dir`` is not split in two.
+
+    Args:
+        raw: The raw ``--include-dirs`` / ``--exclude-dirs`` value.
+        project_path: Project root, used to test whether ``raw`` is one path.
+
+    Returns:
+        Stripped, non-empty patterns in input order.
+    """
+    stripped = raw.strip()
+    if "," in stripped:
+        return [d.strip() for d in stripped.split(",") if d.strip()]
+    if not stripped:
+        return []
+    if (project_path / stripped).exists():
+        return [stripped]
+    parts = stripped.split()
+    if len(parts) > 1:
+        print(f"[INFO] No commas found - treating whitespace as separator: {parts}")
+    return parts
+
+
 def _dry_run(
     project_path: Path, include_dirs: list[str] | None, exclude_dirs: list[str] | None
 ) -> int:
@@ -191,13 +219,15 @@ def main():
     )
     parser.add_argument(
         "--include-dirs",
-        help='Comma-separated directories to include (e.g., "src,lib"). Omit to reuse '
+        help='Comma-separated directories to include (e.g., "src,lib"); whitespace '
+        "is accepted when no comma is present. Omit to reuse "
         "the stored list; passing this REPLACES it wholesale (not merged) and forces "
         "a full reindex - always re-pass every directory you still want included.",
     )
     parser.add_argument(
         "--exclude-dirs",
-        help='Comma-separated directories to exclude (e.g., "tests,vendor"). Omit to '
+        help='Comma-separated directories to exclude (e.g., "tests,vendor"); whitespace '
+        "is accepted when no comma is present. Omit to "
         "reuse the stored list; passing this REPLACES it wholesale (not merged) and "
         "forces a full reindex - always re-pass every directory you still want excluded, "
         "or the omitted ones silently become indexable again.",
@@ -240,7 +270,7 @@ def main():
     # Parse directory filters
     include_dirs = None
     if args.include_dirs:
-        include_dirs = [d.strip() for d in args.include_dirs.split(",") if d.strip()]
+        include_dirs = _split_dir_list(args.include_dirs, project_path)
     elif args.mode == "new":
         # "new" means first-time/from-scratch indexing - explicitly clear any
         # filters stored from a prior index of this same path instead of
@@ -252,7 +282,7 @@ def main():
 
     exclude_dirs = None
     if args.exclude_dirs:
-        exclude_dirs = [d.strip() for d in args.exclude_dirs.split(",") if d.strip()]
+        exclude_dirs = _split_dir_list(args.exclude_dirs, project_path)
     elif args.mode == "new":
         exclude_dirs = []
 

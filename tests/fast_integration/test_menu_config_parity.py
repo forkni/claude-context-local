@@ -169,6 +169,21 @@ def test_menu_choice_ranges_match_handlers_and_guards() -> None:
     )
 
 
+def test_directory_filter_args_are_quoted() -> None:
+    """The menu forwards the user's raw include/exclude line to batch_index.py.
+    Unquoted, every space in `a b c` becomes its own argv token and argparse
+    rejects all but the first ('unrecognized arguments'), so each occurrence
+    of --include-dirs / --exclude-dirs must be followed by a quoted value."""
+    text = CMD_PATH.read_text(encoding="utf-8")
+    occurrences = re.findall(r"--(?:include|exclude)-dirs (\S)", text)
+    assert occurrences, "no --include-dirs/--exclude-dirs usage found in the menu"
+    unquoted = [c for c in occurrences if c != '"']
+    assert not unquoted, (
+        f"{len(unquoted)} --include-dirs/--exclude-dirs value(s) in "
+        f"{CMD_PATH.name} are not quoted"
+    )
+
+
 def test_status_script_registry_mirrors_model_registry() -> None:
     """scripts/get_system_status_fast.py keeps a zero-dependency copy of
     MODEL_REGISTRY for the launcher's status panel; a model missing from the
