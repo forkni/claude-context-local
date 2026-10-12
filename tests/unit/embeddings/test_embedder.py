@@ -1011,7 +1011,7 @@ class TestSetVramLimitEffective:
     @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
     def test_clamp_when_physical_cap_below_current_usage(self, mock_torch, mock_cfg):
-        """GPU under heavy external pressure: cap is forced up to us_b, warning logged."""
+        """GPU under heavy external pressure: cap is forced up to live + working room."""
         mock_torch.cuda.is_available.return_value = True
         # free=2 GB, total=24 GB, us=12 GB → other=10 GB
         mock_torch.cuda.mem_get_info.return_value = (
@@ -1028,8 +1028,35 @@ class TestSetVramLimitEffective:
 
         assert result is True
         eff = mock_torch.cuda.set_per_process_memory_fraction.call_args[0][0]
-        # physical_cap = 12+2-4.8 = 9.2 < us=12 → clamped to us → eff = 12/24 = 0.5
-        assert 0.49 <= eff <= 0.51, f"expected ~0.50, got {eff:.4f}"
+        # physical_cap = 12+2-4.8 = 9.2 < live=12 → floored at live + 0.25 GB room
+        assert 0.505 <= eff <= 0.52, f"expected ~0.5104, got {eff:.4f}"
+
+    @patch("embeddings.embedder.get_search_config")
+    @patch("embeddings.embedder.torch")
+    def test_min_room_gb_param_sets_working_room(self, mock_torch, mock_cfg):
+        """Regression (H4): a cap pinned at live tensors made even a 2 MiB segment
+        OOM and batch halving could never recover.  ``min_room_gb`` keeps room."""
+        mock_torch.cuda = self._make_torch(free_gb=2.0, total_gb=24.0, us_gb=12.0).cuda
+        mock_cfg.return_value = None
+
+        from embeddings.embedder import set_vram_limit
+
+        assert set_vram_limit(0.8, min_room_gb=1.0) is True
+        eff = mock_torch.cuda.set_per_process_memory_fraction.call_args[0][0]
+        assert abs(eff * 24 - 13.0) < 0.05, f"expected ~13 GB cap, got {eff * 24:.2f}"
+
+    @patch("embeddings.embedder.get_search_config")
+    @patch("embeddings.embedder.torch")
+    def test_no_room_physically_available_warns(self, mock_torch, mock_cfg, caplog):
+        """Nothing free and no cache: room cannot be granted -> explicit WARNING."""
+        mock_torch.cuda = self._make_torch(free_gb=0.0, total_gb=24.0, us_gb=12.0).cuda
+        mock_cfg.return_value = None
+
+        from embeddings.embedder import set_vram_limit
+
+        with caplog.at_level("WARNING", logger="embeddings.embedder"):
+            assert set_vram_limit(0.8) is True
+        assert any("working room" in r.getMessage() for r in caplog.records)
 
     @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
@@ -1065,7 +1092,7 @@ class TestSetVramLimitEffective:
 
         result = compute_effective_vram_cap(0.8)
         assert result is not None
-        _, cap_bytes, _, us_gb, other_gb, _ = result
+        _, cap_bytes, _, us_gb, other_gb, _, _ = result
         assert abs(us_gb - 3.94) < 0.02
         assert abs(other_gb - (8.0 - 0.9 - 3.94)) < 0.02
         assert cap_bytes > int(0.64 * 1024**3)
@@ -1270,7 +1297,7 @@ class TestComputeEffectiveVramCap:
 
         result = compute_effective_vram_cap(0.8)
         assert result is not None
-        eff_frac, cap_bytes, free_gb, us_gb, other_gb, headroom_gb = result
+        eff_frac, cap_bytes, free_gb, us_gb, other_gb, headroom_gb, _ = result
         # cap_bytes should be ≈ 0.80 × 24 GB
         expected_bytes = int(0.8 * total)
         assert abs(cap_bytes - expected_bytes) < 1024**2  # within 1 MB
@@ -1292,7 +1319,7 @@ class TestComputeEffectiveVramCap:
 
         result = compute_effective_vram_cap(0.8)
         assert result is not None
-        eff_frac, cap_bytes, free_gb, us_gb, other_gb, headroom_gb = result
+        eff_frac, cap_bytes, free_gb, us_gb, other_gb, headroom_gb, _ = result
         cap_gb = cap_bytes / 1024**3
         # physical_cap = 14 − 4.8 = 9.2 GB
         assert 9.0 <= cap_gb <= 9.4, f"expected ~9.2 GB cap, got {cap_gb:.2f} GB"
@@ -1318,12 +1345,47 @@ class TestComputeEffectiveVramCap:
 
         result = compute_effective_vram_cap(0.8)
         assert result is not None
-        eff_frac, cap_bytes, free_gb, us_gb, other_gb, headroom_gb = result
+        eff_frac, cap_bytes, free_gb, us_gb, other_gb, headroom_gb, _ = result
         cap_gb = cap_bytes / 1024**3
         # physical_cap = 6 + 14 - 4.8 = 15.2 GB
         assert 15.0 <= cap_gb <= 15.4, f"expected ~15.2 GB cap, got {cap_gb:.2f} GB"
         # cap must never be below current us (6 GB)
         assert cap_gb >= 5.9
+
+    @patch("embeddings.embedder.torch")
+    def test_floor_leaves_working_room(self, mock_torch):
+        """Pinned at live tensors (external squeeze): ``min_room_b`` lifts the cap
+        above them, bounded by what is physically free."""
+        mock_torch.cuda = TestSetVramLimitEffective._make_torch(
+            free_gb=2.0, total_gb=24.0, us_gb=12.0
+        ).cuda
+
+        from embeddings.embedder import compute_effective_vram_cap
+
+        legacy = compute_effective_vram_cap(0.8)
+        assert legacy is not None
+        assert abs(legacy.cap_bytes / 1024**3 - 12.0) < 0.01  # default = no room
+        assert legacy.room_gb == 0.0
+
+        result = compute_effective_vram_cap(0.8, min_room_b=1024**3)
+        assert result is not None
+        assert abs(result.cap_bytes / 1024**3 - 13.0) < 0.01
+        assert abs(result.room_gb - 1.0) < 0.01
+
+    @patch("embeddings.embedder.torch")
+    def test_room_bounded_by_physical(self, mock_torch):
+        """Room is never granted from memory that does not exist:
+        own cache 0.2 GB + system free 0.3 GB = 0.5 GB at most."""
+        mock_torch.cuda = TestSetVramLimitEffective._make_torch(
+            free_gb=0.3, total_gb=24.0, us_gb=12.0, reserved_gb=12.2
+        ).cuda
+
+        from embeddings.embedder import compute_effective_vram_cap
+
+        result = compute_effective_vram_cap(0.8, min_room_b=1024**3)
+        assert result is not None
+        assert abs(result.room_gb - 0.5) < 0.01
+        assert abs(result.cap_bytes / 1024**3 - 12.5) < 0.01
 
     @patch("embeddings.embedder.torch", None)
     def test_no_cuda_returns_none(self):
@@ -1723,6 +1785,88 @@ class TestOomRecoveryBackoff:
             embedder.embed_chunks(self._make_chunks(4))
 
         assert embedder._current_batch_size == initial_batch_size
+
+    def _bare_embedder(self, mock_get_cfg, mock_torch, fake_encode):
+        """CodeEmbedder shell for batch_size=1 OOM tests (cap path observable)."""
+        from embeddings.embedder import CodeEmbedder
+
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.return_value = (
+            int(0.5 * 1024**3),
+            int(8 * 1024**3),
+        )
+        mock_torch.is_tensor = MagicMock(return_value=False)
+
+        cfg = MagicMock()
+        cfg.performance.enable_dynamic_batch_size = False
+        cfg.performance.allow_ram_fallback = False
+        cfg.embedding.batch_size = 1
+        cfg.embedding.dimension = 768
+        mock_get_cfg.return_value = cfg
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+        embedder.model_name = "test/model"
+        embedder.device = "cpu"
+        embedder._query_cache = MagicMock()
+        embedder._model_vram_usage = {}
+        embedder._model_warmed_up = True
+        embedder._check_vram_status = MagicMock(return_value=(0.5, False, False))
+        embedder._log_vram_usage = MagicMock()
+        embedder._is_gpu_device = MagicMock(return_value=False)
+        embedder._get_model_config = MagicMock(return_value={"passage_prefix": ""})
+        fake_model = MagicMock()
+        fake_model.encode = fake_encode
+        fake_model._activation_gb_per_item = 0.0
+        embedder._model = fake_model
+        embedder.create_embedding_content = MagicMock(side_effect=lambda c: c.content)
+        return embedder
+
+    @patch("embeddings.embedder.set_vram_limit")
+    @patch("embeddings.embedder.torch")
+    @patch("embeddings.embedder.get_search_config")
+    def test_batch1_oom_remeasures_cap_and_retries_once(
+        self, mock_get_cfg, mock_torch, mock_set_limit
+    ):
+        """OOM at batch_size=1 cannot be fixed by halving: re-apply the cap once
+        with fresh readings and retry the same chunk."""
+        calls = 0
+
+        def fake_encode(texts, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 MiB")
+            return np.zeros((len(texts), 768), dtype=np.float32)
+
+        embedder = self._bare_embedder(mock_get_cfg, mock_torch, fake_encode)
+        results = embedder.embed_chunks(self._make_chunks(2), batch_size=1)
+
+        assert len(results) == 2
+        assert mock_set_limit.call_count == 2  # initial apply + one re-measure
+        assert mock_set_limit.call_args.kwargs["min_room_gb"] >= 0.25
+
+    @patch("embeddings.embedder.set_vram_limit")
+    @patch("embeddings.embedder.torch")
+    @patch("embeddings.embedder.get_search_config")
+    def test_batch1_oom_twice_raises_vram_exhausted(
+        self, mock_get_cfg, mock_torch, mock_set_limit
+    ):
+        """Still OOM after the re-measure: fail clearly, no silent spill."""
+        from search.exceptions import VRAMExhaustedError
+
+        def fake_encode(texts, **kwargs):
+            raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 MiB")
+
+        embedder = self._bare_embedder(mock_get_cfg, mock_torch, fake_encode)
+
+        with pytest.raises(VRAMExhaustedError) as excinfo:
+            embedder.embed_chunks(self._make_chunks(2), batch_size=1)
+
+        assert isinstance(excinfo.value.__cause__, RuntimeError)
+        assert excinfo.value.available_gb == pytest.approx(0.5, abs=0.01)
+        assert "allow_ram_fallback" in str(excinfo.value)
+        assert mock_set_limit.call_count == 2  # no unbounded retry loop
 
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@ import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 import numpy as np
 from rich.progress import (
@@ -75,6 +75,13 @@ _GATED_MLP_MODEL_TYPES = frozenset(
 # str(exception).lower() yields the message text (not the class name), so only
 # message-shape strings belong here. Kept as a tuple for future extensibility.
 _PYTORCH_OOM_STRINGS = ("cuda out of memory",)
+
+# Working room the per-process VRAM cap keeps above live tensors.  Without it an
+# external squeeze pins the cap at the model-weight size, where even a 2 MiB
+# segment OOMs and batch halving cannot recover.
+_DEFAULT_MIN_ROOM_GB = 0.25
+# Measured activation items of room ``embed_chunks`` asks for on top of that.
+_MIN_ROOM_ITEMS = 2
 
 
 def estimate_activation_gb_from_config(
@@ -208,9 +215,21 @@ except ImportError:
     torch = None
 
 
+class VramCapReading(NamedTuple):
+    """Result of ``compute_effective_vram_cap`` (tuple-compatible)."""
+
+    effective_fraction: float  # value for set_per_process_memory_fraction
+    cap_bytes: int
+    free_gb: float
+    us_gb: float
+    other_gb: float
+    headroom_gb: float
+    room_gb: float  # cap above live tensors
+
+
 def compute_effective_vram_cap(
-    fraction: float,
-) -> tuple[float, int, float, float, float, float] | None:
+    fraction: float, min_room_b: int = 0
+) -> VramCapReading | None:
     """Compute effective VRAM cap accounting for other-process allocations.
 
     Pure function — reads current GPU state, does not set any limits or produce
@@ -230,22 +249,28 @@ def compute_effective_vram_cap(
         headroom     = (1 − fraction) × T   (safety reserve)
         physical_cap = A_us + F − headroom  (max we can hold without spill)
         cap          = max(min(user_cap, physical_cap), A_live)
+        cap          = max(cap, A_live + min(min_room, A_us - A_live + F))
         effective_fraction = clamp(cap / T, 0.05, fraction)
 
     The floor is ``A_live``, not ``A_us``: the allocator frees cached blocks
     and retries when a new segment would exceed the cap, so only live tensors
-    are unrecoverable.
+    are unrecoverable.  Under external pressure the cap would sit exactly at
+    ``A_live``, where even a 2 MiB segment OOMs; ``min_room`` keeps working room
+    above it, bounded by memory that exists (own cache plus system free), so it
+    cannot cause spillover by itself.
 
     Args:
         fraction: Requested fraction of total VRAM (0.05–1.0).
+        min_room_b: Working room in bytes to keep above live tensors (0 = none).
 
     Returns:
-        ``(effective_fraction, cap_bytes, free_gb, us_gb, other_gb, headroom_gb)``
-        or ``None`` if CUDA is unavailable or measurement fails.
+        A ``VramCapReading`` or ``None`` if CUDA is unavailable or measurement
+        fails.
 
         - *effective_fraction* — value for ``set_per_process_memory_fraction``
         - *cap_bytes*          — cap in bytes (diagnostic)
         - *free_gb / us_gb / other_gb / headroom_gb* — diagnostic values for logs
+        - *room_gb*            — cap above live tensors (working room)
     """
     if not torch or not torch.cuda.is_available():
         return None
@@ -261,23 +286,28 @@ def compute_effective_vram_cap(
 
         cap_b = min(user_cap_b, physical_cap_b)
         cap_b = max(cap_b, live_b)  # cannot shrink below live tensors
+        grantable_b = max(0, us_b - live_b + free_b)
+        cap_b = max(cap_b, live_b + min(min_room_b, grantable_b))
 
         effective_fraction = (cap_b / total_b) if total_b > 0 else fraction
         effective_fraction = max(0.05, min(effective_fraction, fraction))
 
-        return (
+        return VramCapReading(
             effective_fraction,
             int(cap_b),
             free_b / 1024**3,
             us_b / 1024**3,
             other_b / 1024**3,
             headroom_b / 1024**3,
+            (cap_b - live_b) / 1024**3,
         )
     except (RuntimeError, ValueError, AssertionError):
         return None
 
 
-def set_vram_limit(fraction: float = 0.90) -> bool:
+def set_vram_limit(
+    fraction: float = 0.90, min_room_gb: float = _DEFAULT_MIN_ROOM_GB
+) -> bool:
     """Set hard VRAM limit on the PyTorch CUDA allocator to prevent spillover.
 
     On Windows, the NVIDIA driver preemptively evicts to shared memory when
@@ -303,6 +333,8 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
         fraction: Requested fraction of dedicated VRAM (default: 0.90 = 90%).
             The *effective* fraction may be lower when other processes hold VRAM.
             Recommended: 0.80–0.90 depending on GPU headroom needs.
+        min_room_gb: Working room to keep above live tensors, so an external
+            squeeze cannot pin the cap at the model-weight size.
 
     Returns:
         True if limit was set (or skipped due to allow_ram_fallback), else False.
@@ -331,12 +363,12 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
         logging.getLogger(__name__).debug(f"Config not available, using defaults: {e}")
 
     logger = logging.getLogger(__name__)
-    result = compute_effective_vram_cap(fraction)
+    result = compute_effective_vram_cap(fraction, min_room_b=int(min_room_gb * 1024**3))
     if result is None:
         logger.warning("[VRAM_LIMIT] Failed to measure VRAM state — cap not applied")
         return False
 
-    effective_fraction, cap_b, free_gb, us_gb, other_gb, headroom_gb = result
+    effective_fraction, cap_b, free_gb, us_gb, other_gb, headroom_gb, room_gb = result
 
     # Warn when free memory is below the requested headroom (external GPU pressure).
     if free_gb < headroom_gb:
@@ -344,13 +376,21 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
             f"[VRAM_LIMIT] Cannot honor requested headroom — GPU under external "
             f"pressure. Requested={fraction:.0%}, effective={effective_fraction:.0%} "
             f"(free={free_gb:.1f}GB, us={us_gb:.1f}GB, "
-            f"other={other_gb:.1f}GB, headroom={headroom_gb:.1f}GB)"
+            f"other={other_gb:.1f}GB, headroom={headroom_gb:.1f}GB, "
+            f"room={room_gb:.2f}GB)"
         )
     else:
         logger.info(
             f"[VRAM_LIMIT] Requested={fraction:.0%}, effective={effective_fraction:.0%} "
             f"(free={free_gb:.1f}GB, us={us_gb:.1f}GB, "
-            f"other={other_gb:.1f}GB, headroom={headroom_gb:.1f}GB)"
+            f"other={other_gb:.1f}GB, headroom={headroom_gb:.1f}GB, "
+            f"room={room_gb:.2f}GB)"
+        )
+
+    if room_gb + 1e-6 < min_room_gb:
+        logger.warning(
+            f"[VRAM_LIMIT] Only {room_gb:.2f}GB working room (wanted "
+            f"{min_room_gb:.2f}GB) — GPU nearly full; expect OOM recovery"
         )
 
     try:
@@ -1027,13 +1067,18 @@ class CodeEmbedder:
         # Log VRAM usage after model load
         self._log_vram_usage("MODEL_LOADED")
 
+        cap_fraction: float | None = None
+        min_room_gb = _DEFAULT_MIN_ROOM_GB
+        cap_refreshed = False  # batch-1 OOM re-measures the cap once per chunk
         # Re-apply VRAM cap with fresh memory readings — other processes may have
         # allocated VRAM since CodeEmbedder.__init__, which would otherwise let us
         # overcommit and trigger Windows WDDM shared-memory spillover.
         try:
             _embed_cfg = get_search_config()
             if _embed_cfg and _embed_cfg.performance:
-                set_vram_limit(_embed_cfg.performance.vram_limit_fraction)
+                cap_fraction = _embed_cfg.performance.vram_limit_fraction
+                min_room_gb = self._min_working_room_gb()
+                set_vram_limit(cap_fraction, min_room_gb=min_room_gb)
         except (RuntimeError, AttributeError) as _cap_err:
             self._logger.debug(
                 "Ignoring %s re-applying VRAM cap", type(_cap_err).__name__
@@ -1246,14 +1291,33 @@ class CodeEmbedder:
                                 1  # this attempt is retried, don't advance counter
                             )
                             continue  # retry the same i with the smaller batch size
+                        elif is_oom and not cap_refreshed:
+                            # Halving cannot help at batch 1 when the cap itself is the
+                            # shortfall (external squeeze): re-measure it once and retry.
+                            cap_refreshed = True
+                            self._logger.warning(
+                                "[OOM_RECOVERY] OOM at batch_size=1 — re-measuring "
+                                "VRAM cap and retrying once"
+                            )
+                            if torch and torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                            gc.collect()
+                            if cap_fraction is not None:
+                                set_vram_limit(cap_fraction, min_room_gb=min_room_gb)
+                            batch_num -= 1
+                            continue
                         else:
                             if is_oom:
                                 self._logger.error(
                                     f"[OOM_RECOVERY] Cannot reduce batch further "
                                     f"(current_batch_size={current_batch_size}), re-raising OOM"
                                 )
+                                raise self._vram_exhausted_error(
+                                    current_batch_size, min_room_gb
+                                ) from e
                             raise
 
+                    cap_refreshed = False  # batch succeeded: re-arm the retry
                     # Convert back to numpy for consistency with rest of codebase
                     # Note: bf16 tensors must be converted to float32 first (numpy doesn't support bf16)
                     if torch and torch.is_tensor(batch_embeddings):
@@ -1612,6 +1676,33 @@ class CodeEmbedder:
                 )
         except RuntimeError as e:
             self._logger.debug(f"Failed to log VRAM usage: {e}")
+
+    def _min_working_room_gb(self) -> float:
+        """Working room for the VRAM cap: the default, or a few measured activation items."""
+        per_item = getattr(self._model, "_activation_gb_per_item", 0.0)
+        if not isinstance(per_item, (int, float)):
+            per_item = 0.0
+        return max(_DEFAULT_MIN_ROOM_GB, _MIN_ROOM_ITEMS * per_item)
+
+    @staticmethod
+    def _vram_exhausted_error(
+        batch_size: int, min_room_gb: float
+    ) -> VRAMExhaustedError:
+        """Terminal batch-1 OOM: actionable error with the measured free VRAM."""
+        free_gb = None
+        try:
+            if torch and torch.cuda.is_available():
+                free_gb = torch.cuda.mem_get_info(0)[0] / 1024**3
+        except (RuntimeError, ValueError):
+            pass
+        free_txt = f"{free_gb:.2f}GB" if free_gb is not None else "unknown"
+        return VRAMExhaustedError(
+            f"VRAM exhausted at batch_size={batch_size} even after re-measuring the "
+            f"cap (system free={free_txt}). Close other GPU applications, or set "
+            "performance.allow_ram_fallback=true to allow slower shared-memory spill.",
+            required_gb=min_room_gb,
+            available_gb=free_gb,
+        )
 
     def _get_model_vram_gb(self) -> float:
         """Get actual model VRAM usage in GB (after model load).
