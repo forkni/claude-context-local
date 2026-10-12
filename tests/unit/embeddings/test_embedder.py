@@ -908,8 +908,16 @@ class TestSetVramLimitEffective:
 
     # Helpers to build mock torch with configurable mem_get_info / memory_allocated
     @staticmethod
-    def _make_torch(free_gb: float, total_gb: float, us_gb: float = 0.0):
-        """Return a MagicMock that mimics torch with the given VRAM readings."""
+    def _make_torch(
+        free_gb: float,
+        total_gb: float,
+        us_gb: float = 0.0,
+        reserved_gb: float | None = None,
+    ):
+        """Return a MagicMock that mimics torch with the given VRAM readings.
+
+        ``reserved_gb`` defaults to ``us_gb`` (no cached-but-unused blocks).
+        """
         m = MagicMock()
         m.cuda.is_available.return_value = True
         m.cuda.mem_get_info.return_value = (
@@ -917,6 +925,9 @@ class TestSetVramLimitEffective:
             int(total_gb * 1024**3),
         )
         m.cuda.memory_allocated.return_value = int(us_gb * 1024**3)
+        m.cuda.memory_reserved.return_value = int(
+            (us_gb if reserved_gb is None else reserved_gb) * 1024**3
+        )
         return m
 
     @patch("embeddings.embedder.get_search_config")
@@ -929,6 +940,7 @@ class TestSetVramLimitEffective:
             int(24 * 1024**3),
         )
         mock_torch.cuda.memory_allocated.return_value = 0
+        mock_torch.cuda.memory_reserved.return_value = 0
         mock_cfg.return_value = None  # no config → skip allow_ram_fallback check
 
         from embeddings.embedder import set_vram_limit
@@ -955,6 +967,7 @@ class TestSetVramLimitEffective:
             int(24 * 1024**3),
         )
         mock_torch.cuda.memory_allocated.return_value = 0
+        mock_torch.cuda.memory_reserved.return_value = 0
         mock_cfg.return_value = None
 
         from embeddings.embedder import set_vram_limit
@@ -981,6 +994,7 @@ class TestSetVramLimitEffective:
             int(24 * 1024**3),
         )
         mock_torch.cuda.memory_allocated.return_value = int(6 * 1024**3)
+        mock_torch.cuda.memory_reserved.return_value = int(6 * 1024**3)
         mock_cfg.return_value = None
 
         from embeddings.embedder import set_vram_limit
@@ -1005,6 +1019,7 @@ class TestSetVramLimitEffective:
             int(24 * 1024**3),
         )
         mock_torch.cuda.memory_allocated.return_value = int(12 * 1024**3)
+        mock_torch.cuda.memory_reserved.return_value = int(12 * 1024**3)
         mock_cfg.return_value = None
 
         from embeddings.embedder import set_vram_limit
@@ -1015,6 +1030,45 @@ class TestSetVramLimitEffective:
         eff = mock_torch.cuda.set_per_process_memory_fraction.call_args[0][0]
         # physical_cap = 12+2-4.8 = 9.2 < us=12 → clamped to us → eff = 12/24 = 0.5
         assert 0.49 <= eff <= 0.51, f"expected ~0.50, got {eff:.4f}"
+
+    @patch("embeddings.embedder.get_search_config")
+    @patch("embeddings.embedder.torch")
+    def test_own_cache_not_counted_as_external_pressure(self, mock_torch, mock_cfg):
+        """Regression: the activation warmup leaves ~3.3 GB cached in our own
+        allocator.  ``mem_get_info`` free excludes it, so counting only
+        ``memory_allocated`` as "ours" misfiled it as another process's VRAM and
+        pinned the cap to the model-weight size (655 MB) -> unrecoverable
+        "Tried to allocate 2.00 MiB" OOM mid-index.
+        """
+        torch_mock = self._make_torch(
+            free_gb=0.9, total_gb=8.0, us_gb=0.64, reserved_gb=3.94
+        )
+        mock_torch.cuda = torch_mock.cuda
+        mock_cfg.return_value = None
+
+        from embeddings.embedder import set_vram_limit
+
+        assert set_vram_limit(0.8) is True
+        eff = mock_torch.cuda.set_per_process_memory_fraction.call_args[0][0]
+        # physical_cap = reserved 3.94 + free 0.9 - headroom 1.6 = 3.24 GB -> 0.405
+        assert 0.38 <= eff <= 0.43, f"expected ~0.405, got {eff:.4f}"
+        assert eff * 8 > 0.64 + 0.5, "cap must leave room above live allocations"
+
+    @patch("embeddings.embedder.torch")
+    def test_compute_cap_reports_own_reserved_as_us(self, mock_torch):
+        """``us_gb`` is reserved (cache included); ``other_gb`` excludes it."""
+        mock_torch.cuda = self._make_torch(
+            free_gb=0.9, total_gb=8.0, us_gb=0.64, reserved_gb=3.94
+        ).cuda
+
+        from embeddings.embedder import compute_effective_vram_cap
+
+        result = compute_effective_vram_cap(0.8)
+        assert result is not None
+        _, cap_bytes, _, us_gb, other_gb, _ = result
+        assert abs(us_gb - 3.94) < 0.02
+        assert abs(other_gb - (8.0 - 0.9 - 3.94)) < 0.02
+        assert cap_bytes > int(0.64 * 1024**3)
 
     @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
@@ -1052,6 +1106,7 @@ class TestSetVramLimitEffective:
             int(24 * 1024**3),
         )
         mock_torch.cuda.memory_allocated.return_value = 0
+        mock_torch.cuda.memory_reserved.return_value = 0
         mock_torch.cuda.set_per_process_memory_fraction.side_effect = RuntimeError(
             "CUDA error"
         )
@@ -1072,6 +1127,7 @@ class TestSetVramLimitEffective:
             int(24 * 1024**3),
         )
         mock_torch.cuda.memory_allocated.return_value = 0
+        mock_torch.cuda.memory_reserved.return_value = 0
         mock_cfg.return_value = None
 
         from embeddings.embedder import set_vram_limit
@@ -1103,6 +1159,7 @@ class TestSetVramLimitEffective:
             int(24 * 1024**3),
         )
         mock_torch.cuda.memory_allocated.return_value = 0
+        mock_torch.cuda.memory_reserved.return_value = 0
         # Config would otherwise skip the cap...
         perf = MagicMock()
         perf.allow_ram_fallback = True
@@ -1162,6 +1219,39 @@ class TestSetVramLimitEffective:
         mock_torch.cuda.set_per_process_memory_fraction.assert_not_called()
 
 
+class TestCalculateOptimalBatchSizeOwnCache:
+    """calculate_optimal_batch_size() must treat our own cached-but-unused VRAM
+    (reserved - allocated) as available: ``mem_get_info`` free excludes it, so
+    sizing from free alone under-sizes every batch right after the warmup.
+    """
+
+    @staticmethod
+    def _batch(reserved_gb: float) -> int:
+        from embeddings.embedder import calculate_optimal_batch_size
+
+        with patch("embeddings.embedder.torch") as mock_torch:
+            mock_torch.cuda.is_available.return_value = True
+            mock_torch.cuda.mem_get_info.return_value = (
+                int(0.9 * 1024**3),
+                int(8.0 * 1024**3),
+            )
+            mock_torch.cuda.memory_allocated.return_value = int(0.64 * 1024**3)
+            mock_torch.cuda.memory_reserved.return_value = int(reserved_gb * 1024**3)
+            return calculate_optimal_batch_size(
+                min_batch=4,
+                max_batch=256,
+                memory_fraction=0.65,
+                activation_gb_per_item=0.2,
+            )
+
+    def test_cached_vram_counts_as_available(self):
+        no_cache = self._batch(reserved_gb=0.64)
+        with_cache = self._batch(reserved_gb=3.94)
+        assert no_cache == 4  # 0.9 GB free -> floor (laptop min_batch)
+        assert with_cache > no_cache
+        assert with_cache >= 10  # ~(0.9 + 3.3) x 0.65 x frag / 0.2
+
+
 class TestComputeEffectiveVramCap:
     """Tests for compute_effective_vram_cap() — the pure helper used by
     set_vram_limit (PyTorch cap).
@@ -1174,6 +1264,7 @@ class TestComputeEffectiveVramCap:
         total = int(24 * 1024**3)
         mock_torch.cuda.mem_get_info.return_value = (total, total)
         mock_torch.cuda.memory_allocated.return_value = 0
+        mock_torch.cuda.memory_reserved.return_value = 0
 
         from embeddings.embedder import compute_effective_vram_cap
 
@@ -1195,6 +1286,7 @@ class TestComputeEffectiveVramCap:
         total = int(24 * 1024**3)
         mock_torch.cuda.mem_get_info.return_value = (int(14 * 1024**3), total)
         mock_torch.cuda.memory_allocated.return_value = 0
+        mock_torch.cuda.memory_reserved.return_value = 0
 
         from embeddings.embedder import compute_effective_vram_cap
 
@@ -1220,6 +1312,7 @@ class TestComputeEffectiveVramCap:
         total = int(24 * 1024**3)
         mock_torch.cuda.mem_get_info.return_value = (int(14 * 1024**3), total)
         mock_torch.cuda.memory_allocated.return_value = int(6 * 1024**3)
+        mock_torch.cuda.memory_reserved.return_value = int(6 * 1024**3)
 
         from embeddings.embedder import compute_effective_vram_cap
 

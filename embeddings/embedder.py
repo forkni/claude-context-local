@@ -220,12 +220,21 @@ def compute_effective_vram_cap(
 
         T            = total device VRAM
         F            = system-wide free VRAM (excludes ALL processes)
-        A_us         = bytes our PyTorch process currently holds
+        A_live       = bytes of live tensors (memory_allocated)
+        A_us         = bytes our allocator has reserved (memory_reserved) —
+                       live tensors PLUS cached-but-unused blocks.  ``F``
+                       excludes the cache, so it must count as ours, not as
+                       another process's (else the cap collapses to A_live
+                       right after the activation warmup).
         A_other      = T - F - A_us  (held by every other process)
         headroom     = (1 − fraction) × T   (safety reserve)
         physical_cap = A_us + F − headroom  (max we can hold without spill)
-        cap          = max(min(user_cap, physical_cap), A_us)
+        cap          = max(min(user_cap, physical_cap), A_live)
         effective_fraction = clamp(cap / T, 0.05, fraction)
+
+    The floor is ``A_live``, not ``A_us``: the allocator frees cached blocks
+    and retries when a new segment would exceed the cap, so only live tensors
+    are unrecoverable.
 
     Args:
         fraction: Requested fraction of total VRAM (0.05–1.0).
@@ -242,7 +251,8 @@ def compute_effective_vram_cap(
         return None
     try:
         free_b, total_b = torch.cuda.mem_get_info(0)
-        us_b = torch.cuda.memory_allocated(0)
+        live_b = torch.cuda.memory_allocated(0)
+        us_b = max(torch.cuda.memory_reserved(0), live_b)
         other_b = max(0, total_b - free_b - us_b)
 
         headroom_b = int((1.0 - fraction) * total_b)
@@ -250,7 +260,7 @@ def compute_effective_vram_cap(
         physical_cap_b = us_b + free_b - headroom_b
 
         cap_b = min(user_cap_b, physical_cap_b)
-        cap_b = max(cap_b, us_b)  # cannot shrink below what we already hold
+        cap_b = max(cap_b, live_b)  # cannot shrink below live tensors
 
         effective_fraction = (cap_b / total_b) if total_b > 0 else fraction
         effective_fraction = max(0.05, min(effective_fraction, fraction))
@@ -351,6 +361,17 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
         return False
 
 
+def _own_cached_vram_gb() -> float:
+    """GB our allocator holds reserved but unused (e.g. after the activation warmup).
+
+    ``mem_get_info`` free excludes it, yet PyTorch reuses it for the next batch.
+    """
+    if not torch:
+        return 0.0
+    cached_b = torch.cuda.memory_reserved(0) - torch.cuda.memory_allocated(0)
+    return max(0.0, cached_b / 1024**3)
+
+
 def calculate_optimal_batch_size(
     embedding_dim: int = 768,
     min_batch: int = 32,
@@ -398,8 +419,8 @@ def calculate_optimal_batch_size(
         total_gb = total_memory / (1024**3)
         free_gb = free_memory / (1024**3)
 
-        # Use free memory — model weights are already loaded so they're excluded
-        available_gb = free_gb
+        # Free memory excludes our own reusable allocator cache; weights stay excluded.
+        available_gb = free_gb + _own_cached_vram_gb()
 
         # Apply fragmentation factor: PyTorch caching allocator reserves ~18% extra
         # Validated from OOM analysis: 2.67GB fragmentation / 14.74GB allocated = 18%
@@ -419,10 +440,10 @@ def calculate_optimal_batch_size(
             max_batch = min(max_batch, 32)
             min_batch = min(min_batch, 4)
 
-        # Additional cap based on actual free memory (other processes may hold VRAM)
-        if free_gb < 4:
+        # Additional cap based on actual available memory (other processes may hold VRAM)
+        if available_gb < 4:
             max_batch = min(max_batch, 8)
-        elif free_gb < 6:
+        elif available_gb < 6:
             max_batch = min(max_batch, 16)
 
         # Clamp to safe bounds
