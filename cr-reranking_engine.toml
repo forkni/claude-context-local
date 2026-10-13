@@ -1,0 +1,17 @@
+# cosmic-ray config — target: search/reranking_engine.py
+# Pure island: rerank_by_query (160-220) cosine rescore + sort + truncate
+#              _run_rerank (123-158) OOM-string detection
+# Boundary glue (should_enable_neural_reranking, _ensure_reranker, shutdown) is
+# irreducibly mocked (GPU/torch) — those lines should be pragmaed if they survive.
+# Run: uv run cosmic-ray init cr-reranking_engine.toml cr-reranking_engine.sqlite
+#      uv run cosmic-ray baseline cr-reranking_engine.toml
+#      uv run cosmic-ray exec cr-reranking_engine.toml cr-reranking_engine.sqlite
+#      uv run cr-report cr-reranking_engine.sqlite
+[cosmic-ray]
+module-path = "search/reranking_engine.py"
+timeout = 60.0
+excluded-modules = []
+test-command = ".venv/Scripts/python.exe -m pytest tests/unit/search/test_reranking_engine.py -q --no-header --tb=no"
+
+[cosmic-ray.distributor]
+name = "local"

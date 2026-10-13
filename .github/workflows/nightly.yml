@@ -1,13 +1,13 @@
-name: Nightly
+name: Nightly (scheduled deep CI)
 
-# Minimal nightly workflow: currently just the Windows test leg (this project
-# is Windows-primary but the blocking PR gate in branch-protection.yml only
-# runs ubuntu-latest). Deliberately scoped down for now — a lock-refresh
-# canary, pip-audit, a full tests/slow_integration run, and a lychee link
-# check are deferred to a follow-up pass rather than bundled in here.
+# Scheduled deep-CI workflow:
+# 1. test-windows: Windows-native test execution against development branch.
+# 2. lock-refresh-canary: Re-resolves full dependency graph (uv lock --upgrade)
+#    and runs fast unit tests against it to detect upstream breakage before PRs fail.
+# 3. security-audit: pip-audit vulnerability scan across resolved dependencies.
 #
-# schedule: only fires from the repo's default branch (main), so this job
-# explicitly checks out development to actually test the branch that matters.
+# schedule: only fires from default branch (main), so jobs checkout development
+# to test the active integration branch.
 
 on:
   schedule:
@@ -47,9 +47,54 @@ jobs:
         run: uv sync --locked --extra test --extra callgraph --extra otel --extra gpu
 
       - name: Run tests
-        # Deliberately no `-m "not slow"` here, unlike branch-protection.yml's PR gate:
-        # this is the only automated place the 3 @pytest.mark.slow tests outside
-        # slow_integration/ (2 model-loading observability tests + 1 project-switch
-        # test) currently run. Do not "align" this command with the PR gate's — that
-        # would silently drop them from CI entirely.
-        run: uv run pytest tests/ --ignore=tests/slow_integration -q --no-cov
+        # Runs the suite on Windows. Tests outside slow_integration run here.
+        run: uv run pytest tests/ --ignore=tests/slow_integration -m "not quarantine" -q --no-cov
+
+  lock-refresh-canary:
+    name: Lock-Refresh Canary (uv lock --upgrade)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout development
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          ref: development
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+        with:
+          python-version: '3.11'
+          enable-cache: true
+
+      - name: Re-resolve dependency graph
+        run: uv lock --upgrade
+
+      - name: Install refreshed dependencies
+        run: uv sync --extra test --extra callgraph --extra otel
+
+      - name: Run test suite against refreshed graph
+        run: uv run pytest tests/unit/ -m "not quarantine" -q --no-cov
+
+  security-audit:
+    name: Security Vulnerability Scan (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout development
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          ref: development
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+        with:
+          python-version: '3.11'
+          enable-cache: true
+
+      - name: Install dependencies with dev extra
+        run: uv sync --locked --extra dev
+
+      - name: Run pip-audit
+        run: uv run pip-audit

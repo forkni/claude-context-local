@@ -1,0 +1,13 @@
+# cosmic-ray config — target: chunking/relationships/call_edge_resolver.py
+# Run: uv run cosmic-ray init cr-call_edge.toml cr-call_edge.sqlite
+#      uv run cosmic-ray baseline cr-call_edge.toml
+#      uv run cosmic-ray exec cr-call_edge.toml cr-call_edge.sqlite
+#      uv run cr-report cr-call_edge.sqlite
+[cosmic-ray]
+module-path = "chunking/relationships/call_edge_resolver.py"
+timeout = 60.0
+excluded-modules = []
+test-command = ".venv/Scripts/python.exe -m pytest tests/unit/chunking/relationships/ -q --no-header --tb=no"
+
+[cosmic-ray.distributor]
+name = "local"

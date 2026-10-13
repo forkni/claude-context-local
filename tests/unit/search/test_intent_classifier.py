@@ -489,10 +489,27 @@ class TestIntentClassifierRealWorldQueries:
                 QueryIntent.NAVIGATIONAL,
                 "Import tracking",
             ),
-            # HYBRID queries (ambiguous)
             ("code", QueryIntent.HYBRID, "Too generic"),
             ("search", QueryIntent.HYBRID, "Ambiguous term"),
             ("implementation", QueryIntent.HYBRID, "Generic implementation"),
+        ],
+        ids=[
+            "local_func_def",
+            "local_class_lookup",
+            "local_model_lookup",
+            "local_func_locate",
+            "global_pipeline_explanation",
+            "global_architecture_explanation",
+            "global_system_overview",
+            "global_concept_explanation",
+            "nav_caller_discovery",
+            "nav_usage_discovery",
+            "nav_dependency_analysis",
+            "nav_callers_query",
+            "nav_import_tracking",
+            "hybrid_too_generic",
+            "hybrid_ambiguous_term",
+            "hybrid_generic_implementation",
         ],
     )
     def test_real_world_query_classification(

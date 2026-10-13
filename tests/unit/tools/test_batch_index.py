@@ -40,7 +40,11 @@ class TestSplitDirList:
     def test_comma_list_keeps_internal_spaces(self, tmp_path: Path) -> None:
         assert batch_index._split_dir_list("My Dir,src", tmp_path) == ["My Dir", "src"]
 
-    @pytest.mark.parametrize("raw", ["", "   ", ",", " , "])
+    @pytest.mark.parametrize(
+        "raw",
+        ["", "   ", ",", " , "],
+        ids=["empty_string", "spaces_only", "comma_only", "spaced_comma"],
+    )
     def test_empty_inputs(self, raw: str, tmp_path: Path) -> None:
         assert batch_index._split_dir_list(raw, tmp_path) == []
 

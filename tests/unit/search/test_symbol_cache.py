@@ -78,8 +78,8 @@ class TestSymbolHashCacheBasics(unittest.TestCase):
         self.cache.add(chunk_id)
 
         self.assertTrue(self.cache.contains(chunk_id))
-        self.assertTrue(chunk_id in self.cache)
-        self.assertFalse("nonexistent" in self.cache)
+        self.assertIn(chunk_id, self.cache)
+        self.assertNotIn("nonexistent", self.cache)
 
     def test_remove(self):
         """Test removing chunk_id."""
@@ -88,7 +88,7 @@ class TestSymbolHashCacheBasics(unittest.TestCase):
 
         self.assertTrue(self.cache.remove(chunk_id))
         self.assertEqual(len(self.cache), 0)
-        self.assertFalse(chunk_id in self.cache)
+        self.assertNotIn(chunk_id, self.cache)
 
     def test_remove_nonexistent(self):
         """Test removing non-existent chunk_id."""
@@ -118,8 +118,9 @@ class TestBucketDistribution(unittest.TestCase):
         """Test that BUCKET_COUNT is power of 2."""
         # 256 is 2^8
         self.assertEqual(SymbolHashCache.BUCKET_COUNT, 256)
-        self.assertTrue(
-            SymbolHashCache.BUCKET_COUNT & (SymbolHashCache.BUCKET_COUNT - 1) == 0,
+        self.assertEqual(
+            SymbolHashCache.BUCKET_COUNT & (SymbolHashCache.BUCKET_COUNT - 1),
+            0,
             "BUCKET_COUNT must be power of 2",
         )
 
@@ -293,7 +294,7 @@ class TestEdgeCases(unittest.TestCase):
         for chunk_id in special_ids:
             with self.subTest(chunk_id=chunk_id):
                 cache.add(chunk_id)
-                self.assertTrue(chunk_id in cache)
+                self.assertIn(chunk_id, cache)
 
     def test_repr(self):
         """Test string representation."""

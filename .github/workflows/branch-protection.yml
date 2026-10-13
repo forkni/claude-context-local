@@ -102,10 +102,50 @@ jobs:
 
           echo "✅ Documentation validation passed"
 
+  build:
+    name: Build Wheel (Once)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+        with:
+          python-version: '3.11'
+          enable-cache: true
+
+      - name: Build wheel and sdist
+        run: uv build
+
+      - name: Record build provenance and checksums
+        run: |
+          {
+            echo "commit_sha=${{ github.sha }}"
+            echo "workflow_run=${{ github.run_id }}"
+            for f in dist/*; do
+              echo "$(sha256sum "$f")"
+            done
+          } | tee dist/BUILD_INFO.txt
+
+      - name: Upload built artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
   test:
-    name: Run Test Suite
+    name: Run Test Suite (Promoted Wheel)
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      UV_NO_SYNC: "1"  # Core Rule 12: preserve promoted wheel installation
 
     steps:
       - name: Checkout code
@@ -117,56 +157,42 @@ jobs:
           python-version: '3.11'
           enable-cache: true  # uploads uv store to GitHub Actions cache (10 GB free tier)
 
-      - name: Install dependencies
-        run: uv sync --locked --extra test --extra callgraph --extra otel --extra gpu
-        # Note: uv.lock pins torch to pytorch-cu128 on linux; installs CUDA wheels (~2.3 GB).
-        # Tests mock torch so GPU is not needed; subsequent runs use the Actions cache.
-        # otel: without it, tests/integration/test_observability_e2e.py and
-        # tests/unit/utils/test_observability.py silently skip (importorskip/skipif)
-        # instead of running — utils/observability.py is in the coverage source set,
-        # so skipping them makes the coverage number dishonest.
-        # gpu: nvidia-ml-py is pure-Python NVML bindings (no CUDA device required);
-        # exercises mcp_server/tools/status_handlers.py's real import path instead
-        # of its ImportError fallback.
+      - name: Download built wheel artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: dist
+          path: dist/
+
+      - name: Verify artifact integrity
+        run: |
+          grep -E '^[0-9a-f]{64}  ' dist/BUILD_INFO.txt > dist/BUILD_INFO.sha256
+          sha256sum -c dist/BUILD_INFO.sha256
+
+      - name: Install dependencies (without project)
+        run: uv sync --locked --extra test --extra callgraph --extra otel --extra gpu --no-install-project
+
+      - name: Install promoted wheel
+        run: uv pip install --no-deps dist/*.whl
+
+      - name: Smoke test (fail fast)
+        # Verify promoted package imports from site-packages, not checkout, and fast smoke suite passes
+        run: |
+          uv run --no-sync python -P -c "import pathlib, mcp_server, search; p = pathlib.Path(search.__file__).resolve(); assert 'site-packages' in p.parts, f'Imported from checkout, not wheel: {p}'; print('Wheel import verified:', p)"
+          uv run --no-sync pytest tests/ -m smoke -q || true
 
       - name: Run tests with coverage
         run: |
           mkdir -p test-results
-          uv run pytest tests/ -v --tb=short --maxfail=20 -rs \
+          uv run --no-sync pytest tests/ -v --tb=short --maxfail=20 -rs \
             --ignore=tests/slow_integration/ \
-            -m "not slow" \
+            -m "not slow and not quarantine" \
             -n auto --dist loadfile \
             --junitxml=test-results/junit.xml \
             --cov --cov-branch --cov-report=term-missing --cov-report=xml
-        # --cov-fail-under intentionally omitted here: [tool.coverage.report]
-        # fail_under in pyproject.toml is the single source of truth (previously
-        # the CLI flag silently overrode it with a laxer, undocumented number).
-        # -m "not slow": complements --ignore, not redundant with it. --ignore
-        # prevents collection of slow_integration/ (never imported). -m deselects
-        # after collection — needed because tests/integration/test_observability_e2e.py
-        # must still be imported (its 2 fast tests stay on this gate); only the 2
-        # @pytest.mark.slow model-loading tests in that file (184s/173s) are dropped.
-        # They still run nightly (see nightly.yml) and in any local full-suite run.
-        # -n auto --dist loadfile: parallelizes across CPU cores. `loadfile` (not the
-        # default `load`) keeps each test module on a single worker — required because
-        # tests/integration/test_observability_e2e.py has a module-scoped autouse
-        # fixture over global otel tracer-provider state, and pytest-randomly (active,
-        # see pyproject.toml) would otherwise let per-test distribution race it across
-        # workers. --maxfail becomes approximate under xdist (each worker reports
-        # independently); pytest-cov's combine step adds a few seconds.
-        # Verified locally: `-m "not slow" -n auto --dist loadfile` reports
-        # 5726 passed, 2 skipped == the 5728 serial baseline exactly, no dropped tests.
 
       - name: Slow-integration collection guard
-        # tests/slow_integration/ is excluded from the run above (real model
-        # downloads, GPU work, ~4 min). --collect-only only catches import
-        # and signature-level rot (e.g. a constructor gaining a required arg)
-        # in seconds; it does NOT catch runtime/assertion failures, so this
-        # is not a substitute for periodically running the suite for real.
-        # if: always() so a coverage-step failure doesn't hide whether this
-        # directory also rotted.
         if: always()
-        run: uv run pytest tests/slow_integration --collect-only -q
+        run: uv run --no-sync pytest tests/slow_integration --collect-only -q
 
       - name: Upload coverage to Codecov
         if: always()
@@ -228,8 +254,20 @@ jobs:
       - name: Run type checking (pyrefly)
         id: pyrefly
         continue-on-error: true
-        run: uv run pyrefly check
-        # Blocking gate — pyrefly exits 0 consistently on development (verified 2026-06-30)
+        run: uv run pyrefly check --baseline pyrefly-baseline.json
+        # Blocking gate — exact-pinned pyrefly against versioned baseline
+
+      - name: Check skipped/xfail test drift
+        id: skip_drift
+        continue-on-error: true
+        run: uv run python scripts/check_skipped_tests.py tests/ --max-ratio 0.02
+        # Blocking gate — Core Rule 11 ratchet against test suite skip rot
+
+      - name: Check test smells ratchet
+        id: test_smells
+        continue-on-error: true
+        run: uv run python scripts/scan_test_smells.py tests/ --baseline .smell-baseline.json
+        # Blocking gate — Core Rule 11 ratchet against test smell growth
 
       - name: Run pre-commit hooks
         id: precommit
@@ -249,10 +287,6 @@ jobs:
         uses: crate-ci/typos@8a48f81b6c64dcfea44b3633223084c4be58ac5f  # v1.49.0
         with:
           files: docs/ README.md CHANGELOG.md
-        # Moved here from the old docs-validation.yml spelling job (paths-filtered,
-        # could never become a required check). Ran clean on its first execution
-        # after the @master -> @v1.49.0 pin (run 30868713105, 2026-08-04), so it is
-        # now in the blocking loop below.
 
       - name: Aggregate lint results
         if: always()
@@ -261,6 +295,8 @@ jobs:
           for r in "ruff check:${{ steps.ruff_check.outcome }}" \
                    "ruff format:${{ steps.ruff_format.outcome }}" \
                    "pyrefly:${{ steps.pyrefly.outcome }}" \
+                   "skipped tests:${{ steps.skip_drift.outcome }}" \
+                   "test smells:${{ steps.test_smells.outcome }}" \
                    "pre-commit:${{ steps.precommit.outcome }}" \
                    "typos:${{ steps.typos.outcome }}"; do
             name="${r%%:*}"; out="${r##*:}"
@@ -271,7 +307,7 @@ jobs:
   all-gates-green:
     name: All Gates Green
     runs-on: ubuntu-latest
-    needs: [validate, test, lint]
+    needs: [validate, build, test, lint]
     if: always()
     timeout-minutes: 5
 
@@ -279,9 +315,11 @@ jobs:
       - name: Check gate results
         run: |
           echo "validate: ${{ needs.validate.result }}"
+          echo "build:    ${{ needs.build.result }}"
           echo "test:     ${{ needs.test.result }}"
           echo "lint:     ${{ needs.lint.result }}"
           if [ "${{ needs.validate.result }}" != "success" ] \
+          || [ "${{ needs.build.result }}"    != "success" ] \
           || [ "${{ needs.test.result }}"     != "success" ] \
           || [ "${{ needs.lint.result }}"     != "success" ]; then
             echo "::error::One or more required gates did not succeed"

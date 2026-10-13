@@ -1,0 +1,13 @@
+# cosmic-ray config — target: search/reranker.py
+# Run: uv run cosmic-ray init cr-reranker.toml cr-reranker.sqlite
+#      uv run cosmic-ray baseline cr-reranker.toml
+#      uv run cosmic-ray exec cr-reranker.toml cr-reranker.sqlite
+#      uv run cr-report cr-reranker.sqlite
+[cosmic-ray]
+module-path = "search/reranker.py"
+timeout = 60.0
+excluded-modules = []
+test-command = ".venv/Scripts/python.exe -m pytest tests/unit/search/test_reranker.py -q --no-header --tb=no"
+
+[cosmic-ray.distributor]
+name = "local"

@@ -28,7 +28,7 @@ class TestMetadataStoreHashCacheIntegration(unittest.TestCase):
         self.store.set(chunk_id, 0, metadata)
 
         # Verify chunk is in hash cache
-        self.assertTrue(chunk_id in self.store._symbol_cache)
+        self.assertIn(chunk_id, self.store._symbol_cache)
 
     def test_get_uses_hash_cache(self):
         """Test that get() uses hash cache for O(1) lookup."""
@@ -67,7 +67,7 @@ class TestMetadataStoreHashCacheIntegration(unittest.TestCase):
         self.assertEqual(result["index_id"], 0)
 
         # After the miss-then-find, the CANONICAL key is re-cached (not backslash)
-        self.assertTrue(chunk_id_canonical in self.store._symbol_cache)
+        self.assertIn(chunk_id_canonical, self.store._symbol_cache)
 
         # Backslash lookup also resolves via canonicalization
         self.store._symbol_cache.clear()
@@ -82,13 +82,13 @@ class TestMetadataStoreHashCacheIntegration(unittest.TestCase):
 
         # Add chunk
         self.store.set(chunk_id, 0, metadata)
-        self.assertTrue(chunk_id in self.store._symbol_cache)
+        self.assertIn(chunk_id, self.store._symbol_cache)
 
         # Delete chunk
         self.store.delete(chunk_id)
 
         # Verify removed from hash cache
-        self.assertFalse(chunk_id in self.store._symbol_cache)
+        self.assertNotIn(chunk_id, self.store._symbol_cache)
 
     def test_commit_does_not_persist_hash_cache(self):
         """Test that commit() never writes the in-memory hash cache to disk.
@@ -112,7 +112,7 @@ class TestMetadataStoreHashCacheIntegration(unittest.TestCase):
         # though the underlying SQLite data is still there
         self.store.close()
         store2 = MetadataStore(self.db_path)
-        self.assertFalse(chunk_id in store2._symbol_cache)
+        self.assertNotIn(chunk_id, store2._symbol_cache)
         self.assertIsNotNone(store2.get(chunk_id))
         store2.close()
 
@@ -131,7 +131,7 @@ class TestMetadataStoreHashCacheIntegration(unittest.TestCase):
 
         # Verify all in hash cache
         for chunk_id, _ in chunks:
-            self.assertTrue(chunk_id in self.store._symbol_cache)
+            self.assertIn(chunk_id, self.store._symbol_cache)
 
         # Verify all retrievable
         for chunk_id, expected_idx in chunks:

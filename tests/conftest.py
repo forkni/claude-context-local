@@ -97,8 +97,39 @@ def pytest_unconfigure(config: Any) -> None:
     pass
 
 
+def _check_quarantine(items: list[Any]) -> None:
+    """Enforce quarantine marker discipline: reason=, issue=, and unexpired expires=."""
+    import datetime as dt
+
+    today = dt.date.today()
+    bad = []
+    for item in items:
+        m = item.get_closest_marker("quarantine")
+        if m is None:
+            continue
+        kw = m.kwargs
+        if not kw.get("reason") or not kw.get("issue") or "expires" not in kw:
+            bad.append(
+                f"{item.nodeid}: quarantine marker requires reason=, issue=, expires="
+            )
+        else:
+            try:
+                expires_date = dt.date.fromisoformat(kw["expires"])
+                if expires_date < today:
+                    bad.append(
+                        f"{item.nodeid}: quarantine expired on {kw['expires']} ({kw['issue']})"
+                    )
+            except ValueError:
+                bad.append(
+                    f"{item.nodeid}: invalid expires date format '{kw['expires']}', expected YYYY-MM-DD"
+                )
+    if bad:
+        raise pytest.UsageError("\n".join(bad))
+
+
 def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
-    """Automatically mark tests based on their location."""
+    """Automatically mark tests based on their location and validate markers."""
+    _check_quarantine(items)
     for item in items:
         # Mark tests based on file path and location. normalize_path() converts
         # backslashes to forward slashes first so this matches on Windows too.

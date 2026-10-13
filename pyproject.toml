@@ -113,7 +113,7 @@ dev = [
     "pip-licenses>=5.5.5",
     "pipdeptree>=4.2.0",  # 4.0.0 replaced the Python engine with a Rust extension (nab-python); --json/-o json output verified schema-identical, safe to float
     "pre-commit>=4.6.2",
-    "pyrefly>=1.3.2",
+    "pyrefly==1.3.2",  # Core Rule 7: exact pin; pyrefly does not follow semver
     "mutmut>=3.7.0",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
     "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
     "gitpython>=3.2.0",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
@@ -797,6 +797,10 @@ markers = [
     "unit: Unit tests",
     "integration: Integration tests",
     "slow: Slow running tests",
+    "smoke: Fail-fast smoke tests against the installed artifact",
+    "quarantine: Time-boxed flaky tests awaiting root-cause fix",
+    "requires_cuda: Tests requiring real CUDA hardware",
+    "requires_native: Tests requiring native compiled binaries",
     "mcp: MCP server related tests",
     "embeddings: Embedding generation tests",
     "chunking: Code chunking tests",
@@ -897,3 +901,10 @@ exclude_lines = [
 
 [tool.scan_test_smells]
 baseline = ".smell-baseline.json"
+
+# ---------------------------------------------------------------------------
+# Skipped/XFail Test Drift Ratchet (check_skipped_tests.py - Continuous Delivery Ch3)
+# ---------------------------------------------------------------------------
+
+[tool.check_skipped_tests]
+max_ratio = 0.02

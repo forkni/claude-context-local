@@ -1,16 +1,17 @@
 {
   "counts": {
-    "abs-path": 66,
+    "abs-path": 15,
     "bitwise-assert": 3,
     "commented-test": 0,
     "early-exit": 36,
-    "multi-mock-assert": 16,
+    "multi-mock-assert": 20,
     "no-assert": 0,
-    "overprotective": 112,
-    "parametrize-no-ids": 27,
+    "overprotective": 111,
+    "parametrize-no-ids": 26,
     "persistent-temp": 77,
     "platform-check": 1,
-    "sleep": 27
+    "sleep": 27,
+    "suboptimal-assert": 0
   },
-  "total": 365
+  "total": 316
 }

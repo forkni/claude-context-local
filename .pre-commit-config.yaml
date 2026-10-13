@@ -31,3 +31,26 @@ repos:
       - id: markdownlint
         args: [--fix, --disable, MD013, MD033]
         exclude: ^(CLAUDE\.md|MEMORY\.md|_archive/)
+
+  # Local test-suite quality ratchets
+  - repo: local
+    hooks:
+      - id: scan-test-smells
+        name: test-smell ratchet
+        entry: python scripts/scan_test_smells.py tests --baseline .smell-baseline.json
+        language: system
+        pass_filenames: false
+        files: ^tests/.*\.py$
+
+      - id: check-skipped-tests
+        name: skipped-test drift check
+        entry: python scripts/check_skipped_tests.py tests/
+        language: system
+        pass_filenames: false
+        files: ^tests/.*\.py$
+
+      - id: no-snapshot-update-in-addopts
+        name: reject --snapshot-update in pytest addopts
+        entry: '\-\-snapshot-update'
+        language: pygrep
+        files: ^(pyproject\.toml|pytest\.ini)$

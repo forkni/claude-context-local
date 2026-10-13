@@ -1,0 +1,13 @@
+# cosmic-ray config — target: search/centrality_ranker.py
+# Run: uv run cosmic-ray init cr-centrality_ranker.toml cr-centrality_ranker.sqlite
+#      uv run cosmic-ray baseline cr-centrality_ranker.toml
+#      uv run cosmic-ray exec cr-centrality_ranker.toml cr-centrality_ranker.sqlite
+#      uv run cr-report cr-centrality_ranker.sqlite
+[cosmic-ray]
+module-path = "search/centrality_ranker.py"
+timeout = 60.0
+excluded-modules = []
+test-command = ".venv/Scripts/python.exe -m pytest tests/unit/search/test_centrality_ranker.py -q --no-header --tb=no"
+
+[cosmic-ray.distributor]
+name = "local"

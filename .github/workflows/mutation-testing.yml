@@ -1,50 +1,61 @@
 name: Mutation Testing (Periodic)
 
-# Manually triggered — not part of the per-commit CI gate.
-# Run periodically (e.g. before releases, after major test refactors) to check
-# that the deterministic-core test suites still kill mutants.
+# Periodic, out-of-band mutation testing workflow.
+# Mutation runs are O(N mutants x suite time) — far too expensive for the commit-stage
+# budget, so this workflow never runs on the PR path. It runs on workflow_dispatch
+# (on demand, e.g. before releases or after major test refactors) and on a weekly schedule.
 #
-# Targets (Phase 4.2 Tier 1+2 — zero-mock deterministic cores):
-#   evaluation/metrics.py        recall/MRR/NDCG/line-overlap scoring
-#   search/reranker.py           RRF ranking math
-#   chunking/relationships/call_edge_resolver.py   confidence-ladder merge
-#
-# Targets (Phase 4.2 Tier 3 — de-mocked deterministic cores):
-#   search/centrality_ranker.py  pagerank-blend + _apply_* helpers (pure over plain dicts)
-#   search/reranking_engine.py   cosine re-score + sort + truncate island in rerank_by_query
-#
-# Windows note: mutmut refuses to run on native Windows (needs WSL).
-# This job runs on ubuntu-latest where mutmut works natively.
-# For local Windows runs use cosmic-ray (cr-*.toml configs, gitignored).
+# Engine: cosmic-ray on windows-2025, matching the local developer environment and
+# the committed cr-*.toml configs for zero-mock and de-mocked deterministic cores.
 
 on:
   workflow_dispatch:
     inputs:
       target:
-        description: 'Module to mutate (or "all")'
-        required: false
-        default: all
+        description: "cr-*.toml target to run (relative path, or 'all')"
+        default: "all"
         type: choice
         options:
           - all
-          - evaluation/metrics.py
-          - search/reranker.py
-          - chunking/relationships/call_edge_resolver.py
-          - search/centrality_ranker.py
-          - search/reranking_engine.py
+          - cr-metrics.toml
+          - cr-reranker.toml
+          - cr-call_edge.toml
+          - cr-centrality_ranker.toml
+          - cr-reranking_engine.toml
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC (weekly)
+
+concurrency:
+  group: mutation-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
-jobs:
-  mutation-test:
-    name: Mutation Testing — ${{ github.event.inputs.target || 'all' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
+defaults:
+  run:
+    shell: bash
 
+jobs:
+  mutation:
+    name: cosmic-ray (${{ matrix.target }})
+    if: github.event.inputs.target == '' || github.event.inputs.target == 'all' || github.event.inputs.target == matrix.target
+    runs-on: windows-2025
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - cr-metrics.toml
+          - cr-reranker.toml
+          - cr-call_edge.toml
+          - cr-centrality_ranker.toml
+          - cr-reranking_engine.toml
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Set up uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
@@ -52,71 +63,28 @@ jobs:
           python-version: '3.11'
           enable-cache: true
 
-      - name: Install dev + test dependencies
-        run: uv sync --locked --extra dev --extra test --extra callgraph
+      - name: Install dependencies (from locked graph)
+        run: uv sync --locked --extra test --extra dev --extra callgraph
 
-      - name: Baseline — verify tests pass before mutating
-        run: |
-          uv run pytest \
-            tests/unit/evaluation/test_benchmark_metrics.py \
-            tests/unit/evaluation/test_line_overlap_metrics.py \
-            tests/unit/evaluation/test_metrics_snapshot.py \
-            tests/unit/search/test_reranker.py \
-            tests/unit/search/test_centrality_ranker.py \
-            tests/unit/search/test_reranking_engine.py \
-            tests/unit/chunking/relationships/ \
-            -q --no-header --tb=short
+      - name: Verify baseline (tests must pass on unmodified source)
+        run: uv run cosmic-ray baseline "${{ matrix.target }}"
 
-      - name: Run mutmut — evaluation/metrics.py
-        if: github.event.inputs.target == 'all' || github.event.inputs.target == 'evaluation/metrics.py'
-        run: |
-          uv run mutmut run \
-            --paths-to-mutate evaluation/metrics.py \
-            --test-time-multiplier 3
-          echo "=== metrics.py mutation results ==="
-          uv run mutmut results || true
+      - name: Initialize session database
+        run: uv run cosmic-ray init "${{ matrix.target }}" "${{ matrix.target }}.sqlite"
 
-      - name: Run mutmut — search/reranker.py
-        if: github.event.inputs.target == 'all' || github.event.inputs.target == 'search/reranker.py'
-        run: |
-          uv run mutmut run \
-            --paths-to-mutate search/reranker.py \
-            --test-time-multiplier 3
-          echo "=== reranker.py mutation results ==="
-          uv run mutmut results || true
+      - name: Execute mutations
+        run: uv run cosmic-ray exec "${{ matrix.target }}" "${{ matrix.target }}.sqlite"
 
-      - name: Run mutmut — call_edge_resolver.py
-        if: github.event.inputs.target == 'all' || github.event.inputs.target == 'chunking/relationships/call_edge_resolver.py'
-        run: |
-          uv run mutmut run \
-            --paths-to-mutate chunking/relationships/call_edge_resolver.py \
-            --test-time-multiplier 3
-          echo "=== call_edge_resolver.py mutation results ==="
-          uv run mutmut results || true
+      - name: Report survivors
+        run: uv run cr-report "${{ matrix.target }}.sqlite"
 
-      - name: Run mutmut — search/centrality_ranker.py
-        if: github.event.inputs.target == 'all' || github.event.inputs.target == 'search/centrality_ranker.py'
-        run: |
-          uv run mutmut run \
-            --paths-to-mutate search/centrality_ranker.py \
-            --test-time-multiplier 3
-          echo "=== centrality_ranker.py mutation results ==="
-          uv run mutmut results || true
+      - name: Gate on survival rate
+        run: uv run cr-rate --fail-over 25.0 "${{ matrix.target }}.sqlite"
 
-      - name: Run mutmut — search/reranking_engine.py
-        if: github.event.inputs.target == 'all' || github.event.inputs.target == 'search/reranking_engine.py'
-        run: |
-          uv run mutmut run \
-            --paths-to-mutate search/reranking_engine.py \
-            --test-time-multiplier 3
-          echo "=== reranking_engine.py mutation results ==="
-          uv run mutmut results || true
-
-      - name: Upload mutmut cache (surviving mutants)
-        if: always()
+      - name: Upload mutation database artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
+        if: always()
         with:
-          name: mutmut-cache-${{ github.run_id }}
-          path: .mutmut-cache
+          name: cosmic-ray-session-${{ strategy.job-index }}
+          path: "*.sqlite"
           retention-days: 14
-          if-no-files-found: ignore

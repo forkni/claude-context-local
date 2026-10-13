@@ -1,0 +1,13 @@
+# cosmic-ray config — target: evaluation/metrics.py
+# Run: uv run cosmic-ray init cr-metrics.toml cr-metrics.sqlite
+#      uv run cosmic-ray baseline cr-metrics.toml
+#      uv run cosmic-ray exec cr-metrics.toml cr-metrics.sqlite
+#      uv run cr-report cr-metrics.sqlite
+[cosmic-ray]
+module-path = "evaluation/metrics.py"
+timeout = 120.0
+excluded-modules = []
+test-command = ".venv/Scripts/python.exe -m pytest tests/unit/evaluation/test_benchmark_metrics.py tests/unit/evaluation/test_line_overlap_metrics.py tests/unit/evaluation/test_metrics_snapshot.py -q --no-header --tb=no"
+
+[cosmic-ray.distributor]
+name = "local"

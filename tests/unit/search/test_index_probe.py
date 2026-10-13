@@ -311,6 +311,7 @@ class TestWorkersRule:
             (24, 3, 3),  # capped by file count
             (2, 100, 1),  # floor at 1
         ],
+        ids=["half_cores", "hard_cap_16", "capped_by_file_count", "floor_at_1"],
     )
     def test_bands(self, cpu_count, file_count, expected):
         m = make_measurements(cpu_count=cpu_count, file_count=file_count)
@@ -439,6 +440,7 @@ class TestEngine:
             make_measurements(vram_total_gb=None, vram_free_gb=None),
             make_measurements(language_histogram={".glsl": 3}),
         ],
+        ids=["default_measurements", "with_vram", "none_vram", "glsl_histogram"],
     )
     def test_reasons_match_overrides_one_to_one(self, m):
         result = run_rules(m, "pre_chunking")
@@ -603,7 +605,6 @@ class TestEntryPoints:
             repo_profile=None,
             measurements=make_measurements(),
         )
-        assert summary is not None
         assert summary["stage"] == "pre_chunking"
         assert summary["probe_version"] == PROBE_VERSION
         assert "performance.max_chunking_workers" in summary["override_keys"]
@@ -634,7 +635,6 @@ class TestEntryPoints:
         summary = probe_post_build(
             tmp_path, stats={"total_chunks": 6000, "files_indexed": 100}
         )
-        assert summary is not None
         assert summary["stage"] == "post_build"
         assert summary["override_keys"] == []
         assert "ego_graph.max_neighbors_per_hop" in summary["observation_keys"]
@@ -710,7 +710,6 @@ class TestMergedSummary:
             "post_build",
         ).summary("post_build")
         merged = merged_probe_summary(pass1, pass2)
-        assert merged is not None
         assert merged["probe_version"] == PROBE_VERSION
         assert "performance.max_chunking_workers" in merged["override_keys"]
         assert "ego_graph.max_neighbors_per_hop" in merged["observation_keys"]
@@ -718,6 +717,5 @@ class TestMergedSummary:
     def test_pass1_only(self):
         pass1 = run_rules(make_measurements(), "pre_chunking").summary("pre_chunking")
         merged = merged_probe_summary(pass1, None)
-        assert merged is not None
         assert merged["override_keys"] == pass1["override_keys"]
         assert merged["observation_keys"] == pass1["observation_keys"]

@@ -11,8 +11,20 @@
 # follow core.autocrlf); CI fails if a CRLF blob reaches the index.
 * text=auto
 
+# Python source files must use LF line endings
+*.py text eol=lf
+
 # Shell scripts must use LF line endings (fix for bash shebang interpretation)
 *.sh text eol=lf
+
+# Batch and CMD scripts must use CRLF (LF causes syntax/no-op errors in cmd.exe)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Snapshot test assets and binary data
+**/__snapshots__/** text eol=lf linguist-generated
+*.npz binary
+*.sqlite binary
 
 # ============================================================================
 # GENERAL PATTERNS (APPLY FIRST)
