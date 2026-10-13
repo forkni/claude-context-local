@@ -37,20 +37,31 @@ defaults:
     shell: bash
 
 jobs:
+  prepare:
+    name: Prepare Mutation Targets
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.set-targets.outputs.targets }}
+    steps:
+      - name: Resolve matrix targets
+        id: set-targets
+        run: |
+          TARGET="${{ github.event.inputs.target }}"
+          if [ -z "$TARGET" ] || [ "$TARGET" = "all" ]; then
+            echo 'targets=["cr-metrics.toml", "cr-reranker.toml", "cr-call_edge.toml", "cr-centrality_ranker.toml", "cr-reranking_engine.toml"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "targets=[\"$TARGET\"]" >> "$GITHUB_OUTPUT"
+          fi
+
   mutation:
     name: cosmic-ray (${{ matrix.target }})
-    if: github.event.inputs.target == '' || github.event.inputs.target == 'all' || github.event.inputs.target == matrix.target
+    needs: prepare
     runs-on: windows-2025
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - cr-metrics.toml
-          - cr-reranker.toml
-          - cr-call_edge.toml
-          - cr-centrality_ranker.toml
-          - cr-reranking_engine.toml
+        target: ${{ fromJSON(needs.prepare.outputs.targets) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
@@ -85,6 +96,6 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
         if: always()
         with:
-          name: cosmic-ray-session-${{ strategy.job-index }}
+          name: cosmic-ray-session-${{ matrix.target }}
           path: "*.sqlite"
           retention-days: 14
