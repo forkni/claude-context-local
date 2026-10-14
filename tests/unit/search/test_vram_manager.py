@@ -1,7 +1,9 @@
 """Unit tests for the VRAM tier table (search/vram_manager.py)."""
 
+import pytest
+
 from search.config import MODEL_REGISTRY
-from search.vram_manager import VRAM_TIERS
+from search.vram_manager import VRAM_TIERS, tier_for
 
 
 class TestVRAMTiers:
@@ -65,3 +67,39 @@ class TestVRAMTiers:
         assert desktop.reranker_model == "full"
         assert workstation.neural_reranking_enabled is True
         assert workstation.reranker_model == "full"
+
+
+class TestTierFor:
+    """tier_for: the one band lookup every tier-dependent number goes through."""
+
+    @pytest.mark.parametrize(
+        ("vram_gb", "name"),
+        [
+            (0.0, "minimal"),
+            (5.9, "minimal"),
+            (6.0, "laptop"),
+            (7.99, "laptop"),
+            (10.0, "desktop"),
+            (17.9, "desktop"),
+            (18.0, "workstation"),
+            (24.0, "workstation"),
+        ],
+    )
+    def test_half_open_bands(self, vram_gb, name):
+        assert tier_for(vram_gb).name == name
+
+    def test_out_of_table_falls_back_to_minimal(self):
+        assert tier_for(-1.0).name == "minimal"
+        assert tier_for(5000.0).name == "minimal"
+
+    def test_batch_columns_grow_with_vram(self):
+        embed = [t.embed_batch_size for t in VRAM_TIERS]
+        dynamic = [t.dynamic_batch_max for t in VRAM_TIERS]
+        assert embed == sorted(embed) and dynamic == sorted(dynamic)
+        assert all(t.embed_batch_size < t.dynamic_batch_max for t in VRAM_TIERS)
+
+    def test_sizer_clamps_only_on_small_tiers(self):
+        clamped = [t.name for t in VRAM_TIERS if t.sizer_max_batch is not None]
+        assert clamped == ["minimal", "laptop"]
+        for t in VRAM_TIERS:
+            assert (t.sizer_min_batch is None) == (t.sizer_max_batch is None)

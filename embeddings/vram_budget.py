@@ -17,6 +17,7 @@ from search.config import (
 from search.config import (
     get_indexing_ram_fallback_override as _get_ram_fallback_override,
 )
+from search.vram_manager import tier_for
 
 
 try:
@@ -313,13 +314,12 @@ def calculate_optimal_batch_size(
         # Calculate optimal batch size from activation budget
         optimal_batch = int(target_activation_gb / gb_per_item)
 
-        # Apply GPU tier limits
-        if total_gb <= 6:  # minimal tier (<6GB)
-            max_batch = min(max_batch, 16)
-            min_batch = min(min_batch, 2)
-        elif total_gb <= 10:  # laptop tier (6–10GB)
-            max_batch = min(max_batch, 32)
-            min_batch = min(min_batch, 4)
+        # Apply the GPU tier's clamps (VRAM_TIERS sizer_* columns)
+        tier = tier_for(total_gb)
+        if tier.sizer_max_batch is not None:
+            max_batch = min(max_batch, tier.sizer_max_batch)
+        if tier.sizer_min_batch is not None:
+            min_batch = min(min_batch, tier.sizer_min_batch)
 
         # Additional cap based on actual available memory (other processes may hold VRAM)
         if available_gb < 4:

@@ -46,7 +46,7 @@ from .config import (
     SearchConfig,
     get_search_config,
 )
-from .vram_manager import VRAM_TIERS, VRAMTier
+from .vram_manager import VRAMTier, tier_for
 
 
 if TYPE_CHECKING:
@@ -151,10 +151,7 @@ def _tier_for(vram_total_gb: float | None) -> VRAMTier | None:
     """Map total VRAM to the vram_manager tier table (None = no GPU)."""
     if vram_total_gb is None:
         return None
-    for tier in VRAM_TIERS:
-        if tier.min_vram_gb <= vram_total_gb < tier.max_vram_gb:
-            return tier
-    return VRAM_TIERS[0]
+    return tier_for(vram_total_gb)
 
 
 def _has_gpu(m: ProbeMeasurements) -> bool:
@@ -163,26 +160,12 @@ def _has_gpu(m: ProbeMeasurements) -> bool:
 
 def _embedding_batch_size(m: ProbeMeasurements) -> int:
     """Fallback embed batch (used when dynamic sizing is off), VRAM-tiered."""
-    vram = m.vram_total_gb or 0.0
-    if vram < 6:
-        return 32
-    if vram < 10:
-        return 64
-    if vram < 18:
-        return 128
-    return 256
+    return tier_for(m.vram_total_gb or 0.0).embed_batch_size
 
 
 def _dynamic_batch_max(m: ProbeMeasurements) -> int:
     """Ceiling for GPU-based dynamic batch sizing, VRAM-tiered."""
-    vram = m.vram_total_gb or 0.0
-    if vram < 6:
-        return 96
-    if vram < 10:
-        return 192
-    if vram < 18:
-        return 384
-    return 512
+    return tier_for(m.vram_total_gb or 0.0).dynamic_batch_max
 
 
 def _chunking_workers(m: ProbeMeasurements) -> int:
