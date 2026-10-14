@@ -852,6 +852,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         """
         source_bytes = bytes(source_code, "utf-8")
         chunks = []
+        first_of_id: dict[tuple[Any, ...], tuple[TreeSitterChunk, int]] = {}
 
         # Get config BEFORE traverse (needed for splitting decision in closure)
         if config is None:
@@ -896,16 +897,36 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                     parent_info.get("parent_name") if parent_info else None
                 )
 
-                chunk = TreeSitterChunk(
-                    content=content,
-                    start_line=start_line,
-                    end_line=end_line,
-                    node_type=node.type,
-                    language=self.language_name,
-                    metadata=metadata,
-                    parent_class=parent_class_name,
+                # Chunks sharing span, node type, name and parent share a
+                # chunk id, and a full reindex fails on a repeated id. Two
+                # same-name overloads on one line (`A() {} A(const A&) {}`)
+                # therefore fold into the first chunk, which then spans both.
+                id_key = (
+                    start_line,
+                    end_line,
+                    node.type,
+                    metadata.get("name"),
+                    parent_class_name,
+                    metadata.get("parent_type"),
                 )
-                chunks.append(chunk)
+                folded = first_of_id.get(id_key)
+                if folded is not None:
+                    chunk, start_byte = folded
+                    chunk.content = source_bytes[start_byte : node.end_byte].decode(
+                        "utf-8"
+                    )
+                else:
+                    chunk = TreeSitterChunk(
+                        content=content,
+                        start_line=start_line,
+                        end_line=end_line,
+                        node_type=node.type,
+                        language=self.language_name,
+                        metadata=metadata,
+                        parent_class=parent_class_name,
+                    )
+                    chunks.append(chunk)
+                    first_of_id[id_key] = (chunk, node.start_byte)
 
                 # For containers (classes and, in overriding leaves,
                 # namespaces/structs/unions), continue traversing to find

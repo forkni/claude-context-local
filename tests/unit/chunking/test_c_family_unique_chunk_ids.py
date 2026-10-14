@@ -95,7 +95,7 @@ class TestBodylessSpecifiersAreNotChunks:
     )
     def test_no_specifier_chunk(self, chunker, source):
         kinds = {c.node_type for c in chunker().chunk_code(source)}
-        assert not kinds & _SPECIFIER_TYPES, kinds
+        assert kinds.isdisjoint(_SPECIFIER_TYPES), kinds
 
     @pytest.mark.parametrize(
         ("chunker", "source", "kind", "name"),
@@ -134,3 +134,48 @@ class TestPreamblesNeverShareALine:
         (preamble,) = _preambles(chunks)
         assert "a = 1" in preamble.content and "b = 2" in preamble.content
         assert _duplicates(chunks) == []
+
+
+class TestSameIdChunksFold:
+    """Same-name overloads on one line share an id, so they fold into one chunk.
+
+    opencv `matx.hpp` declares `Matx_AddOp() {} Matx_AddOp(const Matx_AddOp&)
+    {}` on one line inside `class CV_EXPORTS Matx_AddOp`; once the class head
+    parsed, both constructors chunked as `function_definition:Matx_AddOp`.
+    """
+
+    @pytest.mark.parametrize(
+        ("filename", "source", "line", "first", "second"),
+        [
+            (
+                "x.hpp",
+                "class A {\npublic:\n    A() {} A(const A&) {}\n};\n",
+                3,
+                "A() {}",
+                "A(const A&) {}",
+            ),
+            (
+                "X.cs",
+                "class A {\n    void F() {} void F(int x) {}\n}\n",
+                2,
+                "void F() {}",
+                "void F(int x) {}",
+            ),
+        ],
+        ids=["cpp_constructors", "csharp_methods"],
+    )
+    def test_overloads_on_one_line_fold(self, filename, source, line, first, second):
+        chunks = TreeSitterChunker().chunk_file(filename, content=source)
+        keys = [
+            (*key, c.parent_class) for key, c in zip(_keys(chunks), chunks, strict=True)
+        ]
+        assert [k for k, n in Counter(keys).items() if n > 1] == []
+        (folded,) = [c for c in chunks if c.start_line == line and first in c.content]
+        assert folded.content.startswith(first)
+        assert folded.content.endswith(second)
+
+    def test_overloads_on_separate_lines_stay_apart(self):
+        source = "class A {\npublic:\n    A() {}\n    A(const A&) {}\n};\n"
+        chunks = TreeSitterChunker().chunk_file("x.hpp", content=source)
+        lines = [c.start_line for c in chunks if c.metadata.get("name") == "A"]
+        assert lines == [1, 3, 4]
