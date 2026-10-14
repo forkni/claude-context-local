@@ -91,6 +91,7 @@ for avoiding re-litigating settled questions.
 | [0083](0083-faiss-index-parameter-policy.md) | FAISS index parameter policy: inner-product IVF, 50K flat ceiling, size-derived `nlist`/`nprobe` | accepted | 2026-10-05 |
 | [0084](0084-f2llm-330m-for-laptop-and-minimal-tiers.md) | F2LLM-v2-330M is the recommended embedder for the laptop and minimal VRAM tiers | accepted | 2026-10-08 |
 | [0085](0085-instructed-find-similar-flag-off.md) | Instructed find_similar ships flag-off; F2LLM query wording unchanged | accepted | 2026-10-08 |
+| [0086](0086-vram-budget-has-one-home.md) | VRAM budget has one home: `VramBudget` in `embeddings/vram_budget.py` | accepted | 2026-10-13 |
 
 ## Adding a new ADR
 
