@@ -32,9 +32,11 @@ FRAGMENTATION_OVERHEAD = 0.82  # 1.0 - 0.18 = 82% usable VRAM, 18% fragmentation
 # Working room the per-process VRAM cap keeps above live tensors.  Without it an
 # external squeeze pins the cap at the model-weight size, where even a 2 MiB
 # segment OOMs and batch halving cannot recover.
-_DEFAULT_MIN_ROOM_GB = 0.25
+DEFAULT_MIN_ROOM_GB = 0.25
 # Measured activation items of room ``embed_chunks`` asks for on top of that.
-_MIN_ROOM_ITEMS = 2
+MIN_ROOM_ITEMS = 2
+# Cap applied when no config can be read at all (also ``set_vram_limit``'s default).
+_NO_CONFIG_CAP_FRACTION = 0.90
 
 
 class VramCapReading(NamedTuple):
@@ -128,7 +130,8 @@ def compute_effective_vram_cap(
 
 
 def set_vram_limit(
-    fraction: float = 0.90, min_room_gb: float = _DEFAULT_MIN_ROOM_GB
+    fraction: float = _NO_CONFIG_CAP_FRACTION,
+    min_room_gb: float = DEFAULT_MIN_ROOM_GB,
 ) -> bool:
     """Set hard VRAM limit on the PyTorch CUDA allocator to prevent spillover.
 
@@ -366,7 +369,7 @@ class VramBudget:
     # Share of the hard VRAM ceiling the batch sizer may plan for (~81%).
     BATCH_SHARE_OF_CAP = 0.8125
     # Cap used when no config can be read at all.
-    NO_CONFIG_CAP_FRACTION = 0.90
+    NO_CONFIG_CAP_FRACTION = _NO_CONFIG_CAP_FRACTION
 
     @classmethod
     def from_config(cls, performance: PerformanceConfig) -> "VramBudget":
@@ -385,7 +388,7 @@ class VramBudget:
             cap_fraction=cls.NO_CONFIG_CAP_FRACTION,
         )
 
-    def apply_cap(self, min_room_gb: float = _DEFAULT_MIN_ROOM_GB) -> bool:
+    def apply_cap(self, min_room_gb: float = DEFAULT_MIN_ROOM_GB) -> bool:
         """Apply the per-process cap; see ``set_vram_limit`` for the contract."""
         return set_vram_limit(self.cap_fraction, min_room_gb=min_room_gb)
 

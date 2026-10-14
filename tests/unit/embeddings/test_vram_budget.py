@@ -594,11 +594,11 @@ class TestVramBudget:
 
     @patch("embeddings.vram_budget.set_vram_limit")
     def test_apply_cap_defaults_to_the_minimum_room(self, mock_set):
-        from embeddings.vram_budget import _DEFAULT_MIN_ROOM_GB, VramBudget
+        from embeddings.vram_budget import DEFAULT_MIN_ROOM_GB, VramBudget
 
         VramBudget.from_config(self._perf(0.8)).apply_cap()
 
-        assert mock_set.call_args.kwargs["min_room_gb"] == _DEFAULT_MIN_ROOM_GB
+        assert mock_set.call_args.kwargs["min_room_gb"] == DEFAULT_MIN_ROOM_GB
 
     def test_batch_memory_fraction_is_81_percent_of_cap_clamped(self):
         from embeddings.vram_budget import VramBudget
@@ -630,6 +630,15 @@ class TestVramBudget:
             model_name="m",
             activation_gb_per_item=0.02,
         )
+
+    def test_set_vram_limit_default_is_the_no_config_cap(self):
+        import inspect
+
+        from embeddings.vram_budget import VramBudget, set_vram_limit
+
+        default = inspect.signature(set_vram_limit).parameters["fraction"].default
+
+        assert default == VramBudget.NO_CONFIG_CAP_FRACTION
 
     @patch("embeddings.vram_budget.reapply_vram_cap")
     def test_reapply_cap_delegates(self, mock_reapply):

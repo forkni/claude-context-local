@@ -1050,8 +1050,8 @@ class TestOomRecoveryBackoff:
     def _no_vram_cap(self):
         # These tests mock ``embeddings.embedder.torch`` with CUDA unavailable;
         # the cap lives in ``embeddings.vram_budget`` and must stay inert too.
-        with patch("embeddings.vram_budget.set_vram_limit"):
-            yield
+        with patch("embeddings.vram_budget.set_vram_limit") as mock_set_limit:
+            yield mock_set_limit
 
     def _make_chunks(self, n: int):
         """Return n minimal CodeChunk objects."""
@@ -1313,11 +1313,10 @@ class TestOomRecoveryBackoff:
         embedder.create_embedding_content = MagicMock(side_effect=lambda c: c.content)
         return embedder
 
-    @patch("embeddings.vram_budget.set_vram_limit")
     @patch("embeddings.embedder.torch")
     @patch("embeddings.embedder.get_search_config")
     def test_batch1_oom_remeasures_cap_and_retries_once(
-        self, mock_get_cfg, mock_torch, mock_set_limit
+        self, mock_get_cfg, mock_torch, _no_vram_cap
     ):
         """OOM at batch_size=1 cannot be fixed by halving: re-apply the cap once
         with fresh readings and retry the same chunk."""
@@ -1334,14 +1333,13 @@ class TestOomRecoveryBackoff:
         results = embedder.embed_chunks(self._make_chunks(2), batch_size=1)
 
         assert len(results) == 2
-        assert mock_set_limit.call_count == 2  # initial apply + one re-measure
-        assert mock_set_limit.call_args.kwargs["min_room_gb"] >= 0.25
+        assert _no_vram_cap.call_count == 2  # initial apply + one re-measure
+        assert _no_vram_cap.call_args.kwargs["min_room_gb"] >= 0.25
 
-    @patch("embeddings.vram_budget.set_vram_limit")
     @patch("embeddings.embedder.torch")
     @patch("embeddings.embedder.get_search_config")
     def test_batch1_oom_twice_raises_vram_exhausted(
-        self, mock_get_cfg, mock_torch, mock_set_limit
+        self, mock_get_cfg, mock_torch, _no_vram_cap
     ):
         """Still OOM after the re-measure: fail clearly, no silent spill."""
         from search.exceptions import VRAMExhaustedError
@@ -1357,7 +1355,7 @@ class TestOomRecoveryBackoff:
         assert isinstance(excinfo.value.__cause__, RuntimeError)
         assert excinfo.value.available_gb == pytest.approx(0.5, abs=0.01)
         assert "allow_ram_fallback" in str(excinfo.value)
-        assert mock_set_limit.call_count == 2  # no unbounded retry loop
+        assert _no_vram_cap.call_count == 2  # no unbounded retry loop
 
 
 # ---------------------------------------------------------------------------

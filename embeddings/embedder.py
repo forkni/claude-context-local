@@ -36,8 +36,8 @@ from embeddings.model_cache import ModelCacheManager
 from embeddings.model_loader import ModelLoader
 from embeddings.query_cache import QueryEmbeddingCache
 from embeddings.vram_budget import (
-    _DEFAULT_MIN_ROOM_GB,
-    _MIN_ROOM_ITEMS,
+    DEFAULT_MIN_ROOM_GB,
+    MIN_ROOM_ITEMS,
     VramBudget,
 )
 from search.config import (
@@ -764,7 +764,7 @@ class CodeEmbedder:
         self._log_vram_usage("MODEL_LOADED")
 
         budget: VramBudget | None = None
-        min_room_gb = _DEFAULT_MIN_ROOM_GB
+        min_room_gb = DEFAULT_MIN_ROOM_GB
         cap_refreshed = False  # batch-1 OOM re-measures the cap once per chunk
         # Re-apply VRAM cap with fresh memory readings — other processes may have
         # allocated VRAM since CodeEmbedder.__init__, which would otherwise let us
@@ -821,7 +821,11 @@ class CodeEmbedder:
                             f"{activation_gb_per_item:.3f} GB/item"
                         )
 
-                batch_size = VramBudget.from_config(config.performance).batch_size(
+                # Reuse the budget the cap was applied with; rebuild only when the
+                # cap step could not read one.
+                if budget is None:
+                    budget = VramBudget.from_config(config.performance)
+                batch_size = budget.batch_size(
                     embedding_dim=config.embedding.dimension,
                     model_vram_gb=model_vram_gb,
                     model_name=self.model_name,
@@ -1368,7 +1372,7 @@ class CodeEmbedder:
         per_item = getattr(self._model, "_activation_gb_per_item", 0.0)
         if not isinstance(per_item, (int, float)):
             per_item = 0.0
-        return max(_DEFAULT_MIN_ROOM_GB, _MIN_ROOM_ITEMS * per_item)
+        return max(DEFAULT_MIN_ROOM_GB, MIN_ROOM_ITEMS * per_item)
 
     @staticmethod
     def _vram_exhausted_error(
