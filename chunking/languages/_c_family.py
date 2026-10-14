@@ -857,6 +857,77 @@ def repair_bare_macro_lines(source_bytes: bytes, parse: _ParseFn) -> bytes:
     return current
 
 
+#: One or more export macros between `class`/`struct`/`union` and the class
+#: name, as group 2: each all caps, optionally called
+#: (`CV_EXPORTS_W CV_WRAP_AS(Name)`), then the name, optional template
+#: arguments and `final`, and the `:` or `{` that opens the base list or
+#: body, on the same line or a later one. `class A B {` is valid C++ only
+#: when `A` expands to an attribute or to nothing, so the match needs no
+#: ERROR to confirm it. `typedef struct`, `enum class`, and `struct FOO bar;`
+#: stay out.
+_EXPORT_MACRO = rb"(?=[A-Z0-9_]*[A-Z])[A-Z_][A-Z0-9_]+(?:\([^()\n]*\))?"
+_EXPORT_MACRO_CLASS_HEAD = re.compile(
+    rb"^([ \t]*(?:template[ \t]*<[^\n]*>[ \t]*)?(?:class|struct|union)[ \t]+)"
+    rb"((?:" + _EXPORT_MACRO + rb"[ \t]+)*" + _EXPORT_MACRO + rb")"
+    rb"(?=[ \t]+(?!final\b)[A-Za-z_][\w:]*[ \t]*(?:<[^\n]*>)?\s*(?:final\b\s*)?"
+    rb"(?::(?!:)|\{))",
+    re.M,
+)
+
+
+def _parse_error_lines(parse: _ParseFn, source_bytes: bytes) -> int:
+    root = parse(source_bytes).root_node
+    return _error_line_count(root) if root.has_error else 0
+
+
+def repair_export_macro_class_heads(
+    source_bytes: bytes,
+    parse: _ParseFn,
+    then: Callable[[bytes], bytes] | None = None,
+) -> bytes:
+    """Blank export macros in class heads (ADR-0087, cause H).
+
+    tree-sitter-cpp reads `class CV_EXPORTS_W Foo : public Bar {` as a class
+    named `CV_EXPORTS_W`, then `Foo` as a declarator, so the body becomes a
+    bogus `function_definition:Foo` whose members are statements; with a
+    base list or `final` the head is an ERROR too. Blanking the macro gives
+    the parser `class Foo : public Bar {`.
+
+    Unlike the other two repairs this is not ERROR-scoped: most of these
+    heads parse with no ERROR. The pattern itself is the evidence (see
+    `_EXPORT_MACRO_CLASS_HEAD`). One round blanks every match. `then`, the
+    repairs that run after this one, runs on both the rewritten and the
+    original source, and the rewrite is kept only if its result has no more
+    ERROR lines. Comparing after `then` matters: a head that ties on its own
+    can still leave a later repair with less to fix (a member macro such as
+    `GAPI_WRAP` that the bare-macro repair clears only while the class body
+    is an ERROR), so a file never parses worse than without this repair.
+
+    Args:
+        source_bytes: Source bytes after the textual rewrites in the
+            chunker's `preprocess_source_for_parse` pipeline.
+        parse: A `tree_sitter.Parser.parse`-shaped callable.
+        then: The rest of the repair pipeline; identity when omitted.
+
+    Returns:
+        `then` of the source with the macros blanked, or `then` of
+        `source_bytes`. Identical in total length and newline positions to
+        `source_bytes` when `then` is: group 2 never spans a newline.
+    """
+    finish = then if then is not None else (lambda b: b)
+    matches = list(_EXPORT_MACRO_CLASS_HEAD.finditer(source_bytes))
+    if not matches:
+        return finish(source_bytes)
+    candidate = bytearray(source_bytes)
+    for m in matches:
+        candidate[m.start(2) : m.end(2)] = b" " * (m.end(2) - m.start(2))
+    baseline = finish(source_bytes)
+    repaired = finish(bytes(candidate))
+    if _parse_error_lines(parse, repaired) > _parse_error_lines(parse, baseline):
+        return baseline
+    return repaired
+
+
 # ---------------------------------------------------------------------------
 # Call-expression extraction (Wall 1)
 # ---------------------------------------------------------------------------
@@ -1256,10 +1327,12 @@ class _CFamilyChunker(LanguageChunker):
     """Shared `preprocess_source_for_parse` composition for `CChunker` and
     `CppChunker`: the purely textual rewrites (preprocessor conditionals,
     comments splitting a `#define` body, CUDA specifiers), then the
-    parse-dependent repairs -- macro-wrapped
-    declarations, then bare macro lines -- in that order. The repairs locate
-    ERROR spans by parsing, so they run after every rewrite that only needs
-    the raw text, and the bare-line repair runs last because it is the
+    parse-dependent repairs -- export macros in class heads, macro-wrapped
+    declarations, then bare macro lines -- in that order. The repairs parse,
+    so they run after every rewrite that only needs the raw text. The
+    class-head repair runs first and wraps the other two: it keeps its
+    rewrite only if their result has no more ERROR lines than they reach on
+    the unrewritten heads. The bare-line repair runs last because it is the
     broader rewrite: the narrower macro-wrapped repair, which keeps the
     wrapped type, gets the first chance at each ERROR. `_neutralize` is the
     documented override point: `CudaChunker` adds its launch-config blanking
@@ -1276,10 +1349,14 @@ class _CFamilyChunker(LanguageChunker):
 
     def preprocess_source_for_parse(self, source_bytes: bytes) -> bytes:
         parse = self.parser.parse
-        repaired = repair_macro_wrapped_declarations(
-            self._neutralize(source_bytes), parse
+
+        def repair_errors(source: bytes) -> bytes:
+            repaired = repair_macro_wrapped_declarations(source, parse)
+            return repair_bare_macro_lines(repaired, parse)
+
+        return repair_export_macro_class_heads(
+            self._neutralize(source_bytes), parse, then=repair_errors
         )
-        return repair_bare_macro_lines(repaired, parse)
 
     def should_chunk_node(self, node: Any) -> bool:
         """Multi-line macros chunk; one-line `#define`s stay in preambles.

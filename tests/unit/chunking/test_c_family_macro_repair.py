@@ -18,7 +18,12 @@ buffer and filtering to matches whose macro-name group starts inside an
 ERROR span.
 """
 
-from chunking.languages._c_family import repair_macro_wrapped_declarations
+import pytest
+
+from chunking.languages._c_family import (
+    repair_export_macro_class_heads,
+    repair_macro_wrapped_declarations,
+)
 from chunking.languages.cpp import CppChunker, CudaChunker
 from tests.unit.chunking.conftest import assert_length_and_newline_invariants
 
@@ -243,3 +248,127 @@ CVAPI(void) cvSetErrMode(int mode);
         assert ("function_definition", "kernel") in names
         assert ("function_definition", "launch") in names
         assert ("declaration", "cvSetErrMode") in names
+
+
+class TestExportMacroClassHeads:
+    """`class CV_EXPORTS Foo : public Bar {` (ADR-0087, cause H).
+
+    tree-sitter-cpp reads the macro as the class name, then the real name
+    as a declarator, and the body becomes a bogus `function_definition:Foo`
+    -- most of these heads parse with no ERROR at all.
+    """
+
+    def setup_method(self):
+        self.chunker = CppChunker()
+
+    @pytest.mark.parametrize(
+        "head",
+        [
+            "class CV_EXPORTS Foo : public Bar {",
+            "class CV_EXPORTS Foo {",
+            "struct CV_EXPORTS_W Foo {",
+            "class CV_EXPORTS_W_SIMPLE Foo final : public Bar {",
+            "class CV_EXPORTS_AS(Baz) Foo {",
+            "class CV_EXPORTS Foo\n{",
+            "class CV_EXPORTS Foo\n    : public Bar\n{",
+            "class CV_EXPORTS_W CV_WRAP_AS(Baz) Foo\n{",
+        ],
+        ids=[
+            "base",
+            "plain",
+            "struct",
+            "final",
+            "macro_args",
+            "brace_next",
+            "base_next",
+            "two_macros",
+        ],
+    )
+    def test_head_parses_as_a_class(self, head):
+        source = f"{head}\npublic:\n    int f() const {{ return 1; }}\n}};\n"
+        names = _all_names(self.chunker, source)
+        kind = "struct_specifier" if head.startswith("struct") else "class_specifier"
+        assert (kind, "Foo") in names
+        assert ("function_definition", "f") in names
+        assert ("function_definition", "Foo") not in names
+
+    def test_nested_class_defined_outside_keeps_its_qualified_name(self):
+        # opencv gapi/media.hpp: `class GAPI_EXPORTS MediaFrame::View final {`.
+        source = (
+            "class GAPI_EXPORTS MediaFrame::View final {\n"
+            "public:\n    int f() const { return 1; }\n};\n"
+        )
+        chunks = self.chunker.chunk_code(source)
+        names = {(c.node_type, c.metadata.get("name")): c for c in chunks}
+        assert ("class_specifier", "MediaFrame::View") in names
+        assert names[("function_definition", "f")].parent_class == "MediaFrame::View"
+
+    def test_template_head_parses_as_a_class(self):
+        source = b"template<typename T> class CV_EXPORTS Foo {\n    T x;\n};\n"
+        parse = self.chunker.parser.parse
+        repaired = repair_export_macro_class_heads(source, parse)
+        assert b"CV_EXPORTS" not in repaired
+        (template,) = parse(repaired).root_node.children[:1]
+        assert "class_specifier" in [c.type for c in template.children]
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "class Foo : public Bar {\n    int a;\n};\n",
+            "class FOO {\n    int a;\n};\n",
+            "class FOO final {\n    int a;\n};\n",
+            "struct S s;\n",
+            "struct POINT p;\n",
+            "enum class K : int {\n    A,\n};\n",
+            "typedef struct FOO Bar;\n",
+            "class CV_EXPORTS Foo;\n",
+        ],
+        ids=[
+            "no_macro",
+            "caps_name",
+            "caps_name_final",
+            "variable",
+            "caps_variable",
+            "enum_class",
+            "typedef",
+            "forward_decl",
+        ],
+    )
+    def test_other_shapes_are_untouched(self, source):
+        src = source.encode()
+        assert repair_export_macro_class_heads(src, self.chunker.parser.parse) == src
+
+    def test_preserves_length_and_newlines(self):
+        source = (
+            b"namespace cv {\n"
+            b"class CV_EXPORTS_W Foo : public Bar {\r\n"
+            b"public:\n    int f();\n};\n"
+            b"template<typename T> struct CV_EXPORTS_AS(B) Q\n{\n    T x;\n};\n"
+            b"}\n"
+        )
+        repaired = repair_export_macro_class_heads(source, self.chunker.parser.parse)
+        assert repaired != source
+        assert_length_and_newline_invariants(source, repaired)
+
+    def test_rewrite_that_adds_error_lines_is_dropped(self):
+        """The blanked file is kept only if it parses no worse."""
+        source = b"class CV_EXPORTS Foo {\n    int a;\n};\n"
+        clean = self.chunker.parser.parse(source)
+        broken = self.chunker.parser.parse(b"int x = ;\n")
+
+        def parse(src: bytes):
+            return clean if src == source else broken
+
+        assert repair_export_macro_class_heads(source, parse) == source
+
+    def test_guard_compares_after_the_later_repairs(self):
+        """A rewrite that ties on its own but leaves `then` worse is dropped."""
+        source = b"class CV_EXPORTS Foo {\n    int a;\n};\n"
+        parse = self.chunker.parser.parse
+        broken = b"int x = ;\n" + b" " * (len(source) - 10)
+
+        def then(src: bytes) -> bytes:
+            return src if src == source else broken
+
+        assert repair_export_macro_class_heads(source, parse, then=then) == source
+        assert repair_export_macro_class_heads(source, parse) != source

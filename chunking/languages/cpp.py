@@ -156,7 +156,14 @@ class CppChunker(_CFamilyChunker):
 
         elif node.type in ("class_specifier", "struct_specifier", "union_specifier"):
             for child in node.children:
-                if child.type in ("type_identifier", "identifier"):
+                # qualified_identifier: a nested class defined outside its
+                # enclosing class (`class Outer::Inner {`), named in full like
+                # an out-of-class `Foo::getPtr` definition.
+                if child.type in (
+                    "type_identifier",
+                    "identifier",
+                    "qualified_identifier",
+                ):
                     metadata["name"] = self.get_node_text(child, source)
                     break
             if node.type in ("class_specifier", "struct_specifier"):
