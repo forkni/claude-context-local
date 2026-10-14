@@ -451,10 +451,12 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         prev = node.prev_sibling
         if prev is None or prev.type != "comment":
             return False
-        if prev.end_point[0] < node.start_point[0] - 1:
+        if self._last_row(prev) < node.start_point[0] - 1:
             return False
         earlier = prev.prev_sibling
-        return not (earlier is not None and earlier.end_point[0] == prev.start_point[0])
+        return not (
+            earlier is not None and self._last_row(earlier) == prev.start_point[0]
+        )
 
     def _leading_comment_sibling_run(self, node: Any) -> list[Any]:
         """Collect node's leading-comment sibling run, oldest first.
@@ -477,10 +479,13 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         boundary_line = node.start_point[0]
         current = node.prev_sibling
         while current is not None and current.type == "comment":
-            if current.end_point[0] < boundary_line - 1:
+            if self._last_row(current) < boundary_line - 1:
                 break  # blank-line gap - the run stops here
             earlier = current.prev_sibling
-            if earlier is not None and earlier.end_point[0] == current.start_point[0]:
+            if (
+                earlier is not None
+                and self._last_row(earlier) == current.start_point[0]
+            ):
                 break  # claimed as `earlier`'s trailing comment instead
             run.append(current)
             boundary_line = current.start_point[0]
@@ -492,8 +497,8 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         """Return node's same-line trailing comment sibling, if any.
 
         A trailing comment (`uniform vec4 x; // RGBA border color`) is
-        node's `next_sibling` whose `start_point[0]` equals node's own
-        `end_point[0]` — it starts on the same source line node ends on.
+        node's `next_sibling` whose `start_point[0]` equals node's
+        `_last_row` — it starts on the same source line node ends on.
 
         Args:
             node: Tree-sitter node to look for a trailing comment after.
@@ -506,7 +511,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         if (
             nxt is not None
             and nxt.type == "comment"
-            and nxt.start_point[0] == node.end_point[0]
+            and nxt.start_point[0] == self._last_row(node)
         ):
             return nxt
         return None
@@ -601,6 +606,18 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         # Tree-sitter uses 0-based indexing, convert to 1-based
         return node.start_point[0] + 1, node.end_point[0] + 1
 
+    def _last_row(self, node: Any) -> int:
+        """0-based row of node's last line, as `get_line_numbers` counts it.
+
+        The sibling-comment helpers and preamble builders compare rows
+        through this, not `end_point[0]`, so a language whose nodes can end
+        at column 0 of the next row (C-family preprocessor directives own
+        their newline) decides adjacency on the line the node really ends
+        on. Equal to `end_point[0]` wherever `get_line_numbers` is not
+        overridden.
+        """
+        return self.get_line_numbers(node)[1] - 1
+
     def _get_block_boundary_types(self) -> set[str]:
         """Get node types that are valid split boundaries.
 
@@ -692,7 +709,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
 
         # Calculate lines
         start_line = nodes[0].start_point[0] + 1
-        end_line = nodes[-1].end_point[0] + 1
+        end_line = self._last_row(nodes[-1]) + 1
 
         # Build metadata
         metadata = self.extract_metadata(original_node, source_bytes)
@@ -1132,7 +1149,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         ):
             return [nodes]
         start_line = nodes[0].start_point[0] + 1
-        end_line = nodes[-1].end_point[0] + 1
+        end_line = self._last_row(nodes[-1]) + 1
         if end_line - start_line + 1 <= config.max_chunk_lines:
             return [nodes]
         return pack_by_size(
@@ -1152,7 +1169,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         """
         if "comment" not in prev.type:
             return True
-        return node.start_point[0] > prev.end_point[0] + 1
+        return node.start_point[0] > self._last_row(prev) + 1
 
     def _append_preamble_chunk(
         self,
@@ -1167,7 +1184,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         separately) — nothing worth indexing.
         """
         start_line = nodes[0].start_point[0] + 1
-        end_line = nodes[-1].end_point[0] + 1
+        end_line = self._last_row(nodes[-1]) + 1
         content = source_bytes[nodes[0].start_byte : nodes[-1].end_byte].decode(
             "utf-8", errors="replace"
         )
@@ -1223,7 +1240,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         boundary_line = next_node.start_point[0]
         while trimmed and trimmed[-1].type == "comment":
             candidate = trimmed[-1]
-            if candidate.end_point[0] < boundary_line - 1:
+            if self._last_row(candidate) < boundary_line - 1:
                 break  # blank-line gap — not claimed by next_node
             trimmed.pop()
             boundary_line = candidate.start_point[0]
@@ -1253,7 +1270,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         prev = node.prev_sibling
         return (
             prev is not None
-            and node.start_point[0] == prev.end_point[0]
+            and node.start_point[0] == self._last_row(prev)
             and self._child_is_chunked(prev)
         )
 

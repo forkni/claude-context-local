@@ -274,6 +274,12 @@ class CppChunker(_CFamilyChunker):
                         metadata["relationships"] = child_metadata["relationships"]
                     break
 
+        # A doc comment is a sibling of the node it documents, as in GLSL;
+        # fold it into the CodeChunk.docstring channel (ADR-0087).
+        docstring = self._extract_sibling_comment_docstring(node, source)
+        if docstring:
+            metadata["docstring"] = docstring
+
         return metadata
 
 

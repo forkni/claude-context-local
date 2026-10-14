@@ -568,8 +568,15 @@ class TreeSitterChunker:
             )
             return
 
-        total_lines = len(parsed_source.content.splitlines()) or 1
-        lines_lost = sum(end - start + 1 for start, end in uncovered)
+        source_lines = parsed_source.content.splitlines()
+        total_lines = len(source_lines) or 1
+        # Blank lines in an uncovered span carry nothing to lose.
+        lines_lost = sum(
+            1
+            for start, end in uncovered
+            for line in source_lines[start - 1 : end]
+            if line.strip()
+        )
         share = lines_lost / total_lines
 
         max_spans = 5

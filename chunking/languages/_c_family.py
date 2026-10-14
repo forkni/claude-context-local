@@ -325,6 +325,77 @@ def neutralize_cuda_specifiers(source_bytes: bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# Comments splitting a #define body
+# ---------------------------------------------------------------------------
+
+#: One `#define` logical line: the directive and its `\`-continued lines.
+_DEFINE_LOGICAL_LINE = re.compile(
+    rb"^[ \t]*#[ \t]*define\b(?:[^\n]*\\\r?\n)*[^\n]*", re.M
+)
+
+#: `#define NAME` or `#define NAME(params)`: where the macro body starts.
+_DEFINE_HEAD = re.compile(
+    rb"[ \t]*#[ \t]*define[ \t]+[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?"
+)
+
+#: String and char literals are matched so a `/*` inside one is skipped.
+_DEFINE_TOKEN = re.compile(
+    rb'"(?:[^"\\\n]|\\.)*"' rb"|'(?:[^'\\\n]|\\.)*'" rb"|//[^\n]*|/\*.*?\*/",
+    re.S,
+)
+
+_CONTINUATION = re.compile(rb"\\\r?\n")
+
+#: Every comment byte but a line continuation's `\` and the line break.
+_COMMENT_BYTE = re.compile(rb"\\(?!\r?\n)|[^\\\r\n]")
+
+
+def _blank_splitting_comments(match: re.Match[bytes]) -> bytes:
+    """Blank the block comments that have macro body on both sides."""
+    text = match.group(0)
+    head = _DEFINE_HEAD.match(text)
+    if head is None or b"/*" not in text[head.end() :]:
+        return text
+    start = head.end()
+    comments = [
+        m
+        for m in _DEFINE_TOKEN.finditer(text, start)
+        if m.group(0)[:2] in (b"/*", b"//")
+    ]
+    body = bytearray(text[start:])
+    for m in comments:
+        body[m.start() - start : m.end() - start] = b" " * (m.end() - m.start())
+    bare = _CONTINUATION.sub(lambda c: b" " * len(c.group(0)), bytes(body))
+    first = start + len(bare) - len(bare.lstrip())
+    last = start + len(bare.rstrip())
+    out = bytearray(text)
+    for m in comments:
+        if m.group(0).startswith(b"/*") and first < m.start() and m.end() < last:
+            out[m.start() : m.end()] = _COMMENT_BYTE.sub(b" ", m.group(0))
+    return bytes(out)
+
+
+def neutralize_define_comments(source_bytes: bytes) -> bytes:
+    """Blank a block comment that splits a `#define` body before parsing.
+
+    Both grammars lex a macro body as one `preproc_arg` token that stops at
+    `/*`, and a `#define` takes one such token. A comment with body text on
+    both sides (`f(); /* TODO */ \\` mid-macro, `0, /* m_init */ \\` in an
+    initializer macro) splits the body in two and the whole macro becomes an
+    ERROR, often with the code after it (ADR-0087, cause E). A comment that
+    only leads or trails the body is an extra the grammar already accepts,
+    so it is left alone. A `\\` continuation inside a blanked comment is
+    kept, or the macro would end there.
+
+    Length- and newline-position-preserving, per
+    `LanguageChunker.preprocess_source_for_parse`'s contract.
+    """
+    if b"/*" not in source_bytes:
+        return source_bytes
+    return _DEFINE_LOGICAL_LINE.sub(_blank_splitting_comments, source_bytes)
+
+
+# ---------------------------------------------------------------------------
 # Macro-wrapped return-type repair
 # ---------------------------------------------------------------------------
 
@@ -1171,11 +1242,15 @@ def extract_instantiation_relationships(
 
 _MACRO_NODE_TYPES = frozenset({"preproc_def", "preproc_function_def"})
 
+# A comment-only preamble run at least this tall is kept (ADR-0087).
+_MIN_KEPT_COMMENT_LINES = 3
+
 
 class _CFamilyChunker(LanguageChunker):
     """Shared `preprocess_source_for_parse` composition for `CChunker` and
     `CppChunker`: the purely textual rewrites (preprocessor conditionals,
-    CUDA specifiers), then the parse-dependent repairs -- macro-wrapped
+    comments splitting a `#define` body, CUDA specifiers), then the
+    parse-dependent repairs -- macro-wrapped
     declarations, then bare macro lines -- in that order. The repairs locate
     ERROR spans by parsing, so they run after every rewrite that only needs
     the raw text, and the bare-line repair runs last because it is the
@@ -1188,7 +1263,9 @@ class _CFamilyChunker(LanguageChunker):
 
     def _neutralize(self, source_bytes: bytes) -> bytes:
         return neutralize_cuda_specifiers(
-            neutralize_preprocessor_conditionals(source_bytes)
+            neutralize_define_comments(
+                neutralize_preprocessor_conditionals(source_bytes)
+            )
         )
 
     def preprocess_source_for_parse(self, source_bytes: bytes) -> bytes:
@@ -1236,3 +1313,17 @@ class _CFamilyChunker(LanguageChunker):
         if body is None:
             return node.named_children
         return [body] if self.should_chunk_node(body) else body.named_children
+
+    def _is_boilerplate_run(self, nodes: list[Any]) -> bool:
+        """A comment-only run of 3+ lines is documentation, not boilerplate.
+
+        Section banners and doxygen blocks between two definitions, or above
+        a namespace or `extern "C"` block, have no chunk to adopt them, so
+        the base rule dropped them. One- and two-line dividers still go.
+        """
+        if self._is_comment_only_run(nodes):
+            start = self.get_line_numbers(nodes[0])[0]
+            end = self.get_line_numbers(nodes[-1])[1]
+            if end - start + 1 >= _MIN_KEPT_COMMENT_LINES:
+                return False
+        return super()._is_boilerplate_run(nodes)

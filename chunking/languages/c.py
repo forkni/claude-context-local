@@ -99,4 +99,10 @@ class CChunker(_CFamilyChunker):
             if name_node is not None:
                 metadata["name"] = get_text(name_node)
 
+        # A doc comment is a sibling of the node it documents, as in GLSL;
+        # fold it into the CodeChunk.docstring channel (ADR-0087).
+        docstring = self._extract_sibling_comment_docstring(node, source)
+        if docstring:
+            metadata["docstring"] = docstring
+
         return metadata

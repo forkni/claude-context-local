@@ -90,6 +90,7 @@
     "end_line": 31,
     "language": "cpp",
     "metadata": {
+      "docstring": "Declaration-only header-style class: both members are declarations with\nno body, exercising should_chunk_node's function-shaped narrowing.",
       "name": "Shape",
       "node_type": "class_specifier",
       "relationships": []
@@ -130,6 +131,7 @@
     "end_line": 37,
     "language": "cpp",
     "metadata": {
+      "docstring": "Pointer-returning out-of-class definition, qualified via `Foo::`.",
       "name": "Foo",
       "node_type": "class_specifier",
       "relationships": []
@@ -194,6 +196,7 @@
     "end_line": 52,
     "language": "cpp",
     "metadata": {
+      "docstring": "Plain struct (not class) with a C-style function-pointer member --\nexercises both the parenthesized_declarator unwrap fix and struct-member\nparent_chunk_id linkage.",
       "name": "Table",
       "node_type": "struct_specifier",
       "relationships": []

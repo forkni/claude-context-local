@@ -646,6 +646,27 @@ class TestParseFileSingleRead(TestCase):
             f"expected a short truncated line, got {len(warning)} chars"
         )
 
+    def test_parse_warn_lines_lost_skips_blank_lines(self):
+        """Blank lines inside an uncovered span carry nothing to lose, so the
+        reported count is the non-blank lines only (ADR-0087)."""
+        from chunking.tree_sitter import ParsedSource
+
+        parsed_source = ParsedSource(
+            abs_path="gappy.c",
+            rel_path="gappy.c",
+            content="garbage1\n\n   \ngarbage2\n",
+            language_name="c",
+            chunker=None,
+            tree=None,
+            error_line_ranges=((1, 4),),
+        )
+
+        with self.assertLogs("chunking.tree_sitter", level="WARNING") as cm:
+            self.chunker._log_parse_error_outcome(parsed_source, chunks=[])
+
+        warning = next(msg for msg in cm.output if "PARSE_WARN" in msg)
+        assert "2 of 4 line(s)" in warning, warning
+
 
 class TestCollectErrorLineRanges(TestCase):
     """Direct unit coverage for `_collect_error_line_ranges`'s inclusive-end-

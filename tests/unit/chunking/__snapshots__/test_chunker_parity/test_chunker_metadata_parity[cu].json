@@ -48,6 +48,7 @@
         ]
       ],
       "complexity_score": 1,
+      "docstring": "Host launcher with a triple-chevron kernel launch -- not valid C++ token\nsyntax, exercises the CudaChunker-only _LAUNCH_CFG blanking pass.",
       "name": "launchComputeSquares",
       "node_type": "function_definition",
       "relationships": []
