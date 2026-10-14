@@ -439,6 +439,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **VRAM budget has one home** ([ADR-0086](docs/adr/0086-vram-budget-has-one-home.md)) — the
+  per-process VRAM cap and the GPU batch sizer moved out of `embeddings/embedder.py` into
+  `embeddings/vram_budget.py` behind one object, `VramBudget` (`from_config` / `default`, then
+  `apply_cap`, `batch_size`, `reapply_cap`). The embedder and the three rerankers hold a budget
+  instead of reading `vram_limit_fraction` / `dynamic_batch_*` themselves; the rerankers' three
+  copy-pasted re-apply blocks are one call. `search/vram_manager.py` is now the tier table only:
+  `VRAMTier` rows carry the per-tier batch numbers and `tier_for` is the one 6/10/18 GB band lookup
+  (`index_probe` and the batch sizer read it; the sizer's `<=` edge became the table's half-open
+  band). `VRAMTierManager` (no production callers) is deleted. Golden set: Q116/H034 follow
+  `calculate_optimal_batch_size` to its new file, H039 drops the deleted class.
 - **Flat/IVF policy is measured, not guessed** ([ADR-0083](docs/adr/0083-faiss-index-parameter-policy.md)) —
   `IVF_MIN_VECTORS` 10,000 -> 50,000 (exact flat search is ~5 ms/query at 50K x 1024-d; IVF at equal
   recall was no faster than flat at 17K). Above it, `nlist = round(4 sqrt N)` capped at `N // 39`
