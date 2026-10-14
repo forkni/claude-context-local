@@ -175,3 +175,20 @@ Declined tidies, recorded so a future reviewer does not re-propose them as part 
   six operator-facing log lines and a conditional `gc.collect()`/`empty_cache()`. Own hat, own
   commit, own ADR, afterwards — bundling it here would make every log line in the diff ambiguous
   between "moved" and "deleted".
+
+## Addendum (2026-10-14): one construction site, public `is_shutdown`
+
+- **One factory builds the indexer.** `mcp_server/search_factory.py`'s
+  `build_incremental_indexer()` builds the project chunker (`MultiLanguageChunker.for_project`)
+  and the `IncrementalIndexer` with `resource_refresher=McpResourceRefresher()`.
+  - It is the only construction site under `mcp_server/`.
+  - Its callers are `search_handlers._check_auto_reindex` and the index_directory path in
+    `index_handlers`.
+  - Indexer *selection* stays with each caller: the cached searcher, a fresh
+    `HybridSearcher`, or `CodeIndexManager`.
+  - `TestResourceRefresherWiring.test_incremental_indexer_has_one_construction_site` pins it.
+- **The probe uses a public property.** `McpResourceRefresher.refresh_before_full_index` used
+  to probe `indexer._is_shutdown` through `hasattr`. It now reads the public
+  `HybridSearcher.is_shutdown` property, which mirrors `SearchExecutor.is_shutdown`, via
+  `getattr(indexer, "is_shutdown", False)`. `CodeIndexManager` has no such state, so the
+  default of `False` keeps the old behaviour.

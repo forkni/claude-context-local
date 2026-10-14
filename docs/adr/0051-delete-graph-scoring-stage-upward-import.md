@@ -125,3 +125,23 @@ passed, 1 skipped) both stayed green.
   redundant check is deleted.
 - The other 7 `search/ -> mcp_server` import sites — none are ADR-0004 violations
   introduced or touched by this change; they were not part of the reviewed candidate.
+
+## Addendum (2026-10-14): the deferred fallback is closed
+
+The last allowlisted upward import, `search/search_executor.py`'s cache-dir fallback for a
+caller-omitted embedder, is gone. `merkle/snapshot_manager.py` had the same import, and no
+test policed it; it is gone too.
+
+- **Storage-root resolution moved down.** `STORAGE_SENTINEL`, `_PROJECT_MARKERS`,
+  `validate_storage_path` and a new uncached `resolve_storage_root()` now live in
+  `search/storage_layout.py`. They read `CODE_SEARCH_STORAGE`, validate it, fall back to
+  `~/.claude_code_search` with an ERROR log, create the directory and write the sentinel.
+- **`get_storage_dir()` caches the result.** `mcp_server.storage_manager.get_storage_dir()`
+  keeps its per-process cache in `state.storage_dir` and calls `resolve_storage_root()` on a
+  miss. It still re-exports the sentinel and the validator.
+- **Both former import sites call `resolve_storage_root()` directly.** Their `try/except`
+  `Path.home()` copies are deleted. Production resolves the same directory, because the env
+  var is read once at startup.
+- **The ratchet is tighter.** `_UPWARD_IMPORT_ALLOWLIST` in
+  `tests/unit/search/test_layering_ownership.py` is now empty, and the scan covers `merkle/`
+  as well as `search/`.

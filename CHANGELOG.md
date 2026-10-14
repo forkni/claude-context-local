@@ -479,6 +479,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Internal: tighter search/mcp_server layering**
+  ([ADR-0051](docs/adr/0051-delete-graph-scoring-stage-upward-import.md#addendum-2026-10-14-the-deferred-fallback-is-closed),
+  [ADR-0053](docs/adr/0053-resource-refresher-protocol-seam.md#addendum-2026-10-14-one-construction-site-public-is_shutdown)).
+  There is no behaviour change.
+  - `search_factory.build_incremental_indexer` is the single place that builds an `IncrementalIndexer`.
+  - Storage-root resolution moved to `search/storage_layout.py`, so neither `search/` nor `merkle/`
+    imports `mcp_server/` at runtime.
+  - `HybridSearcher.is_shutdown` is now public.
+
 - **C++ classes with export macros in their head now parse** (`chunking/languages/_c_family.py`,
   `cpp.py`, [ADR-0087 addendum](docs/adr/0087-recover-dropped-c-family-regions.md#addendum-2026-10-14-export-macros-in-class-heads)).
   tree-sitter-cpp read `class CV_EXPORTS Foo : public Bar {` as a class named `CV_EXPORTS`, so the class
