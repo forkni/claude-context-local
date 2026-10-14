@@ -221,6 +221,22 @@ def set_vram_limit(
         return False
 
 
+def reapply_vram_cap(logger: logging.Logger | None = None) -> None:
+    """Re-apply the per-process VRAM cap before loading more model weights.
+
+    Rerankers call this right before loading: the embedder and other
+    processes may have changed free VRAM since the cap was first applied.
+    Non-fatal by design -- any failure is logged at debug level on ``logger``
+    and swallowed so the model load continues uncapped.
+    """
+    try:
+        set_vram_limit(get_search_config().performance.vram_limit_fraction)
+    except Exception as e:  # noqa: BLE001 - resilience: VRAM cap re-apply non-fatal, model load continues
+        (logger or logging.getLogger(__name__)).debug(
+            "VRAM cap re-apply skipped (non-fatal): %s", e
+        )
+
+
 def _own_cached_vram_gb() -> float:
     """GB our allocator holds reserved but unused (e.g. after the activation warmup).
 

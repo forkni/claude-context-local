@@ -509,15 +509,9 @@ class NeuralReranker(BaseReranker):
                 if self._model is None:
                     # Re-apply VRAM cap before loading reranker weights — embedder and
                     # other processes may have changed free VRAM since server startup.
-                    try:
-                        from embeddings.embedder import set_vram_limit
-                        from search.config import get_search_config as _gsc
+                    from embeddings.vram_budget import reapply_vram_cap
 
-                        set_vram_limit(_gsc().performance.vram_limit_fraction)
-                    except Exception as e:  # noqa: BLE001 - resilience: VRAM cap re-apply non-fatal, model load continues
-                        self._logger.debug(
-                            "VRAM cap re-apply skipped (non-fatal): %s", e
-                        )
+                    reapply_vram_cap(self._logger)
                     self._logger.info(f"Loading reranker model: {self.model_name}")
                     from sentence_transformers import CrossEncoder
 
@@ -774,13 +768,9 @@ class GenerativeReranker(BaseReranker):
         """Lazy load model and tokenizer on first access."""
         if self._model is None:
             # Re-apply VRAM cap before loading generative reranker weights.
-            try:
-                from embeddings.embedder import set_vram_limit
-                from search.config import get_search_config as _gsc
+            from embeddings.vram_budget import reapply_vram_cap
 
-                set_vram_limit(_gsc().performance.vram_limit_fraction)
-            except Exception as e:  # noqa: BLE001 - resilience: VRAM cap re-apply non-fatal, model load continues
-                self._logger.debug("VRAM cap re-apply skipped (non-fatal): %s", e)
+            reapply_vram_cap(self._logger)
             self._logger.info(f"Loading generative reranker: {self.model_name}")
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -1175,13 +1165,9 @@ class JinaRerankerV3(BaseReranker):
     def _load_or_fetch(self) -> None:
         """Internal: load model from cache or HuggingFace. Called under _load_lock."""
         # Re-apply VRAM cap before loading Jina reranker weights.
-        try:
-            from embeddings.embedder import set_vram_limit
-            from search.config import get_search_config as _gsc
+        from embeddings.vram_budget import reapply_vram_cap
 
-            set_vram_limit(_gsc().performance.vram_limit_fraction)
-        except Exception as e:  # noqa: BLE001 - resilience: VRAM cap re-apply non-fatal, model load continues
-            self._logger.debug("VRAM cap re-apply skipped (non-fatal): %s", e)
+        reapply_vram_cap(self._logger)
         import transformers as _tf
         from huggingface_hub import try_to_load_from_cache
         from transformers import AutoConfig, AutoModel

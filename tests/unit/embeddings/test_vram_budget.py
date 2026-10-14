@@ -517,3 +517,34 @@ class TestComputeEffectiveVramCap:
         from embeddings.vram_budget import compute_effective_vram_cap
 
         assert compute_effective_vram_cap(0.8) is None
+
+
+class TestReapplyVramCap:
+    """reapply_vram_cap(): the non-fatal re-apply rerankers run before loading."""
+
+    @patch("embeddings.vram_budget.set_vram_limit")
+    @patch("embeddings.vram_budget.get_search_config")
+    def test_applies_configured_fraction(self, mock_get_cfg, mock_set):
+        mock_get_cfg.return_value.performance.vram_limit_fraction = 0.75
+
+        from embeddings.vram_budget import reapply_vram_cap
+
+        reapply_vram_cap()
+
+        mock_set.assert_called_once_with(0.75)
+
+    @patch("embeddings.vram_budget.set_vram_limit")
+    @patch("embeddings.vram_budget.get_search_config")
+    def test_failure_is_swallowed_and_logged_on_given_logger(
+        self, mock_get_cfg, mock_set
+    ):
+        mock_get_cfg.side_effect = RuntimeError("config unavailable")
+        logger = MagicMock()
+
+        from embeddings.vram_budget import reapply_vram_cap
+
+        reapply_vram_cap(logger)
+
+        mock_set.assert_not_called()
+        logger.debug.assert_called_once()
+        assert "non-fatal" in logger.debug.call_args.args[0]
