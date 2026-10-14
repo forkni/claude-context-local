@@ -654,3 +654,31 @@ class TestVendoringDirectoryDefaults(TestCase):
         # default download/build directory nested under build/.
         pf = PathFilter(None, None, self.root)
         assert pf.should_index_file("build/_deps/googletest-src/gtest.cc") is False
+
+
+class TestCodegenTemplateDirectoryDefaults(TestCase):
+    """USD `codegenTemplates/` hold Jinja inputs saved as `.cpp`/`.h`
+    (ADR-0087, cause D): no C++ parser reads `{% if %}` blocks, so they are
+    skipped by default -- but they are not a dependency tree, so an include
+    pattern naming them narrows rather than adds."""
+
+    PATH = "Config/USD/usd/resources/codegenTemplates/schemaClass.cpp"
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_excluded_by_default_with_no_filters(self):
+        pf = PathFilter(None, None, self.root)
+        assert pf.should_index_file(self.PATH) is False
+        assert pf.should_index_file("Config/USD/usd/schema.cpp") is True
+
+    def test_not_a_dependency_tree(self):
+        assert "codegenTemplates" not in DEPENDENCY_TREE_DIRS
+
+    def test_include_re_admits_it(self):
+        pf = PathFilter(["codegenTemplates"], None, self.root)
+        assert pf.should_index_file(self.PATH) is True

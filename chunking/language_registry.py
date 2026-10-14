@@ -199,6 +199,10 @@ DEFAULT_IGNORED_DIRS: set[str] = {
     "_deps",  # CMake FetchContent default download/build dir
     "subprojects",  # Meson
     "submodules",
+    # USD schema codegen: Jinja templates saved as .cpp/.h that no C++ parser
+    # reads (ADR-0087). Not a dependency tree -- deliberately absent from
+    # DEPENDENCY_TREE_DIRS, so include_dirs naming it narrows.
+    "codegenTemplates",
 }
 
 
