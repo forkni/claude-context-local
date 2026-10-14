@@ -245,6 +245,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`get_index_status` counts drop after a file is deleted** (`search/indexer.py`). A reindex that
+  only removed files left `stats.json` stale, so `total_chunks`, `files_indexed` and the folder and
+  chunk-type counts kept the deleted file's chunks until the next add. `save_index()` now rewrites
+  the stats; hybrid saves reach the dense index only through it.
+
 - **C-family chunking keeps code and comments it used to drop** (`chunking/languages/_c_family.py`,
   `chunking/languages/base.py`, `c.py`, `cpp.py`, [ADR-0087](docs/adr/0087-recover-dropped-c-family-regions.md)).
   `[PARSE_WARN]` counted only ERROR lines that no chunk covered. On the TouchDesigner 2025 headers

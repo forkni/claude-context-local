@@ -707,6 +707,10 @@ class CodeIndexManager:
         # Save call graph via integration layer
         self._graph.save()
 
+        # Hybrid saves reach the dense side only through this method, so a
+        # removal-only reindex (no add_embeddings) must refresh stats here.
+        self._update_stats()
+
     def save_indices(self) -> None:
         """Save indices (alias for save_index for IncrementalIndexer compatibility)."""
         self.save_index()
@@ -733,8 +737,6 @@ class CodeIndexManager:
                 self._logger.debug(f"Saved model info to {model_info_path}")
             except Exception as e:  # noqa: BLE001 - resilience: model info save non-critical, indexing continues
                 self._logger.debug(f"Failed to save model info (non-critical): {e}")
-
-        self._update_stats()
 
     def load(self) -> bool:
         """
