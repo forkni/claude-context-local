@@ -175,3 +175,61 @@ Results against T5 (no file changed ERROR lines; every lost definition is a body
 |---|---|---|---|---|
 | Indexed (904 files) | 30,512 (−655) | 26,380 (−664) | −4 | −12 |
 | Full (1,025 files) | 36,825 (−907) | 31,327 (−759) | −28 | −13 |
+
+## Addendum (2026-10-14): export macros in class heads
+
+Cause H: tree-sitter-cpp reads `class CV_EXPORTS Foo : public Bar {` as a class named `CV_EXPORTS`
+with declarator `Foo`. The class body becomes ERROR, or the whole class becomes a bogus
+`function_definition` named after the class or its base. Its members were chunked as one blob or not
+at all.
+
+1. **Blank the export macros.** `repair_export_macro_class_heads` blanks one or more all-caps
+   identifiers, each optionally called, between `class`/`struct`/`union` (with an optional
+   `template<…>` prefix) and the class name. Example: `class CV_EXPORTS_W CV_WRAP_AS(Name) Foo final :
+   Bar {`. This is a parse-only repair, like decision 1: length and newlines are preserved.
+2. **Guard after the whole pipeline, ties kept.** The plan said a round is kept only if ERROR lines
+   strictly fall. That is wrong for this repair:
+   - A plain `class CV_EXPORTS Foo {` parses without ERROR, so a strict guard leaves about 58 more
+     classes as bogus definitions.
+   - The later repairs can hide or create errors. In `gapi/gstreaming.hpp:277`, a class whose head is
+     repaired then hits `GAPI_WRAP … pull();`, which only the bare-macro repair fixes.
+
+   So the guard runs the macro-wrapped and bare-macro repairs on both the rewritten and the original
+   source, and keeps the rewrite when it has no more ERROR lines. The guard cannot see a clean bogus
+   parse, so lost definitions were classified per kind instead (below).
+3. **Same-id chunks fold, in every language.** Repaired classes exposed same-name members on one line:
+   `Matx_AddOp() {} Matx_AddOp(const Matx_AddOp&) {}` in `core/matx.hpp`. `LanguageChunker.chunk_parsed`
+   folds a chunk with the same span, type, name and parent into the first, whose text then runs to the
+   later node's end. No text is lost, and chunk ids stay unique by construction. No parity snapshot
+   changed.
+4. **Qualified class names.** A nested class defined outside its enclosing class (`class GAPI_EXPORTS
+   MediaFrame::View final {`) is named `MediaFrame::View`, like an out-of-class `Foo::getPtr`
+   definition.
+
+Results against the state after the previous addendum. Both views changed by the same counts:
+ERROR lines −1,566, 177 files better, 0 worse, `duplicate_ids` 0. Chunks grew mostly from
+`field_declaration` +4,406, `class_specifier` +749, `declaration` +711, `template_declaration` +238 and
+`struct_specifier` +170.
+
+| View | Chunks | Definitions | ERROR lines | Dropped code | Dropped comment |
+|---|---|---|---|---|---|
+| Indexed (904 files) | 36,946 (+6,434) | 32,798 (+6,418) | 6,390 | 294 (+1) | 312 (−10) |
+| Full (1,025 files) | 43,259 (+6,434) | 37,745 (+6,418) | 15,253 | 372 (+1) | 660 (−10) |
+
+Every lost definition falls into one of these groups:
+
+- 623 bogus `function_definition`s now under their class name;
+- 201 names now chunked under a member kind;
+- 67 `function_definition`s named after a base class;
+- 10 same-id folds;
+- 7 template classes, which chunk as their class (an accepted trade-off in `CppChunker`);
+- 6 others: one declaration now a member, and the residual below.
+
+The +1 dropped code is the net of two template headers (`template <class T>`) in
+`cudalegacy/NCVPyramid.hpp`, which repaired template classes no longer cover, and the residual.
+
+- Deferred: member annotation macros (`CV_WRAP`, `CV_OVERRIDE`, `CV_PROP_RW`). In 5 classes in
+  `rgbd/depth.hpp`, they still close the class body early, and the class becomes a bogus
+  `function_definition` named after its next method (`getMinDepth`). The text is still indexed. C++
+  forbids a type definition in a return type, so such a node is always a misparse; a guard can count
+  them.

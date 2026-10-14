@@ -479,6 +479,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **C++ classes with export macros in their head now parse** (`chunking/languages/_c_family.py`,
+  `cpp.py`, [ADR-0087 addendum](docs/adr/0087-recover-dropped-c-family-regions.md#addendum-2026-10-14-export-macros-in-class-heads)).
+  tree-sitter-cpp read `class CV_EXPORTS Foo : public Bar {` as a class named `CV_EXPORTS`, so the class
+  became ERROR or a bogus `function_definition`. A parse-only repair blanks the all-caps macros between
+  `class`/`struct`/`union` and the name, and keeps the rewrite when the whole repair pipeline gives no
+  more ERROR lines. A class defined as `Outer::Inner` is named in full. On the TouchDesigner 2025
+  headers, ERROR lines fall by 1,566 in 177 files, with none worse. Chunks grow by 6,434 (+21% on the
+  indexed set), mostly members now chunked one by one: `field_declaration` +4,406, `class_specifier`
+  +749. Member annotation macros (`CV_WRAP`) still break 5 classes in `rgbd/depth.hpp`.
+
 - **VRAM budget has one home** ([ADR-0086](docs/adr/0086-vram-budget-has-one-home.md)) — the
   per-process VRAM cap and the GPU batch sizer moved out of `embeddings/embedder.py` into
   `embeddings/vram_budget.py` behind one object, `VramBudget` (`from_config` / `default`, then
@@ -630,7 +640,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Migration
 
 - **Existing C/C++/CUDA indexes need one `incremental=False` reindex** to pick up the recovered regions
-  ([ADR-0087](docs/adr/0087-recover-dropped-c-family-regions.md)). File content is unchanged, so an
+  and the repaired class heads ([ADR-0087](docs/adr/0087-recover-dropped-c-family-regions.md)). File content is unchanged, so an
   incremental pass skips every already-indexed `.c`/`.h`/`.cpp`/`.hpp`/`.cu`/`.cuh` file and keeps
   the old chunks. Run `index_directory(<project>, incremental=False)` (or
   `tools/batch_index.py --mode force`) once per C-family project. ADR-0037 declined an automatic
