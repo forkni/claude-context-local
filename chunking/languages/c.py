@@ -93,4 +93,10 @@ class CChunker(_CFamilyChunker):
         elif node.type == "preproc_include":
             extract_include_metadata(node, get_text, metadata)
 
+        elif node.type in ("preproc_def", "preproc_function_def"):
+            # Multi-line macro chunk (ADR-0087).
+            name_node = node.child_by_field_name("name")
+            if name_node is not None:
+                metadata["name"] = get_text(name_node)
+
         return metadata

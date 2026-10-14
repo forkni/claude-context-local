@@ -509,6 +509,10 @@ LANGUAGE_SPECS: dict[str, LanguageSpec] = {
             # GLSL's `preproc_include` entry below, instead of producing no
             # chunk at all as they did previously.
             "preproc_include",
+            # Multi-line macros only (ADR-0087): _CFamilyChunker.should_chunk_node
+            # leaves one-line `#define`s to the preamble chunks.
+            "preproc_def",
+            "preproc_function_def",
         },
         install_hint="pip install tree-sitter-c",
     ),
@@ -536,6 +540,10 @@ LANGUAGE_SPECS: dict[str, LanguageSpec] = {
             # GLSL's `preproc_include` entry below, instead of producing no
             # chunk at all as they did previously.
             "preproc_include",
+            # Multi-line macros only (ADR-0087): _CFamilyChunker.should_chunk_node
+            # leaves one-line `#define`s to the preamble chunks.
+            "preproc_def",
+            "preproc_function_def",
         },
         install_hint="pip install tree-sitter-cpp",
     ),

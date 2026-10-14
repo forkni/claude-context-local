@@ -1169,6 +1169,9 @@ def extract_instantiation_relationships(
 # ---------------------------------------------------------------------------
 
 
+_MACRO_NODE_TYPES = frozenset({"preproc_def", "preproc_function_def"})
+
+
 class _CFamilyChunker(LanguageChunker):
     """Shared `preprocess_source_for_parse` composition for `CChunker` and
     `CppChunker`: the purely textual rewrites (preprocessor conditionals,
@@ -1194,6 +1197,18 @@ class _CFamilyChunker(LanguageChunker):
             self._neutralize(source_bytes), parse
         )
         return repair_bare_macro_lines(repaired, parse)
+
+    def should_chunk_node(self, node: Any) -> bool:
+        """Multi-line macros chunk; one-line `#define`s stay in preambles.
+
+        A continued macro is a definition in its own right (the HAL and
+        intrinsics headers carry most of their logic in them), while the
+        thousands of one-line constants would swamp search as chunks.
+        """
+        if node.type in _MACRO_NODE_TYPES:
+            start, end = node_line_span(node)
+            return end > start and super().should_chunk_node(node)
+        return super().should_chunk_node(node)
 
     def get_line_numbers(self, node: Any) -> tuple[int, int]:
         """Last content line, not the row a preprocessor node's newline ends on.
