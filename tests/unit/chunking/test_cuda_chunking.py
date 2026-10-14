@@ -15,7 +15,7 @@ blanking leaves 62 ERROR lines (3.0%); with `_CUDA_ATTRS` and `_LAUNCH_CFG`
 both blanked, 0 ERROR lines (0.0%).
 """
 
-from chunking.languages.cpp import _LAUNCH_CFG, CudaChunker
+from chunking.languages.cpp import _LAUNCH_CFG, CppChunker, CudaChunker
 from chunking.multi_language_chunker import MultiLanguageChunker
 from tests.unit.chunking.conftest import assert_length_and_newline_invariants
 
@@ -252,3 +252,42 @@ class TestCudaLanguageNameStaysCpp:
 
         assert chunks
         assert all(c.language == "cpp" for c in chunks)
+
+
+class TestExecutionSpaceSpecifiersInPlainCppHeaders:
+    """Device code also ships in `.hpp`/`.h` headers (opencv `cudev/*.hpp`),
+    which route to `CppChunker`, not `CudaChunker` -- the execution-space
+    blanking must live in the shared C-family `_neutralize` (ADR-0087,
+    cause A). Launch configs stay CUDA-only.
+    """
+
+    _SOURCE = (
+        "namespace cv { namespace cudev {\n"
+        "template <typename T> __device__ __forceinline__ T sat(uchar v) {\n"
+        "    return T(v);\n"
+        "}\n"
+        "__device__ __forceinline__ float f(float x) {\n"
+        "    return x;\n"
+        "}\n"
+        "}}\n"
+    )
+
+    def test_hpp_device_functions_parse_without_errors(self):
+        chunker = CppChunker()
+        rewritten = chunker.preprocess_source_for_parse(self._SOURCE.encode())
+        assert_length_and_newline_invariants(self._SOURCE.encode(), rewritten)
+        assert chunker.parser.parse(rewritten).root_node.has_error is False
+
+    def test_hpp_device_function_keeps_name_and_lines(self):
+        chunks = CppChunker().chunk_code(self._SOURCE)
+        by_name = {c.metadata.get("name"): c for c in chunks}
+        assert (by_name["f"].start_line, by_name["f"].end_line) == (5, 7)
+
+    def test_macro_named_after_a_specifier_is_not_blanked(self):
+        """A header that stubs the specifiers out for host compilers
+        (`#define __device__`) must keep the macro name -- blanking it
+        leaves a nameless `#define`, which is an ERROR."""
+        source = b"#ifndef __CUDACC__\n#define __device__\n#define __host__\n#endif\n"
+        chunker = CppChunker()
+        rewritten = chunker.preprocess_source_for_parse(source)
+        assert chunker.parser.parse(rewritten).root_node.has_error is False

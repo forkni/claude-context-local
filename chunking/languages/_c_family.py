@@ -249,9 +249,8 @@ def blank_preserving_layout(match: re.Match[bytes]) -> bytes:
     remaining newline's byte offset are unchanged.
 
     Public (no leading underscore) because it's a shared `re.sub` callback,
-    reused by `CudaChunker.preprocess_source_for_parse` (cpp.py) for its own,
-    differently-shaped matches (`_CUDA_ATTRS`, `_LAUNCH_CFG`) -- not just
-    `_PP_COND` here.
+    reused by `CudaChunker._neutralize` (cpp.py) for its own,
+    differently-shaped `_LAUNCH_CFG` matches -- not just the rewrites here.
 
     Args:
         match: Any regex match to blank byte-for-byte.
@@ -287,6 +286,42 @@ def neutralize_preprocessor_conditionals(source_bytes: bytes) -> bytes:
         Identical in total length and newline positions to `source_bytes`.
     """
     return _PP_COND.sub(blank_preserving_layout, source_bytes)
+
+
+#: CUDA execution-space/memory-space specifiers. Neither is standard C++, so
+#: tree-sitter-cpp doesn't recognize them as declaration specifiers -- e.g.
+#: `__global__ void kernel(float* out) { ... }` desyncs the parser the same
+#: way an unrecognized export macro does. Device code ships in plain `.hpp`/
+#: `.h` headers too (opencv `cudev/*.hpp`, routed to `CppChunker`), where an
+#: unblanked `__device__ __forceinline__` collapsed whole files into one root
+#: ERROR -- so the blanking lives here, shared by every C-family chunker,
+#: not in `CudaChunker` (ADR-0087, cause A). Group 1 is a `#define`/`#undef`
+#: prefix when the token is the macro's own name: headers that stub the
+#: specifiers out for host compilers (`#define __device__`) keep it, since a
+#: nameless `#define` is itself an ERROR.
+_CUDA_ATTRS = re.compile(
+    rb"(#[ \t]*(?:define|undef)[ \t]+)?"
+    rb"\b(?:__global__|__device__|__host__|__forceinline__"
+    rb"|__restrict__|__constant__|__shared__|__managed__)\b"
+)
+
+
+def _blank_cuda_specifier(match: re.Match[bytes]) -> bytes:
+    """Blank a CUDA specifier unless it is the name a `#define` declares."""
+    if match.group(1):
+        return match.group(0)
+    return blank_preserving_layout(match)
+
+
+def neutralize_cuda_specifiers(source_bytes: bytes) -> bytes:
+    """Blank CUDA execution-space specifiers before parsing.
+
+    The token carries no chunk-name or metadata information tree-sitter
+    needs, and the original text survives in chunk content (sliced from the
+    un-rewritten source, per `LanguageChunker.preprocess_source_for_parse`'s
+    contract). Length- and newline-position-preserving.
+    """
+    return _CUDA_ATTRS.sub(_blank_cuda_specifier, source_bytes)
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +382,37 @@ def _error_nodes(root_node: Any) -> Iterator[Any]:
         stack.extend(node.children)
 
 
+def _error_line_count(root_node: Any) -> int:
+    """Sum of every ERROR node's line span (nested ERRORs count again).
+
+    The yardstick both parse-dependent repairs keep a round against.
+    """
+    return sum(n.end_point[0] - n.start_point[0] + 1 for n in _error_nodes(root_node))
+
+
+def _line_end(source_bytes: bytes, pos: int) -> int:
+    """Byte offset of the newline ending the line holding `pos` (or EOF)."""
+    end = source_bytes.find(b"\n", pos)
+    return len(source_bytes) if end < 0 else end
+
+
+#: The declarator after a macro-wrapped return type: pointer/reference
+#: marks, a (qualified) name, then the token that makes it a declaration --
+#: a parameter list, `;`, `,`, `=` or `[`.
+_WRAPPED_DECLARATOR = re.compile(rb"[ \t\*&]*([A-Za-z_][A-Za-z0-9_:]*)[ \t]*[(;,=\[]")
+
+
+def _macro_wrapped_reach(source_bytes: bytes, match: re.Match[bytes]) -> int:
+    """End of a `_MACRO_WRAPPED_RETURN` match's ERROR gate.
+
+    Reaches the declarator's first byte when a declaration follows
+    (`PyAPI_FUNC(long) PyLong_AsLong(`), else only the macro name's first
+    byte -- so the gate is `start <= m.start(2) < end`, as before cause C.
+    """
+    declarator = _WRAPPED_DECLARATOR.match(source_bytes, match.end(0))
+    return declarator.start(1) + 1 if declarator else match.start(2) + 1
+
+
 def repair_macro_wrapped_declarations(
     source_bytes: bytes,
     parse: _ParseFn,
@@ -382,11 +448,19 @@ def repair_macro_wrapped_declarations(
     ERROR span happens to run further, repairs fine -- non-deterministic
     from a caller's point of view since it depends on where the parser's
     error recovery drew the boundary. Matching against the *whole* buffer
-    and then filtering matches to only those whose macro-name group starts
-    inside an ERROR span gets the lookahead context right in every case
-    while keeping the exact same safety property: a name that already
-    parses cleanly is never inside an ERROR span, so it is still never a
-    rewrite candidate.
+    and then filtering matches to only those whose span, from the
+    macro-name group through `_macro_wrapped_reach`, intersects an ERROR
+    span gets the lookahead context right in every case while keeping the
+    same safety property: a line that already parses cleanly carries no
+    ERROR span, so it is still never a rewrite candidate. When a real
+    declarator follows, the gate reaches its first byte, not just the
+    macro name, because the parser can accept `PyAPI_FUNC(long)` as a call
+    statement with a MISSING `;` and open the ERROR only at the declarator
+    after it (`PyLong_AsLong(PyObject *);`) -- a name-start gate missed
+    every such declaration (ADR-0087, cause C). It reaches no further:
+    gating on the rest of the line admitted `virtual int setNumThreads(int
+    n) CV_OVERRIDE`, whose ERROR is the trailing macro, and blanking the
+    method name "repaired" it into a function named `CV_OVERRIDE`.
 
     Bounded to two reparse-and-retry passes, since one repaired macro can
     occasionally unmask a second, previously-nested ERROR region.
@@ -424,9 +498,7 @@ def repair_macro_wrapped_declarations(
     tree = parse(current)
     if not tree.root_node.has_error:
         return current
-    error_lines = sum(
-        n.end_point[0] - n.start_point[0] + 1 for n in _error_nodes(tree.root_node)
-    )
+    error_lines = _error_line_count(tree.root_node)
 
     for _ in range(2):
         spans = [(n.start_byte, n.end_byte) for n in _error_nodes(tree.root_node)]
@@ -435,12 +507,15 @@ def repair_macro_wrapped_declarations(
 
         # Match against the whole buffer (not a per-span slice -- see this
         # function's docstring for why slicing can starve the trailing
-        # lookahead of context) and keep only matches whose macro-name
-        # group (2) starts inside one of the ERROR spans.
+        # lookahead of context) and keep only matches whose macro-name group
+        # (2) through `_macro_wrapped_reach` intersects an ERROR span.
         matches = [
             m
             for m in _MACRO_WRAPPED_RETURN.finditer(current)
-            if any(start <= m.start(2) < end for start, end in spans)
+            if any(
+                start < _macro_wrapped_reach(current, m) and m.start(2) < end
+                for start, end in spans
+            )
         ]
         if not matches:
             break
@@ -462,10 +537,7 @@ def repair_macro_wrapped_declarations(
 
         candidate_tree = parse(candidate_bytes)
         candidate_error_lines = (
-            sum(
-                n.end_point[0] - n.start_point[0] + 1
-                for n in _error_nodes(candidate_tree.root_node)
-            )
+            _error_line_count(candidate_tree.root_node)
             if candidate_tree.root_node.has_error
             else 0
         )
@@ -480,6 +552,236 @@ def repair_macro_wrapped_declarations(
             candidate_tree,
             candidate_error_lines,
         )
+
+    return current
+
+
+# ---------------------------------------------------------------------------
+# Bare-macro-line repair
+# ---------------------------------------------------------------------------
+
+#: A line holding only a macro name -- optionally invoked with arguments
+#: (one nesting level, may span lines) and followed by a `//` comment -- with
+#: no `;`: namespace brackets (`CV_CPU_OPTIMIZATION_HAL_NAMESPACE_BEGIN`),
+#: struct heads (`PyObject_HEAD`), statement macros
+#: (`Py_BEGIN_ALLOW_THREADS`) and generator invocations
+#: (`OPENCV_HAL_IMPL_RVV_INIT(v_uint8, uchar, u8)`). Group 1 is the name: at
+#: least three characters including an uppercase letter or underscore, which
+#: keeps plain lowercase identifiers and keywords (`else`, `break`) out.
+_BARE_MACRO_LINE = re.compile(
+    rb"^[ \t]*((?=[A-Za-z0-9]*[A-Z_])[A-Za-z_][A-Za-z0-9_]{2,})[ \t]*"
+    rb"(?:\((?:[^()]|\([^()]*\))*\))?[ \t]*(?://[^\n]*)?$",
+    re.M,
+)
+
+#: Keywords and compiler extensions that pass `_BARE_MACRO_LINE`'s name test
+#: but are real syntax tree-sitter-cpp parses (`__attribute__((unused))` on
+#: its own line before a declaration).
+_BARE_MACRO_KEYWORDS = frozenset(
+    {
+        b"_Alignas",
+        b"_Alignof",
+        b"_Atomic",
+        b"_Bool",
+        b"_Complex",
+        b"_Generic",
+        b"_Imaginary",
+        b"_Noreturn",
+        b"_Static_assert",
+        b"_Thread_local",
+        b"static_assert",
+        b"thread_local",
+        b"const_cast",
+        b"dynamic_cast",
+        b"reinterpret_cast",
+        b"static_cast",
+        b"char8_t",
+        b"char16_t",
+        b"char32_t",
+        b"wchar_t",
+        b"co_await",
+        b"co_return",
+        b"co_yield",
+        b"__attribute__",
+        b"__declspec",
+        b"__asm",
+        b"__asm__",
+        b"__inline",
+        b"__inline__",
+        b"__forceinline",
+        b"__restrict",
+        b"__restrict__",
+        b"__volatile__",
+        b"__extension__",
+        b"__cdecl",
+        b"__stdcall",
+        b"__fastcall",
+        b"__thiscall",
+        b"__vectorcall",
+        b"__unaligned",
+    }
+)
+
+#: Last byte of a previous line that leaves an expression or list open, so
+#: the candidate line is an operand, argument or enumerator, not a macro:
+#: `\` (a `#define` continuation), `,` (the last enumerator), `(`/`[` and
+#: binary/unary operators (`x = 1 +` / `SOME_CONSTANT`).
+_OPEN_LINE_TAILS = frozenset(bytes([b]) for b in b"\\,([+-*/%&|^!~<>=?")
+
+#: First non-blank token after a candidate that makes it a declarator, not a
+#: macro: a function body (gtest `TEST(a, b)` / `{`), a constructor's
+#: member-init list (`Foo()` / `: a_(0)`), a trailing return (`-> int`).
+_NEXT_TOKEN = re.compile(rb"\s*(\S{0,2})")
+
+
+def _previous_nonblank_line(source_bytes: bytes, line_start: int) -> bytes:
+    """The stripped text of the last non-blank line before `line_start`."""
+    end = line_start
+    while end > 0:
+        start = source_bytes.rfind(b"\n", 0, end - 1) + 1
+        line = source_bytes[start : end - 1].strip()
+        if line:
+            return line
+        end = start
+    return b""
+
+
+def _is_bare_macro_line(source_bytes: bytes, match: re.Match[bytes]) -> bool:
+    """Apply the syntax guards that `_BARE_MACRO_LINE` alone can't express."""
+    if match.group(1) in _BARE_MACRO_KEYWORDS:
+        return False
+    following = _NEXT_TOKEN.match(source_bytes, match.end(0))
+    if following is not None:
+        token = following.group(1)
+        if token[:1] in (b"{", b":") or token == b"->":
+            return False
+    previous = _previous_nonblank_line(source_bytes, match.start(0))
+    if previous.endswith(b"\\"):
+        return False
+    # A complete directive or a comment ends nothing open, whatever its last
+    # byte is (`#include <vector>`, `/* bracket */`, ` * item,`).
+    if previous.startswith((b"#", b"//", b"/*", b"* ", b"*/")) or previous in (
+        b"*",
+        b"",
+    ):
+        return True
+    if previous.endswith(b"*/"):
+        return True
+    return previous[-1:] not in _OPEN_LINE_TAILS
+
+
+def _bare_macro_reach(source_bytes: bytes, match: re.Match[bytes]) -> int:
+    """End of the first non-blank line after a bare-macro match (or EOF).
+
+    The parser usually takes a bare macro's name as the type of what follows
+    (`CV_..._BEGIN` / `inline int f(...)`, `PyException_HEAD` /
+    `PyObject *msg;`) and opens the ERROR only at the next token, one line
+    down, so that line belongs to the candidate's ERROR scope too.
+    """
+    following = _NEXT_TOKEN.match(source_bytes, match.end(0))
+    if following is None or not following.group(1):
+        return match.end(0)
+    return _line_end(source_bytes, following.start(1))
+
+
+def bare_macro_line_matches(source_bytes: bytes) -> list[re.Match[bytes]]:
+    """Every bare-macro line in `source_bytes` that survives the syntax guards.
+
+    Not ERROR-scoped: `repair_bare_macro_lines` does that. Public so the
+    guards can be tested on shapes that parse cleanly.
+    """
+    return [
+        m
+        for m in _BARE_MACRO_LINE.finditer(source_bytes)
+        if _is_bare_macro_line(source_bytes, m)
+    ]
+
+
+def repair_bare_macro_lines(source_bytes: bytes, parse: _ParseFn) -> bytes:
+    """Blank bare macro lines that sit in ERROR spans (ADR-0087, cause B).
+
+    A macro alone on its line expands to declarations, a struct head or an
+    open/close brace, none of which the grammar sees: tree-sitter-cpp glues
+    a namespace bracket (`CV_CPU_OPTIMIZATION_HAL_NAMESPACE_BEGIN`) onto the
+    next function as its return type, or opens an ERROR that swallows the
+    declarations after it. Blanking the line lets the parser see the code
+    the macro surrounds; the chunk text still comes from the original bytes.
+
+    Follows `repair_macro_wrapped_declarations`'s safety contract: only
+    lines near an ERROR span are candidates, and a round is kept only if a
+    reparse strictly lowers the ERROR line count, so a file never parses
+    worse. Each round first tries every candidate whose line, or the next
+    non-blank line, touches an ERROR span (`_bare_macro_reach`: the ERROR
+    usually opens at the token after the macro); if that is rejected (one
+    wrong blank can outweigh the rest), it retries with only the candidates
+    whose own line touches one. Invocation lines are blanked whole, arguments included:
+    blanking only the names turned opencv's namespace-level
+    `OPENCV_HAL_IMPL_RVV_*(...)` generator calls into one bogus function.
+
+    Bounded to four rounds: blanking one bracket macro often exposes the
+    next ERROR further down the same file.
+
+    Args:
+        source_bytes: Source bytes after every earlier rewrite in the
+            chunker's `preprocess_source_for_parse` pipeline.
+        parse: A `tree_sitter.Parser.parse`-shaped callable.
+
+    Returns:
+        Source bytes with as many bare macro lines blanked as lowered the
+        ERROR line count. Identical in total length and newline positions to
+        `source_bytes`.
+    """
+    current = source_bytes
+    tree = parse(current)
+    if not tree.root_node.has_error:
+        return current
+    error_lines = _error_line_count(tree.root_node)
+
+    for _ in range(4):
+        spans = [(n.start_byte, n.end_byte) for n in _error_nodes(tree.root_node)]
+        if not spans:
+            break
+        reaching = [
+            m
+            for m in bare_macro_line_matches(current)
+            if any(
+                start < _bare_macro_reach(current, m) and m.start(0) < end
+                for start, end in spans
+            )
+        ]
+        touching = [
+            m
+            for m in reaching
+            if any(start < m.end(0) and m.start(0) < end for start, end in spans)
+        ]
+        attempts = [reaching]
+        if touching and len(touching) < len(reaching):
+            attempts.append(touching)
+
+        for matches in attempts:
+            if not matches:
+                continue
+            candidate = bytearray(current)
+            for m in matches:
+                candidate[m.start(0) : m.end(0)] = blank_preserving_layout(m)
+            candidate_bytes = bytes(candidate)
+            candidate_tree = parse(candidate_bytes)
+            candidate_error_lines = (
+                _error_line_count(candidate_tree.root_node)
+                if candidate_tree.root_node.has_error
+                else 0
+            )
+            if candidate_error_lines < error_lines:
+                current, tree, error_lines = (
+                    candidate_bytes,
+                    candidate_tree,
+                    candidate_error_lines,
+                )
+                break
+        else:
+            break
+        if error_lines == 0:
+            break
 
     return current
 
@@ -869,21 +1171,26 @@ def extract_instantiation_relationships(
 
 class _CFamilyChunker(LanguageChunker):
     """Shared `preprocess_source_for_parse` composition for `CChunker` and
-    `CppChunker`: purely textual preprocessor-conditional neutralization,
-    then the parse-dependent macro-wrapped-declaration repair, in that
-    order -- the repair locates ERROR spans by parsing, so it must run
-    last, after every rewrite that only needs the raw text. `_neutralize`
-    is the documented override point: `CudaChunker` layers its own,
-    also-textual CUDA blanking in ahead of the base's preprocessor-
-    conditional rewrite by overriding this method, not
-    `preprocess_source_for_parse` itself, so it still inherits the repair
-    below unchanged.
+    `CppChunker`: the purely textual rewrites (preprocessor conditionals,
+    CUDA specifiers), then the parse-dependent repairs -- macro-wrapped
+    declarations, then bare macro lines -- in that order. The repairs locate
+    ERROR spans by parsing, so they run after every rewrite that only needs
+    the raw text, and the bare-line repair runs last because it is the
+    broader rewrite: the narrower macro-wrapped repair, which keeps the
+    wrapped type, gets the first chance at each ERROR. `_neutralize` is the
+    documented override point: `CudaChunker` adds its launch-config blanking
+    there, not in `preprocess_source_for_parse` itself, so it still inherits
+    the repairs below unchanged.
     """
 
     def _neutralize(self, source_bytes: bytes) -> bytes:
-        return neutralize_preprocessor_conditionals(source_bytes)
+        return neutralize_cuda_specifiers(
+            neutralize_preprocessor_conditionals(source_bytes)
+        )
 
     def preprocess_source_for_parse(self, source_bytes: bytes) -> bytes:
-        return repair_macro_wrapped_declarations(
-            self._neutralize(source_bytes), self.parser.parse
+        parse = self.parser.parse
+        repaired = repair_macro_wrapped_declarations(
+            self._neutralize(source_bytes), parse
         )
+        return repair_bare_macro_lines(repaired, parse)

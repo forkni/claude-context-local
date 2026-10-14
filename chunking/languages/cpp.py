@@ -275,20 +275,6 @@ class CppChunker(_CFamilyChunker):
 # CUDA (.cu / .cuh) -- routed to the cpp grammar, no new tree-sitter dependency
 # -----------------------------------------------------------------------------
 
-#: CUDA execution-space/memory-space specifiers. Neither is standard C++, so
-#: tree-sitter-cpp doesn't recognize them as declaration specifiers -- e.g.
-#: `__global__ void kernel(float* out) { ... }` desyncs the parser the same
-#: way an unrecognized export macro does (see `_c_family.py`'s A1 docstring).
-#: Blanking them before parsing is the same trade already made for
-#: preprocessor conditionals: the token itself carries no chunk-name or
-#: metadata information tree-sitter needs, and the original text survives in
-#: chunk content (sliced from the un-rewritten source, per
-#: `LanguageChunker.preprocess_source_for_parse`'s contract).
-_CUDA_ATTRS = re.compile(
-    rb"\b(?:__global__|__device__|__host__|__forceinline__"
-    rb"|__restrict__|__constant__|__shared__|__managed__)\b"
-)
-
 #: CUDA kernel-launch triple-chevron syntax, e.g. `kernel<<<grid, block>>>(args);`.
 #: Not valid C++ token syntax at all -- tree-sitter-cpp has no grammar rule
 #: for `<<<`/`>>>` as a unit (each `<`/`>` lexes as a comparison/shift
@@ -312,7 +298,9 @@ class CudaChunker(CppChunker):
     `tree_sitter_cpp` parser (`chunking/language_registry.py`'s
     `EXT_TO_LANGUAGE`), which parses ordinary CUDA C++ cleanly. Only two CUDA
     extensions to plain C++ syntax break it -- execution-space attributes and
-    the `<<<...>>>` launch configuration -- both handled here.
+    the `<<<...>>>` launch configuration. The attributes are blanked by the
+    shared `_CFamilyChunker._neutralize` (they also appear in plain `.hpp`
+    headers, see `_c_family._CUDA_ATTRS`); the launch config is handled here.
 
     Deliberately keeps `language_name == "cpp"` (inherited, unchanged) rather
     than registering a `"cuda"` language: see
@@ -341,29 +329,23 @@ class CudaChunker(CppChunker):
     """
 
     def _neutralize(self, source_bytes: bytes) -> bytes:
-        """Blank CUDA-specific syntax, then preprocessor conditionals.
+        """Blank launch configs after the shared C-family rewrites.
 
-        Overrides `CppChunker._neutralize`, not `preprocess_source_for_parse`
-        -- both rewrites here are purely textual (no reparse), so this stays
-        in the textual half of the pipeline and the inherited
-        `preprocess_source_for_parse` still runs the parse-dependent macro
-        repair last, after this. Order between the two rewrites here only
-        matters in that both are independently length- and newline-
-        position-preserving, so composing them in either order produces the
-        same result -- `super()` first keeps the CUDA-specific rules scoped
-        to bytes that have already had `#if`/`#ifdef`/... directive lines
-        blanked, avoiding any chance of a CUDA regex matching text that
-        lives inside a blanked directive line.
+        Overrides `_CFamilyChunker._neutralize`, not
+        `preprocess_source_for_parse` -- the rewrite here is purely textual
+        (no reparse), so it stays in the textual half of the pipeline and the
+        inherited `preprocess_source_for_parse` still runs the parse-dependent
+        repairs last, after this. `super()` first keeps the launch-config
+        rule scoped to bytes that have already had `#if`/`#ifdef`/...
+        directive lines blanked.
 
         Args:
             source_bytes: UTF-8-encoded original source.
 
         Returns:
-            Source bytes with CUDA attributes, launch configs, and
+            Source bytes with launch configs, CUDA specifiers, and
             preprocessor conditionals all blanked. Identical in total length
             and newline positions to `source_bytes`.
         """
         rewritten = super()._neutralize(source_bytes)
-        rewritten = _CUDA_ATTRS.sub(blank_preserving_layout, rewritten)
-        rewritten = _LAUNCH_CFG.sub(blank_preserving_layout, rewritten)
-        return rewritten
+        return _LAUNCH_CFG.sub(blank_preserving_layout, rewritten)

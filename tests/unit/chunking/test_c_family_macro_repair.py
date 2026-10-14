@@ -80,6 +80,34 @@ class TestExternCMacroWrappedPrototypesRecover:
         assert b"void  cvSetErrMode(int mode);" in repaired
 
 
+class TestErrorStartingAfterTheMacroRecovers:
+    """The parser can accept `MACRO(T)` as a call statement with a MISSING
+    `;` and open the ERROR only at the declarator after it -- the macro name
+    itself lies outside every ERROR span. The gate must still admit the
+    match when an ERROR span intersects the rest of the macro's line."""
+
+    def setup_method(self):
+        self.chunker = CppChunker()
+
+    def test_primitive_wrapped_type_inside_extern_c(self):
+        source = """extern "C" {
+PyAPI_FUNC(long) PyLong_AsLong(PyObject *);
+PyAPI_FUNC(double) PyLong_AsDouble(PyObject *);
+}
+"""
+        names = _all_names(self.chunker, source)
+        assert ("declaration", "PyLong_AsLong") in names
+        assert ("declaration", "PyLong_AsDouble") in names
+
+    def test_type_identifier_wrapped_type_at_root(self):
+        source = """CVAPI(CvRect) cvGetImageROI(const IplImage* image);
+CVAPI(CvSize) cvGetSize(const CvArr* arr);
+"""
+        names = _all_names(self.chunker, source)
+        assert ("declaration", "cvGetImageROI") in names
+        assert ("declaration", "cvGetSize") in names
+
+
 class TestCamelCaseMethodsNeverRepaired:
     """`getParDouble2`/`setParDouble2` match `_MACRO_WRAPPED_RETURN`'s
     two-uppercase-letter test as well as a real macro -- must survive
@@ -144,6 +172,29 @@ public:
         assert ("field_declaration", "getParDouble2") in names
         assert ("field_declaration", "setParDouble2") in names
 
+    def test_method_with_a_trailing_macro_keeps_its_name(self):
+        """The ERROR sits on the trailing `CV_OVERRIDE`, on the same line as
+        a camelCase method that `_MACRO_WRAPPED_RETURN` matches. A gate
+        spanning the whole line blanked `getThreadNum()` and renamed the
+        method `CV_OVERRIDE` (the opencv parallel backends)."""
+        source = """
+class Backend {
+public:
+    virtual int getThreadNum() const CV_OVERRIDE
+    {
+        return 0;
+    }
+    virtual int setNumThreads(int nThreads) CV_OVERRIDE
+    {
+        return nThreads;
+    }
+};
+"""
+        names = _all_names(self.chunker, source)
+        assert ("function_definition", "getThreadNum") in names
+        assert ("function_definition", "setNumThreads") in names
+        assert ("function_definition", "CV_OVERRIDE") not in names
+
 
 class TestByteLengthAndNewlinePositionInvariants:
     """`repair_macro_wrapped_declarations` must preserve total byte length
@@ -172,18 +223,23 @@ class TestByteLengthAndNewlinePositionInvariants:
 
 class TestCudaChunkerOverrideWired:
     """`CudaChunker` inherits `CppChunker`'s macro repair unchanged after
-    its own CUDA blanking -- proves the seam composes rather than each
-    rewrite being exercised in isolation."""
+    its own launch-config blanking -- proves the seam composes rather than
+    each rewrite being exercised in isolation."""
 
-    def test_kernel_and_macro_wrapped_prototype_both_recover(self):
+    def test_kernel_launch_and_macro_wrapped_prototype_all_recover(self):
         chunker = CudaChunker()
         source = """
 __global__ void kernel(float* out) {
     out[0] = 1.0f;
 }
 
+void launch(float* out) {
+    kernel<<<1, 1>>>(out);
+}
+
 CVAPI(void) cvSetErrMode(int mode);
 """
         names = _all_names(chunker, source)
         assert ("function_definition", "kernel") in names
+        assert ("function_definition", "launch") in names
         assert ("declaration", "cvSetErrMode") in names
