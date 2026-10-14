@@ -245,6 +245,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **C-family chunking keeps code and comments it used to drop** (`chunking/languages/_c_family.py`,
+  `chunking/languages/base.py`, `c.py`, `cpp.py`, [ADR-0087](docs/adr/0087-recover-dropped-c-family-regions.md)).
+  `[PARSE_WARN]` counted only ERROR lines that no chunk covered. On the TouchDesigner 2025 headers
+  (opencv, CPython `Include/`) a whole-file audit found much larger loss: on the indexed set, 5,300
+  dropped code lines and 9,595 dropped comment lines. That is now 297 and 334, and chunks grow 7.8%.
+  - **Parse-only repairs.** CUDA specifiers are blanked for every C-family file. A new bare-macro
+    repair keeps a round only if ERROR lines strictly fall. The macro-wrapped repair now triggers more
+    widely. A `/* */` that splits a `#define` body is blanked for the parser. Together these cut ERROR
+    lines from 23,560 to 7,956.
+  - **Preamble runs inside nodes that hold a chunk.** Prototypes and `#define`s inside `extern "C"`,
+    namespaces and ERROR nodes are now collected.
+  - **Multi-line `#define`s become named `macro` chunks.**
+  - **Doc comments.** C/C++ chunks adopt the comment run above them as `docstring`, and comment-only
+    runs of 3 or more lines survive.
+  - **Chunk ends.** Chunks end on their last content line, not the phantom newline row of a
+    preprocessor node.
+  - **PARSE_WARN.** `lines_lost` skips blank lines.
+  - **Harness.** `scripts/benchmark/measure_parse_recall.py` (run with `-m`) reports dropped lines per
+    file, with `--compare` and `--index-filter`.
+
+- **USD `codegenTemplates` directories are skipped by default** (`chunking/language_registry.py`). These
+  directories hold Jinja templates saved as `.cpp`/`.h`, which never parse as C++. `include_dirs` can
+  re-admit them.
+
 - **`code2code_instruction` is the xCodeEval similar-code string** (`search/config.py`, all three F2LLM
   entries) — it was the CodeSearchNet-CCR prefix-to-continuation string, which ranked callers over
   structural siblings. The instructed `find_similar` probe now also skips a truncated preview-only
@@ -588,6 +612,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flips that chunk's kind to `decorated_definition:` and breaks five golden dataset entries).
 
 ### Migration
+
+- **Existing C/C++/CUDA indexes need one `incremental=False` reindex** to pick up the recovered regions
+  ([ADR-0087](docs/adr/0087-recover-dropped-c-family-regions.md)). File content is unchanged, so an
+  incremental pass skips every already-indexed `.c`/`.h`/`.cpp`/`.hpp`/`.cu`/`.cuh` file and keeps
+  the old chunks. Run `index_directory(<project>, incremental=False)` (or
+  `tools/batch_index.py --mode force`) once per C-family project. ADR-0037 declined an automatic
+  version bump.
 
 - **Full reindex required, not just recommended, to see methods of decorated classes** (ADR-0063).
   No `.py` file's content changed, only the chunker's traversal logic — `merkle/merkle_dag.py`
