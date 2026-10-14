@@ -161,6 +161,10 @@ def _measure_file(job: tuple[str, str]) -> dict[str, Any] | None:
         name = chunk.metadata.get("name")
         if name:
             defs[f"{chunk.node_type}:{name}"] += 1
+    # The parts of a chunk id: a repeat fails a full reindex.
+    id_keys = {
+        (c.start_line, c.end_line, c.node_type, c.metadata.get("name")) for c in chunks
+    }
 
     return {
         "path": rel_path,
@@ -174,7 +178,9 @@ def _measure_file(job: tuple[str, str]) -> dict[str, Any] | None:
         "dropped_comment": dropped_comment,
         "error_lines": len(error_lines),
         "error_dropped": error_dropped,
+        "duplicate_ids": len(chunks) - len(id_keys),
         "buckets": dict(buckets),
+        "kinds": dict(Counter(c.node_type for c in chunks)),
         "defs": dict(defs),
     }
 
@@ -203,17 +209,22 @@ _TOTAL_KEYS = (
     "dropped_comment",
     "error_lines",
     "error_dropped",
+    "duplicate_ids",
 )
 
 
 def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
-    totals: dict[str, Any] = {k: sum(r[k] for r in records) for k in _TOTAL_KEYS}
+    # `.get`: baselines taken before `duplicate_ids`/`kinds` existed lack them.
+    totals: dict[str, Any] = {k: sum(r.get(k, 0) for r in records) for k in _TOTAL_KEYS}
     buckets: Counter[str] = Counter()
+    kinds: Counter[str] = Counter()
     for r in records:
         buckets.update(r["buckets"])
+        kinds.update(r.get("kinds", {}))
     totals["files"] = len(records)
     totals["definitions"] = sum(sum(r["defs"].values()) for r in records)
     totals["buckets"] = dict(buckets.most_common())
+    totals["kinds"] = dict(kinds.most_common())
     return totals
 
 
@@ -239,12 +250,21 @@ def _print_summary(totals: dict[str, Any], base: dict[str, Any] | None) -> None:
         for kind in base_buckets:
             if kind not in totals["buckets"]:
                 print(f"  {kind:<34}{0:>8,}  ({-base_buckets[kind]:+,})")
+    base_kinds = base.get("kinds") if base else None
+    print("chunks by node type:")
+    for kind in sorted(
+        set(totals["kinds"]) | set(base_kinds or ()),
+        key=lambda k: -totals["kinds"].get(k, 0),
+    ):
+        n = totals["kinds"].get(kind, 0)
+        d = f"  ({n - base_kinds.get(kind, 0):+,})" if base_kinds is not None else ""
+        print(f"  {kind:<34}{n:>8,}{d}")
     print("=" * 72)
 
 
 def _compare(records: list[dict[str, Any]], base_records: list[dict[str, Any]]) -> None:
     by_path = {r["path"]: r for r in base_records}
-    regressed: list[tuple[str, int, list[str]]] = []
+    regressed: list[tuple[str, int, int, list[str]]] = []
     improved = 0
     for r in records:
         b = by_path.get(r["path"])
@@ -252,18 +272,22 @@ def _compare(records: list[dict[str, Any]], base_records: list[dict[str, Any]]) 
             continue
         lost = Counter(b["defs"]) - Counter(r["defs"])
         more_errors = r["error_lines"] - b["error_lines"]
-        if lost or more_errors > 0:
-            regressed.append((r["path"], more_errors, sorted(lost.elements())))
+        dups = r["duplicate_ids"]
+        if lost or more_errors > 0 or dups:
+            regressed.append((r["path"], more_errors, dups, sorted(lost.elements())))
         elif (
             r["dropped_code"] < b["dropped_code"] or r["error_lines"] < b["error_lines"]
         ):
             improved += 1
     print(f"improved files: {improved}   regressed files: {len(regressed)}")
-    for path, more_errors, lost in regressed[:40]:
+    for path, more_errors, dups, lost in regressed[:40]:
         shown = ", ".join(lost[:8]) + (
             f" (+{len(lost) - 8} more)" if len(lost) > 8 else ""
         )
-        print(f"  REGRESSED {path}: error_lines {more_errors:+d}; lost [{shown}]")
+        print(
+            f"  REGRESSED {path}: error_lines {more_errors:+d}; "
+            f"duplicate_ids {dups}; lost [{shown}]"
+        )
     if len(regressed) > 40:
         print(f"  ... {len(regressed) - 40} more regressed files")
 

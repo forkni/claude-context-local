@@ -471,7 +471,9 @@ class TestMultiLanguageChunker:
         Verified empirically (not just asserted) against `_Generic`, a
         flexible array member, a `restrict`-qualified VLA parameter, and a
         C99 designated initializer -- tree-sitter-cpp parses all of them
-        without error, and every declaration still gets a name.
+        without error, and every definition still gets a name. `struct Cfg`
+        is only referenced, so the `cfg` data declaration is preamble text,
+        not a `Cfg` chunk (ADR-0087 addendum).
         """
         source = tmp_path / "legacy.h"
         source.write_text(
@@ -486,7 +488,11 @@ class TestMultiLanguageChunker:
 
         assert len(chunks) > 0, "Pure-C header produced no chunks"
         chunk_names = {chunk.name for chunk in chunks if chunk.name}
-        assert {"imax", "Buf", "copy", "Cfg"} <= chunk_names
+        assert {"imax", "Buf", "copy"} <= chunk_names
+        preamble = "\n".join(
+            c.content for c in chunks if c.chunk_type == "module_preamble"
+        )
+        assert ".width = 4, .height = 8" in preamble
 
     def test_cpp_function_node_types(self):
         """Only `function_definition` counts as a function for the adaptive-

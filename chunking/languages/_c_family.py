@@ -1242,6 +1242,12 @@ def extract_instantiation_relationships(
 
 _MACRO_NODE_TYPES = frozenset({"preproc_def", "preproc_function_def"})
 
+# Chunked only with a `body`: without one they are forward declarations or
+# type references (`enum K k` in a parameter list), not definitions.
+_SPECIFIER_NODE_TYPES = frozenset(
+    {"struct_specifier", "enum_specifier", "union_specifier", "class_specifier"}
+)
+
 # A comment-only preamble run at least this tall is kept (ADR-0087).
 _MIN_KEPT_COMMENT_LINES = 3
 
@@ -1281,10 +1287,20 @@ class _CFamilyChunker(LanguageChunker):
         A continued macro is a definition in its own right (the HAL and
         intrinsics headers carry most of their logic in them), while the
         thousands of one-line constants would swamp search as chunks.
+
+        A struct/enum/union/class specifier chunks only with a body. A
+        bodyless one inside a prototype made the prototype chunk-holding, so
+        preamble descent split it into runs that shared a line, and their
+        chunk ids collided (ADR-0087 addendum).
         """
         if node.type in _MACRO_NODE_TYPES:
             start, end = node_line_span(node)
             return end > start and super().should_chunk_node(node)
+        if (
+            node.type in _SPECIFIER_NODE_TYPES
+            and node.child_by_field_name("body") is None
+        ):
+            return False
         return super().should_chunk_node(node)
 
     def get_line_numbers(self, node: Any) -> tuple[int, int]:

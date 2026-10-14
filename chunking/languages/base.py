@@ -1022,6 +1022,10 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         cross into or out of a descended node, and a descended child whose
         lines another chunk already covers is not collected again.
 
+        No two preamble chunks share a line. They are unnamed, so their chunk
+        ids would collide and fail a full reindex; a group starting on the
+        line the previous preamble ends on is folded into that preamble.
+
         Two duplication/loss failure modes, both measured on a real GLSL
         file and fixed here:
 
@@ -1072,6 +1076,23 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
             i = bisect_right(covered_starts, start) - 1
             return i >= 0 and covered[i][1] >= end
 
+        last_group: list[Any] = []  # the nodes of preamble_chunks[-1]
+
+        def emit(group: list[Any]) -> None:
+            # Unnamed preambles on one line would share a chunk id, so a
+            # group starting on the line the previous preamble ends on is
+            # folded into it; only that line lies between the two.
+            if (
+                last_group
+                and group[0].start_point[0] + 1 <= preamble_chunks[-1].end_line
+            ):
+                preamble_chunks.pop()
+                group = [last_group[0], *group]
+            emitted = len(preamble_chunks)
+            self._append_preamble_chunk(group, source_bytes, preamble_chunks)
+            if len(preamble_chunks) > emitted:
+                last_group[:] = group
+
         def flush(next_node: Any | None) -> None:
             if not run_nodes:
                 return
@@ -1081,7 +1102,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                 or not self._is_boilerplate_run(trimmed)
             ):
                 for group in self._preamble_groups(trimmed, source_bytes, config):
-                    self._append_preamble_chunk(group, source_bytes, preamble_chunks)
+                    emit(group)
             run_nodes.clear()
 
         def collect(children: list[Any], descended: bool) -> None:

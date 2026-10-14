@@ -99,3 +99,21 @@ def test_chunker_metadata_parity(ext: str, snapshot) -> None:
     assert result, f"chunk_file returned no chunks for {ext!r} — check fixture content"
 
     assert result == snapshot
+
+
+@pytest.mark.parametrize("ext", CORPUS_EXTENSIONS, ids=lambda e: e.lstrip("."))
+def test_chunk_ids_are_unique(ext: str) -> None:
+    """No two chunks share `(start, end, type, name)`, the parts of a chunk id.
+
+    A collision makes a full reindex fail its index-position check
+    (ADR-0087 addendum).
+    """
+    ts = TreeSitterChunker()
+    if ts.get_chunker(f"sample{ext}") is None:
+        pytest.skip(f"No tree-sitter grammar available for {ext!r} — install first")
+
+    chunks = ts.chunk_file(f"sample{ext}", content=_load_fixture(ext))
+    keys = [
+        (c.start_line, c.end_line, c.node_type, c.metadata.get("name")) for c in chunks
+    ]
+    assert len(keys) == len(set(keys))
