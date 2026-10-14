@@ -1212,13 +1212,13 @@ class IncrementalIndexer:
         # Guarded here rather than inside add_to_index: an incremental pass
         # with only removals legitimately adds nothing, so the empty-input
         # warning would be noise on this path.
-        if all_embedding_results:
-            logger.info(f"[INCREMENTAL] Indexer type: {type(self.indexer).__name__}")
-            self._index_write_stage.add_to_index(
-                all_embedding_results, log_prefix="[INCREMENTAL] "
-            )
-
-        return len(all_embedding_results)
+        if not all_embedding_results:
+            return 0
+        logger.info(f"[INCREMENTAL] Indexer type: {type(self.indexer).__name__}")
+        # add_to_index drops repeated chunk ids, so count what it wrote.
+        return self._index_write_stage.add_to_index(
+            all_embedding_results, log_prefix="[INCREMENTAL] "
+        )
 
     def _clear_gpu_cache(self, log_prefix: str = "INCREMENTAL") -> None:
         """Clear GPU cache to free intermediate tensors from embedding batches.

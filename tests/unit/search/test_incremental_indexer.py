@@ -345,12 +345,10 @@ class TestIncrementalIndexer:
         self.mock_chunker.is_supported.return_value = True
         self.mock_chunker.chunk_file.return_value = [mock_chunk]
 
-        mock_embedding_result = Mock()
-        mock_embedding_result.metadata = {}
-        self.mock_embedder.embed_chunks.return_value = [
-            mock_embedding_result,
-            mock_embedding_result,
-        ]
+        first = Mock(chunk_id="a.py:1-2:function:f", metadata={})
+        repeat = Mock(chunk_id="a.py:1-2:function:f", metadata={})
+        # The write seam drops a repeated chunk id; it is not counted as added.
+        self.mock_embedder.embed_chunks.return_value = [first, repeat]
 
         result = indexer.incremental_index(str(self.project_path), "test_project")
 
@@ -359,7 +357,7 @@ class TestIncrementalIndexer:
         assert result.files_removed == 1
         assert result.files_modified == 1
         assert result.chunks_removed == 10  # 2 files * 5 chunks each
-        assert result.chunks_added == 2
+        assert result.chunks_added == 1
 
     def test_add_new_chunks_passes_partial_pass_cache_to_embedder(self, tmp_path):
         """_add_new_chunks must resolve the chunk cache and forward pass_kind=INCREMENTAL.
