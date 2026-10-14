@@ -328,6 +328,8 @@ class TestUserFilterPreservation:
             )
         )
 
+        from chunking.multi_language_chunker import MultiLanguageChunker
+
         chunker_calls: list = []
 
         class CapturingChunker:
@@ -376,16 +378,18 @@ class TestUserFilterPreservation:
                 "mcp_server.tools.search_handlers.get_project_storage_dir",
                 return_value=project_dir,
             ),
-            patch(
-                "mcp_server.tools.search_handlers.MultiLanguageChunker",
-                CapturingChunker,
+            # Patch only the factory classmethod: replacing the whole class
+            # would also hide MultiLanguageChunker.DEFAULT_IGNORED_DIRS from
+            # the filter code that reads it.
+            patch.object(
+                MultiLanguageChunker, "for_project", CapturingChunker.for_project
             ),
             patch(
                 "mcp_server.tools.search_handlers.get_embedder",
                 return_value=MagicMock(),
             ),
             patch(
-                "mcp_server.tools.search_handlers.IncrementalIndexer",
+                "search.incremental_indexer.IncrementalIndexer",
                 return_value=ii_instance,
             ),
             patch("mcp_server.tools.search_handlers.get_config", return_value=cfg),

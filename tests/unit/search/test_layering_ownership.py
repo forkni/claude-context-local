@@ -132,3 +132,24 @@ class TestResourceRefresherWiring:
             f"{stray}. Pass resource_refresher=McpResourceRefresher() "
             "explicitly -- the class default is NullResourceRefresher()."
         )
+
+    def test_incremental_indexer_has_one_construction_site(self):
+        """mcp_server/ builds IncrementalIndexer in exactly one place,
+        search_factory.build_incremental_indexer -- handlers call it rather
+        than duplicating the chunker + kwargs wiring."""
+        sites: list[str] = []
+        for norm, tree in _iter_production_trees("mcp_server"):
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "IncrementalIndexer"
+                ):
+                    sites.append(f"{norm}:{node.lineno}")
+
+        assert len(sites) == 1 and sites[0].startswith(
+            "mcp_server/search_factory.py:"
+        ), (
+            f"IncrementalIndexer(...) construction sites under mcp_server/: "
+            f"{sites}. Call search_factory.build_incremental_indexer instead."
+        )

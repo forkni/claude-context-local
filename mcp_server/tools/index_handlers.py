@@ -10,11 +10,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from chunking.multi_language_chunker import MultiLanguageChunker
 from mcp_server.config_schema import arg
 from mcp_server.model_pool_manager import get_embedder
-from mcp_server.resource_manager import McpResourceRefresher
 from mcp_server.search_factory import (
+    build_incremental_indexer,
     get_index_manager,
     get_searcher,
 )
@@ -38,7 +37,6 @@ from search.filters import (
     is_dependency_pattern,
     parse_dir_pattern,
 )
-from search.incremental_indexer import IncrementalIndexer
 
 
 logger = logging.getLogger(__name__)
@@ -124,42 +122,21 @@ def _run_accessibility_precheck(directory_path: Path) -> None:
 
 
 def _run_indexing(
-    indexer,
-    embedder,
-    chunker,
+    incremental_indexer,
     directory_path: str,
     incremental: bool,
-    include_dirs=None,
-    exclude_dirs=None,
-    include_exclusive: bool = False,
 ) -> dict:
     """Run the indexing process and return results.
 
     Args:
-        indexer: HybridSearcher or CodeIndexManager
-        embedder: Embedding model
-        chunker: Code chunker
+        incremental_indexer: IncrementalIndexer from
+            ``search_factory.build_incremental_indexer``
         directory_path: Path to index
         incremental: Whether to do incremental indexing
-        include_dirs: Optional list of directories to include
-        exclude_dirs: Optional list of directories to exclude
-        include_exclusive: When True, every include_dirs pattern is treated as
-            narrowing (whitelist-only), even ones that reach into a dependency
-            tree — the escape hatch back to the pre-additive behavior.
 
     Returns:
         dict: Indexing results with files/chunks counts and timing
     """
-    incremental_indexer = IncrementalIndexer(
-        indexer=indexer,
-        embedder=embedder,
-        chunker=chunker,
-        include_dirs=include_dirs,
-        exclude_dirs=exclude_dirs,
-        include_exclusive=include_exclusive,
-        resource_refresher=McpResourceRefresher(),
-    )
-
     start_time = datetime.now()
 
     if incremental:
@@ -993,19 +970,8 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
             index_dir = project_dir / "index"
             index_dir.mkdir(exist_ok=True)
 
-            # Load config for chunker initialization
+            # Load config for hybrid mode and chunker settings
             config = get_config()
-
-            # Initialize chunker eagerly (cheap, no I/O or model load).
-            # for_project() wires RepositoryRelationFilter so import edges are
-            # classified (stdlib/third_party/local) rather than stored as "unknown".
-            chunker = MultiLanguageChunker.for_project(
-                str(directory_path),
-                include_dirs,
-                exclude_dirs,
-                enable_entity_tracking=config.performance.enable_entity_tracking,
-                include_exclusive=include_exclusive,
-            )
 
             # Capture loop-local values before entering the thread.
             _dir = str(directory_path)
@@ -1014,6 +980,7 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
             _include = include_dirs
             _exclude = exclude_dirs
             _include_exclusive = include_exclusive
+            _config = config
 
             # get_embedder() and get_searcher() can trigger multi-second model/
             # index loads on first use — offload together with the indexing work
@@ -1030,16 +997,16 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
                 # costs time and logs spurious mismatch warnings.
                 _searcher = get_searcher(_dir, load_existing=_incremental)
                 _indexer = _searcher if _enable_hybrid else get_index_manager(_dir)
-                return _run_indexing(
+                _incremental_indexer = build_incremental_indexer(
+                    _dir,
                     _indexer,
                     _embedder,
-                    chunker,
-                    _dir,
-                    _incremental,
-                    _include,
-                    _exclude,
-                    _include_exclusive,
+                    config=_config,
+                    include_dirs=_include,
+                    exclude_dirs=_exclude,
+                    include_exclusive=_include_exclusive,
                 )
+                return _run_indexing(_incremental_indexer, _dir, _incremental)
 
             result = await asyncio.to_thread(_setup_and_run)
 

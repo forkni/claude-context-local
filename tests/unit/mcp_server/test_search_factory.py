@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from mcp_server.search_factory import build_hybrid_searcher
+from mcp_server.search_factory import build_hybrid_searcher, build_incremental_indexer
 
 
 def _make_config() -> SimpleNamespace:
@@ -75,3 +75,49 @@ def test_build_hybrid_searcher_forwards_load_existing_false():
         build_hybrid_searcher(config, project_storage, embedder, load_existing=False)
 
     assert mock_cls.call_args.kwargs["load_existing"] is False
+
+
+def test_build_incremental_indexer_wires_chunker_filters_and_refresher():
+    """The single IncrementalIndexer construction site (ADR-0053) must build its
+    chunker via for_project (never the bare constructor, which drops
+    relation_filter) and forward the same filters to both chunker and indexer,
+    with the real MCP resource refresher."""
+    from mcp_server.resource_manager import McpResourceRefresher
+
+    config = SimpleNamespace(
+        performance=SimpleNamespace(enable_entity_tracking=True),
+    )
+    indexer = MagicMock(name="indexer")
+    embedder = MagicMock(name="embedder")
+
+    with (
+        patch("chunking.multi_language_chunker.MultiLanguageChunker") as mock_chunker,
+        patch("search.incremental_indexer.IncrementalIndexer") as mock_ii,
+    ):
+        result = build_incremental_indexer(
+            "/proj",
+            indexer,
+            embedder,
+            config=config,
+            include_dirs=["src"],
+            exclude_dirs=["build"],
+            include_exclusive=True,
+        )
+
+    mock_chunker.assert_not_called()
+    mock_chunker.for_project.assert_called_once_with(
+        "/proj",
+        ["src"],
+        ["build"],
+        enable_entity_tracking=True,
+        include_exclusive=True,
+    )
+    kwargs = mock_ii.call_args.kwargs
+    assert kwargs["indexer"] is indexer
+    assert kwargs["embedder"] is embedder
+    assert kwargs["chunker"] is mock_chunker.for_project.return_value
+    assert kwargs["include_dirs"] == ["src"]
+    assert kwargs["exclude_dirs"] == ["build"]
+    assert kwargs["include_exclusive"] is True
+    assert isinstance(kwargs["resource_refresher"], McpResourceRefresher)
+    assert result is mock_ii.return_value

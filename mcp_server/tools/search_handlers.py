@@ -7,13 +7,12 @@ import asyncio
 import logging
 from typing import Any
 
-from chunking.multi_language_chunker import MultiLanguageChunker
 from mcp_server.config_schema import arg
 from mcp_server.guidance import add_system_message
 from mcp_server.model_pool_manager import get_embedder
-from mcp_server.resource_manager import McpResourceRefresher
 from mcp_server.search_factory import (
     build_hybrid_searcher,
+    build_incremental_indexer,
     get_index_manager,
     get_searcher,
 )
@@ -30,7 +29,6 @@ from search.exceptions import DimensionMismatchError
 from search.filters import normalize_path_lower
 from search.graph_integration import prefer_real_language_nodes
 from search.graph_view import GraphView
-from search.incremental_indexer import IncrementalIndexer
 from search.metadata import MetadataStore
 from search.relationship_analyzer import RelationshipAnalyzer, filter_ambiguous_edges
 
@@ -180,23 +178,14 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
             state.current_project = project_path
     else:
         indexer = get_index_manager(project_path)
-    # for_project() wires RepositoryRelationFilter so import edges are
-    # classified (stdlib/third_party/local) rather than stored as "unknown".
-    chunker = MultiLanguageChunker.for_project(
+    incremental_indexer = build_incremental_indexer(
         project_path,
-        include_dirs,
-        exclude_dirs,
-        enable_entity_tracking=config.performance.enable_entity_tracking,
-        include_exclusive=include_exclusive,
-    )
-    incremental_indexer = IncrementalIndexer(
-        indexer=indexer,
-        embedder=embedder,
-        chunker=chunker,
+        indexer,
+        embedder,
+        config=config,
         include_dirs=include_dirs,
         exclude_dirs=exclude_dirs,
         include_exclusive=include_exclusive,
-        resource_refresher=McpResourceRefresher(),
     )
 
     # Temporarily disable allow_ram_fallback during auto-reindex for performance

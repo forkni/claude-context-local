@@ -162,17 +162,11 @@ class TestRunIndexingSuccessPropagation:
             success=False, error="PermissionError: [WinError 32]"
         )
 
-        with patch(
-            "mcp_server.tools.index_handlers.IncrementalIndexer",
-            return_value=fake_indexer,
-        ):
-            result = _run_indexing(
-                indexer=MagicMock(),
-                embedder=MagicMock(),
-                chunker=MagicMock(),
-                directory_path=str(tmp_path),
-                incremental=False,
-            )
+        result = _run_indexing(
+            fake_indexer,
+            directory_path=str(tmp_path),
+            incremental=False,
+        )
 
         assert result["indexing_succeeded"] is False
         assert result["indexing_error"] == "PermissionError: [WinError 32]"
@@ -403,21 +397,37 @@ class TestHandlerChunkerOwnership:
 
     These tests lock in the import-classification fix so it cannot silently regress
     (someone replacing .for_project(...) with the bare constructor would drop
-    relation_filter and re-introduce the "unknown" import-category bug).
+    relation_filter and re-introduce the "unknown" import-category bug). Both
+    sites now go through search_factory.build_incremental_indexer, whose own
+    for_project use is pinned in test_search_factory.py.
     """
 
-    def test_handle_index_directory_uses_for_project(self, tmp_path: Path) -> None:
-        """handle_index_directory builds its chunker via MultiLanguageChunker.for_project."""
+    def test_handle_index_directory_builds_via_factory(self, tmp_path: Path) -> None:
+        """handle_index_directory builds its IncrementalIndexer (and so its
+        chunker) via search_factory.build_incremental_indexer."""
         import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import AsyncMock, patch
 
         project_dir = tmp_path / "myproject"
         project_dir.mkdir()
 
         with (
             patch(
-                "mcp_server.tools.index_handlers.MultiLanguageChunker"
-            ) as mock_chunker_cls,
+                "mcp_server.tools.index_handlers.build_incremental_indexer"
+            ) as mock_build,
+            patch("mcp_server.tools.index_handlers.get_embedder") as mock_emb,
+            patch("mcp_server.tools.index_handlers.get_searcher"),
+            patch("mcp_server.tools.index_handlers.get_index_manager") as mock_gim,
+            patch(
+                "mcp_server.tools.index_handlers._run_indexing",
+                return_value={
+                    "files_added": 0,
+                    "files_modified": 0,
+                    "files_removed": 0,
+                    "chunks_added": 0,
+                    "time_taken": 0.0,
+                },
+            ) as mock_run,
             # _cleanup_previous_resources is a lazy in-function import; patch at source
             patch("mcp_server.resource_manager._cleanup_previous_resources"),
             patch("mcp_server.tools.index_handlers.get_state") as mock_state,
@@ -437,22 +447,6 @@ class TestHandlerChunkerOwnership:
             # update_project_filters calls storage_manager's own get_project_storage_dir
             # (unpatched module-level reference) — mock it to prevent real-storage writes.
             patch("mcp_server.tools.index_handlers.update_project_filters"),
-            # asyncio.to_thread runs _setup_and_run in a worker thread; that closure calls
-            # get_embedder / get_searcher (real implementations) which trigger model loading
-            # and create real project dirs.  Short-circuit the whole thread since this test
-            # only verifies the chunker call-site ABOVE the to_thread dispatch.
-            patch(
-                "asyncio.to_thread",
-                AsyncMock(
-                    return_value={
-                        "files_added": 0,
-                        "files_modified": 0,
-                        "files_removed": 0,
-                        "chunks_added": 0,
-                        "time_taken": 0.0,
-                    }
-                ),
-            ),
             # TreeSitterChunker is used in the accessibility pre-check (lazy import)
             patch(
                 "chunking.tree_sitter.TreeSitterChunker.get_supported_extensions",
@@ -471,15 +465,23 @@ class TestHandlerChunkerOwnership:
             index_dir = proj_dir / "index"
             index_dir.mkdir()
             mock_psd.return_value = proj_dir
-            mock_chunker_cls.for_project.return_value = MagicMock()
 
             from mcp_server.tools.index_handlers import handle_index_directory
 
             asyncio.run(handle_index_directory({"directory_path": str(project_dir)}))
 
-        mock_chunker_cls.for_project.assert_called_once()
-        # The bare constructor must NOT be called (that would be the regression)
-        mock_chunker_cls.assert_not_called()
+        mock_build.assert_called_once()
+        args, kwargs = mock_build.call_args
+        assert args == (
+            str(project_dir),
+            mock_gim.return_value,
+            mock_emb.return_value,
+        )
+        assert kwargs["config"] is mock_cfg.return_value
+        assert kwargs["include_dirs"] is None
+        mock_run.assert_called_once_with(
+            mock_build.return_value, str(project_dir), True
+        )
 
     def test_check_auto_reindex_uses_for_project(self, tmp_path: Path) -> None:
         """_check_auto_reindex builds its chunker via MultiLanguageChunker.for_project."""
@@ -490,7 +492,7 @@ class TestHandlerChunkerOwnership:
 
         with (
             patch(
-                "mcp_server.tools.search_handlers.MultiLanguageChunker"
+                "chunking.multi_language_chunker.MultiLanguageChunker"
             ) as mock_chunker_cls,
             patch(
                 "mcp_server.tools.search_handlers.get_project_storage_dir"
@@ -498,7 +500,7 @@ class TestHandlerChunkerOwnership:
             patch("mcp_server.tools.search_handlers.get_config") as mock_cfg,
             patch("mcp_server.tools.search_handlers.get_embedder") as mock_emb,
             patch("mcp_server.tools.search_handlers.get_index_manager"),
-            patch("mcp_server.tools.search_handlers.IncrementalIndexer") as mock_ii,
+            patch("search.incremental_indexer.IncrementalIndexer") as mock_ii,
             patch("mcp_server.tools.search_handlers.temporary_ram_fallback_off"),
             # validate_embedder_index_compatibility is a lazy in-function import
             patch("search.dimension_validator.validate_embedder_index_compatibility"),
@@ -606,7 +608,7 @@ class TestIncludeExclusiveOmissionIsTriState:
 
         with (
             patch(
-                "mcp_server.tools.index_handlers.MultiLanguageChunker"
+                "chunking.multi_language_chunker.MultiLanguageChunker"
             ) as mock_chunker_cls,
             patch("mcp_server.resource_manager._cleanup_previous_resources"),
             patch("mcp_server.tools.index_handlers.get_state") as mock_state,
@@ -745,7 +747,9 @@ class TestIndexDirectoryAsyncJob:
             return func(*a, **kw)
 
         with (
-            patch.object(index_handlers, "MultiLanguageChunker") as mock_chunker_cls,
+            patch(
+                "chunking.multi_language_chunker.MultiLanguageChunker"
+            ) as mock_chunker_cls,
             patch("mcp_server.resource_manager._cleanup_previous_resources"),
             patch("mcp_server.resource_manager.bind_active_project_overrides"),
             patch.object(index_handlers, "get_state") as mock_state,

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from search.base_searcher import BaseSearcher
     from search.hybrid_searcher import HybridSearcher
+    from search.incremental_indexer import IncrementalIndexer
     from search.indexer import CodeIndexManager
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,62 @@ def build_hybrid_searcher(
         project_id=project_id,
         config=config,
         load_existing=load_existing,
+    )
+
+
+def build_incremental_indexer(
+    project_path: str,
+    indexer,
+    embedder,
+    *,
+    config,
+    include_dirs: list[str] | None = None,
+    exclude_dirs: list[str] | None = None,
+    include_exclusive: bool = False,
+) -> "IncrementalIndexer":
+    """Construct the IncrementalIndexer (and its project chunker) for a project.
+
+    The single construction site under mcp_server/ (ADR-0053) — shared by
+    ``search_handlers._check_auto_reindex`` and ``index_handlers``'s
+    index_directory path, which each built the identical chunker +
+    7-kwarg ``IncrementalIndexer(...)`` inline before this extraction.
+    Indexer *selection* (cached searcher, fresh HybridSearcher, or
+    CodeIndexManager) differs per caller and stays with the caller.
+
+    Args:
+        project_path: Project root to chunk and index.
+        indexer: HybridSearcher or CodeIndexManager to write into.
+        embedder: Embedder instance used for the new chunks.
+        config: Effective SearchConfig (already resolved by the caller).
+        include_dirs: Optional include_dirs filter patterns.
+        exclude_dirs: Optional exclude_dirs filter patterns.
+        include_exclusive: Treat every include_dirs pattern as narrowing
+            (whitelist-only), even ones that reach into a dependency tree.
+
+    Returns:
+        A newly constructed IncrementalIndexer wired to McpResourceRefresher.
+    """
+    from chunking.multi_language_chunker import MultiLanguageChunker
+    from mcp_server.resource_manager import McpResourceRefresher
+    from search.incremental_indexer import IncrementalIndexer
+
+    # for_project() wires RepositoryRelationFilter so import edges are
+    # classified (stdlib/third_party/local) rather than stored as "unknown".
+    chunker = MultiLanguageChunker.for_project(
+        project_path,
+        include_dirs,
+        exclude_dirs,
+        enable_entity_tracking=config.performance.enable_entity_tracking,
+        include_exclusive=include_exclusive,
+    )
+    return IncrementalIndexer(
+        indexer=indexer,
+        embedder=embedder,
+        chunker=chunker,
+        include_dirs=include_dirs,
+        exclude_dirs=exclude_dirs,
+        include_exclusive=include_exclusive,
+        resource_refresher=McpResourceRefresher(),
     )
 
 
