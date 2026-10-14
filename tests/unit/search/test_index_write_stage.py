@@ -1229,3 +1229,77 @@ class TestIncrementalIndexResultDataclass:
         assert d["error"] == "boom"
         assert d["bm25_resynced"] is True
         assert d["bm25_resync_count"] == 5
+
+
+class TestAddToIndexDuplicateChunkIds:
+    """A repeated chunk id costs one chunk, not the whole reindex.
+
+    The metadata store upserts, so a second vector under the same id leaves
+    the store one row short of the FAISS index and the full reindex fails its
+    position check (ADR-0087 addendum).
+    """
+
+    @staticmethod
+    def _result(chunk_id: str, seed: int):
+        import numpy as np
+
+        from embeddings.embedder import EmbeddingResult
+
+        rng = np.random.default_rng(seed)
+        return EmbeddingResult(
+            embedding=rng.random(8).astype(np.float32),
+            chunk_id=chunk_id,
+            metadata={"content": chunk_id, "file_path": "a.h"},
+        )
+
+    def test_later_duplicate_is_dropped_with_one_warning(self, caplog):
+        stage, _, indexer, *_ = _make_stage()
+        first, dup = (
+            self._result("a.h:1-1:module_preamble", 1),
+            self._result("a.h:1-1:module_preamble", 2),
+        )
+        other = self._result("a.h:3-9:function_definition:f", 3)
+
+        with caplog.at_level("WARNING", logger="search.index_write_stage"):
+            added = stage.add_to_index([first, dup, other])
+
+        assert added == 2
+        indexer.add_embeddings.assert_called_once_with([first, other])
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "1 duplicate chunk id" in warnings[0].getMessage()
+        assert "a.h:1-1:module_preamble" in warnings[0].getMessage()
+
+    def test_unique_ids_pass_through_unchanged(self, caplog):
+        stage, _, indexer, *_ = _make_stage()
+        results = [self._result(f"a.h:{i}-{i}:x", i) for i in range(3)]
+
+        with caplog.at_level("WARNING", logger="search.index_write_stage"):
+            assert stage.add_to_index(results) == 3
+
+        indexer.add_embeddings.assert_called_once_with(results)
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_full_index_with_a_duplicate_passes_position_validation(self, tmp_path):
+        from search.indexer import CodeIndexManager
+
+        manager = CodeIndexManager(str(tmp_path), embedder=None, project_id=None)
+        stage = IndexWriteStage(
+            embedder=Mock(),
+            indexer=manager,
+            snapshot_manager=Mock(),
+            build_metadata_fn=Mock(),
+            clear_gpu_fn=Mock(),
+        )
+        results = [
+            self._result("a.h:1-4:function_definition:f", 1),
+            self._result("a.h:5-5:module_preamble", 2),
+            self._result("a.h:5-5:module_preamble", 3),
+            self._result("a.h:6-9:function_definition:g", 4),
+        ]
+
+        try:
+            assert stage.add_to_index(results) == 3
+            assert manager.validate_index_consistency() == (True, [])
+        finally:
+            manager.close()  # the SqliteDict writer thread blocks interpreter exit

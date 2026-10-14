@@ -217,11 +217,20 @@ class IndexWriteStage:
         full-path semantics — an incremental pass with nothing new to add
         guards at the call site instead of calling this with an empty list.
 
+        A result whose ``chunk_id`` repeats an earlier one in the batch is
+        dropped with one warning. The metadata store upserts by id, so the
+        repeat would leave it one row short of FAISS and fail a full
+        reindex's position check; dropping it costs one chunk instead
+        (ADR-0087 addendum).
+
         Args:
             embedding_results: Batched embedding results to add.
             log_prefix: Log-line prefix (e.g. ``"[INCREMENTAL] "``); empty
                 for the full-index pass.
         """
+        embedding_results = self._drop_duplicate_chunk_ids(
+            embedding_results, log_prefix
+        )
         if embedding_results:
             logger.info(
                 f"{log_prefix}Adding {len(embedding_results)} embeddings to index"
@@ -231,6 +240,28 @@ class IndexWriteStage:
         else:
             logger.warning(f"{log_prefix}No embedding results to add to index")
         return len(embedding_results)
+
+    @staticmethod
+    def _drop_duplicate_chunk_ids(
+        embedding_results: list[Any], log_prefix: str
+    ) -> list[Any]:
+        """Keep the first result for each ``chunk_id``, warning once on repeats."""
+        seen: set[str] = set()
+        kept: list[Any] = []
+        dropped: list[str] = []
+        for result in embedding_results:
+            if result.chunk_id in seen:
+                dropped.append(result.chunk_id)
+            else:
+                seen.add(result.chunk_id)
+                kept.append(result)
+        if not dropped:
+            return embedding_results
+        logger.warning(
+            f"{log_prefix}Dropped {len(dropped)} duplicate chunk id(s) before the "
+            f"index write; first: {dropped[:5]}"
+        )
+        return kept
 
     def finalize(
         self,
