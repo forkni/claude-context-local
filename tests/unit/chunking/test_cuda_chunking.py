@@ -173,9 +173,7 @@ class TestLaunchConfigNewlinePreservation:
             "}\n"
         )
         source_bytes = source.encode("utf-8")
-        match = _LAUNCH_CFG.search(source_bytes)
-        assert match is not None
-        assert match.group(0) == b"<<<n > 0 ? n : 1, n >> 2>>>"
+        assert _LAUNCH_CFG.findall(source_bytes) == [b"<<<n > 0 ? n : 1, n >> 2>>>"]
 
         rewritten = self.chunker.preprocess_source_for_parse(source_bytes)
         assert_length_and_newline_invariants(source_bytes, rewritten)

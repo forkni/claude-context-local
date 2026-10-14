@@ -84,6 +84,16 @@ class TestTierFor:
             (18.0, "workstation"),
             (24.0, "workstation"),
         ],
+        ids=[
+            "0gb-minimal-low",
+            "5.9gb-minimal-high",
+            "6gb-laptop-low",
+            "7.99gb-laptop-high",
+            "10gb-desktop-low",
+            "17.9gb-desktop-high",
+            "18gb-workstation-low",
+            "24gb-workstation-mid",
+        ],
     )
     def test_half_open_bands(self, vram_gb, name):
         assert tier_for(vram_gb).name == name

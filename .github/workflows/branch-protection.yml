@@ -5,9 +5,14 @@ on:
     branches: [development, main]
   pull_request:
     branches: [development, main]
+  merge_group:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -24,6 +29,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
           fetch-depth: 0  # Full history for branch comparison
+          persist-credentials: false
 
       - name: Check for CRLF in the index
         run: |
@@ -112,6 +118,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
@@ -150,6 +157,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Set up uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
@@ -178,7 +187,7 @@ jobs:
         # Verify promoted package imports from site-packages, not checkout, and fast smoke suite passes
         run: |
           uv run --no-sync python -P -c "import pathlib, mcp_server, search; p = pathlib.Path(search.__file__).resolve(); assert 'site-packages' in p.parts, f'Imported from checkout, not wheel: {p}'; print('Wheel import verified:', p)"
-          uv run --no-sync pytest tests/ -m smoke -q || true
+          uv run --no-sync pytest tests/ -m smoke -q --no-cov
 
       - name: Run tests with coverage
         run: |
@@ -220,6 +229,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Set up uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
@@ -254,7 +265,7 @@ jobs:
       - name: Run type checking (pyrefly)
         id: pyrefly
         continue-on-error: true
-        run: uv run pyrefly check --baseline pyrefly-baseline.json
+        run: uv run pyrefly check --baseline pyrefly-baseline.json --output-format=github
         # Blocking gate — exact-pinned pyrefly against versioned baseline
 
       - name: Check skipped/xfail test drift

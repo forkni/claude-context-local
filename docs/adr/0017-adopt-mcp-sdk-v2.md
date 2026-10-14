@@ -134,3 +134,10 @@ with a timeout — an open SSE stream held by a bare GET does not exit on its ow
   baseline — the rewrite is behavior-preserving at every tested seam.
 - `docs/VERSION_HISTORY.md` and `CLAUDE.md`'s Quick Reference version line move to 0.23.0
   alongside this change.
+- **Addendum (`mcp>=2.2`, `2026-07-28` protocol)**: `mcp.server.lowlevel.Server.__init__`
+  automatically registers a built-in `server/discover` handler advertising protocol version
+  `2026-07-28`, but unlike `MCPServer` does not wire `on_subscriptions_listen` by default.
+  Clients that negotiate `2026-07-28` and immediately open `subscriptions/listen` (such as
+  Antigravity IDE) receive JSON-RPC `-32601` (`Method not found`) mapped to HTTP `404 Not Found`
+  unless `on_subscriptions_listen=ListenHandler(InMemorySubscriptionBus())` is passed to
+  `Server(...)` (and closed on HTTP shutdown).

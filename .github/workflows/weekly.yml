@@ -19,10 +19,18 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: weekly-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   slow-integration:
     name: Slow Integration Tests
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 60
 
     steps:
@@ -30,6 +38,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
           ref: development
+          persist-credentials: false
 
       - name: Set up uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0

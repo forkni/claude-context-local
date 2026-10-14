@@ -22,6 +22,7 @@ from search.chunk_id import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.smoke
 class TestIsChunkId:
     def test_valid_function(self):
         assert is_chunk_id("search/filters.py:22-31:function:normalize_path") is True

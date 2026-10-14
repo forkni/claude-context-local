@@ -504,16 +504,29 @@ def d_overprotective(func):
                     )
 
 
-def _has_set_operand(node: ast.BinOp) -> bool:
+def _is_set_expr(node: ast.AST) -> bool:
+    if isinstance(node, (ast.Set, ast.SetComp)):
+        return True
+    return isinstance(node, ast.Call) and dotted_name(node) in ("set", "frozenset")
+
+
+def _has_set_operand(node: ast.BinOp, set_names: set[str] | None = None) -> bool:
     for side in (node.left, node.right):
-        if isinstance(side, (ast.Set, ast.SetComp)):
+        if _is_set_expr(side):
             return True
-        if isinstance(side, ast.Call) and dotted_name(side) in ("set", "frozenset"):
+        if set_names and isinstance(side, ast.Name) and side.id in set_names:
             return True
     return False
 
 
 def d_bitwise(func):
+    set_names = {
+        target.id
+        for stmt in ast.walk(func)
+        if isinstance(stmt, ast.Assign) and _is_set_expr(stmt.value)
+        for target in stmt.targets
+        if isinstance(target, ast.Name)
+    }
     for node in ast.walk(func):
         if not isinstance(node, ast.Assert):
             continue
@@ -521,7 +534,7 @@ def d_bitwise(func):
             if (
                 isinstance(sub, ast.BinOp)
                 and isinstance(sub.op, BITWISE_OPS)
-                and not _has_set_operand(sub)
+                and not _has_set_operand(sub, set_names)
             ):
                 yield (
                     "bitwise-assert",

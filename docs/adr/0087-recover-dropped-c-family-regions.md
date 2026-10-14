@@ -141,3 +141,37 @@ Full tree, 1,025 files including the templates, baseline → T5:
   - GLSL preprocessor nodes have the same phantom end row.
   - Go, Rust, TypeScript and JavaScript probably share cause G, since only GLSL and C-family adopt
     comments. Measure them separately.
+
+## Addendum (2026-10-14): unique preamble ids
+
+A full reindex of TouchDesigner failed after this change:
+`[SYNC_CHECK] Duplicate chunk_ids: 33325 total, 33324 unique`, then
+`unicodeobject.h:780-780:module_preamble has index_id 23675 but is at position 23674`. A chunk id is
+`path:start-end:type[:name]`, and preamble chunks have no name, so two preambles on one line share an id.
+The metadata store upserts, so the full path fails its position check and an incremental pass silently
+loses one chunk.
+
+Cause: the C-family chunker chunked **bodyless specifiers**: type references such as `enum
+PyUnicode_Kind kind`, forward declarations, `class Foo;`. A prototype naming such a type therefore held
+a chunk, decision 5 descended it, and the runs flushed on either side of the specifier both landed on
+line 780.
+
+1. **Bodyless specifiers are not chunks.** `_CFamilyChunker.should_chunk_node` rejects a
+   `struct_`/`enum_`/`union_`/`class_specifier` with no `body` field.
+2. **Preamble ids are unique by construction, in every language.** `_collect_module_preamble_chunks`
+   folds a group that starts on the line the previous preamble ends on into that preamble. Whatever lies
+   between the two groups sits on that one line. This also closes the same-line case in minified JS/TS.
+3. **Write-boundary backstop.** `IndexWriteStage.add_to_index`, the one `add_embeddings` seam for the
+   full and incremental paths, keeps the first result per `chunk_id` and logs one WARNING. A future
+   collision costs one chunk, not the reindex. It still makes one `add_embeddings` call, which flat/IVF
+   sizing needs on a fresh index.
+4. **Harness.** `measure_parse_recall` reports `duplicate_ids` and chunks per node type; `--compare`
+   flags any file with a duplicate as regressed.
+
+Results against T5 (no file changed ERROR lines; every lost definition is a bodyless specifier;
+`duplicate_ids` 0, from 29 extra in 6 files):
+
+| View | Chunks | Definitions | Dropped code | Dropped comment |
+|---|---|---|---|---|
+| Indexed (904 files) | 30,512 (−655) | 26,380 (−664) | −4 | −12 |
+| Full (1,025 files) | 36,825 (−907) | 31,327 (−759) | −28 | −13 |

@@ -83,6 +83,9 @@ jobs:
       - name: Initialize session database
         run: uv run cosmic-ray init "${{ matrix.target }}" "${{ matrix.target }}.sqlite"
 
+      - name: Filter pragma no-mutate lines
+        run: uv run cr-filter-pragma "${{ matrix.target }}.sqlite"
+
       - name: Execute mutations
         run: uv run cosmic-ray exec "${{ matrix.target }}" "${{ matrix.target }}.sqlite"
 

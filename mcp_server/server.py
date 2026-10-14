@@ -37,6 +37,10 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 # Official MCP SDK imports
 from mcp.server import ServerRequestContext  # noqa: E402
 from mcp.server.lowlevel import Server  # noqa: E402
+from mcp.server.subscriptions import (  # noqa: E402
+    InMemorySubscriptionBus,
+    ListenHandler,
+)
 from mcp.shared.exceptions import MCPError  # noqa: E402
 from mcp.types import (  # noqa: E402
     INVALID_PARAMS,
@@ -736,6 +740,12 @@ For more information, see the project documentation.
 # ============================================================================
 # SDK v2 wires handlers in via constructor kwargs (v1 used @server.*()
 # decorators after the fact) - must come after every handle_* def above.
+# `on_subscriptions_listen` is required for MCP 2026-07-28 clients (e.g.
+# Antigravity IDE) that negotiate 2026-07-28 via `server/discover` and
+# immediately open a `subscriptions/listen` SSE stream.
+
+_subscription_bus = InMemorySubscriptionBus()
+_listen_handler = ListenHandler(_subscription_bus)
 
 server = Server(
     "Code Search",
@@ -746,6 +756,7 @@ server = Server(
     on_read_resource=handle_read_resource,
     on_list_prompts=handle_list_prompts,
     on_get_prompt=handle_get_prompt,
+    on_subscriptions_listen=_listen_handler,
 )
 
 
@@ -1026,7 +1037,10 @@ if __name__ == "__main__":
 
                     # session_manager.run() creates the task group required by handle_request
                     async with session_manager.run():
-                        yield  # Application runs
+                        try:
+                            yield  # Application runs
+                        finally:
+                            _listen_handler.close()
 
                 finally:
                     logger.info("=" * 60)

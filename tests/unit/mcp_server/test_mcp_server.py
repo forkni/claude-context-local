@@ -619,3 +619,113 @@ class TestHandleCallToolErrorClassification:
             result = await handle_call_tool(MagicMock(), self._params("fake_tool"))
 
         assert result.is_error is False
+
+
+class TestSubscriptionsListen:
+    """Regression tests for MCP 2026-07-28 subscriptions/listen support.
+
+    Antigravity IDE's MCP client negotiates protocol version 2026-07-28 via
+    `server/discover` and immediately opens a `subscriptions/listen` SSE stream
+    concurrently with `tools/list`. Without `on_subscriptions_listen` registered
+    on the low-level `Server`, `subscriptions/listen` fails with JSON-RPC -32601
+    (Method not found), which `_streamable_http_modern` maps to HTTP 404 Not Found,
+    causing the client to abort with `session not found` and cancel `tools/list`.
+    """
+
+    def test_server_registers_subscriptions_listen_handler(self):
+        """Low-level server must register a `subscriptions/listen` request handler."""
+        from mcp_server.server import server
+
+        assert "subscriptions/listen" in server._request_handlers
+
+    @pytest.mark.asyncio
+    async def test_subscriptions_listen_returns_sse_ack_instead_of_404(self):
+        """POST /mcp with `subscriptions/listen` must open a 200 SSE stream and emit ack."""
+        import json
+
+        import httpx2
+        from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+
+        from mcp_server.server import _listen_handler, server
+
+        sm = StreamableHTTPSessionManager(
+            app=server,
+            event_store=None,
+            json_response=True,
+            stateless=False,
+        )
+
+        async def app_with_auto_close(scope, receive, send):
+            async def wrapped_send(message):
+                await send(message)
+                if (
+                    message.get("type") == "http.response.body"
+                    and b"notifications/subscriptions/acknowledged"
+                    in message.get("body", b"")
+                ):
+                    _listen_handler.close()
+
+            await sm.handle_request(scope, receive, wrapped_send)
+
+        transport = httpx2.ASGITransport(app=app_with_auto_close)
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+            "Mcp-Protocol-Version": "2026-07-28",
+        }
+        meta_2026 = {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }
+
+        async with (
+            sm.run(),
+            httpx2.AsyncClient(
+                transport=transport, base_url="http://localhost:8765"
+            ) as client,
+        ):
+            discover_resp = await client.post(
+                "/mcp",
+                headers={**headers, "Mcp-Method": "server/discover"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "server/discover",
+                    "params": {"_meta": meta_2026},
+                },
+            )
+            assert discover_resp.status_code == 200
+            discover_data = discover_resp.json()
+            assert "2026-07-28" in discover_data["result"]["supportedVersions"]
+            assert (
+                discover_data["result"]["capabilities"]["tools"]["listChanged"] is True
+            )
+
+            listen_resp = await client.post(
+                "/mcp",
+                headers={**headers, "Mcp-Method": "subscriptions/listen"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "subscriptions/listen",
+                    "params": {
+                        "notifications": {"toolsListChanged": True},
+                        "_meta": meta_2026,
+                    },
+                },
+            )
+            assert listen_resp.status_code == 200
+            assert listen_resp.headers["content-type"].startswith("text/event-stream")
+
+            ack_payload = None
+            for line in listen_resp.text.splitlines():
+                if line.startswith("data: "):
+                    ack_payload = json.loads(line[len("data: ") :])
+                    break
+
+            assert ack_payload is not None
+            assert ack_payload["method"] == "notifications/subscriptions/acknowledged"
+            assert (
+                ack_payload["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"]
+                == 2
+            )

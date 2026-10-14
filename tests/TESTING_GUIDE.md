@@ -2214,7 +2214,7 @@ item is a confirmed-killed transient false positive (cosmic-ray `NumberReplacer`
 #### Local run workflow (cosmic-ray)
 
 ```bash
-# Per-target session (gitignored configs/sqlite live in project root)
+# Per-target session (cr-*.toml configs are tracked; *.sqlite sessions are gitignored)
 uv run cosmic-ray init cr-<target>.toml cr-<target>.sqlite
 uv run cosmic-ray baseline cr-<target>.toml
 uv run cr-filter-pragma cr-<target>.sqlite                   # mark # pragma: no mutate lines BEFORE exec
@@ -2222,20 +2222,18 @@ uv run cosmic-ray exec cr-<target>.toml cr-<target>.sqlite   # sequential, not p
 uv run cr-report cr-<target>.sqlite
 ```
 
-Windows gotcha: `test-command` must use the absolute venv path, not bare `python`:
+Windows gotcha: `test-command` must use the explicit `.venv` interpreter path, not bare `python`:
 
 ```toml
-test-command = "D:/claude-context-local/.venv/Scripts/python.exe -m pytest <paths> -q --no-header --tb=no"
+test-command = ".venv/Scripts/python.exe -m pytest <paths> -q --no-header --tb=no"
 ```
 
 `subprocess.run(['python', ...])` resolves to system Python via Windows App Paths registry even
-when the venv is first in PATH. See `cr-*.toml` (gitignored) for the per-target configs.
+when the venv is first in PATH. See the tracked `cr-*.toml` files at the repo root for the per-target configs.
 
-#### CI run (mutmut on Linux)
+#### CI run (`cosmic-ray` on `windows-2025`)
 
-Trigger via `Actions → Mutation Testing (Periodic) → Run workflow`. Select `target` (default:
-`all`). The workflow installs dev+test+callgraph extras, runs baseline, then one mutmut step per
-target. Artifacts: `.mutmut-cache` (14 days retention).
+Trigger via `Actions → Mutation Testing (Periodic) → Run workflow` (`.github/workflows/mutation-testing.yml`, also scheduled Mondays 06:00 UTC). Select `target` (default: `all`, expanding to `cr-metrics.toml`, `cr-reranker.toml`, `cr-call_edge.toml`, `cr-centrality_ranker.toml`, `cr-reranking_engine.toml`). Each matrix leg installs locked `test`+`dev`+`callgraph` extras, verifies `cosmic-ray baseline`, initializes the `.sqlite` session, runs `cr-filter-pragma`, executes mutations, reports survivors, gates via `cr-rate --fail-over 25.0`, and uploads the `*.sqlite` session artifact (14 days retention).
 
 #### Tier 3 targets (de-mocked; mutation runs in progress / complete)
 
@@ -2279,8 +2277,8 @@ first extracting pure scoring cores or building in-memory fakes for heavy depend
 | `pytest-split` sharding across runners | per-runner wall-clock > ~10 min after xdist |
 | Python 3.12 matrix | validated clean on 3.11 + meaningful new-version diff |
 | Combined cross-runner coverage | matrix sharding is added |
-| `pyrefly` blocking gate | ✅ **DONE** 2026-06-30 — `continue-on-error` removed; pyrefly exits 0 on development |
-| `pre-commit` blocking gate | `uvx pre-commit run --all-files` exits 0 on CI |
+| `pyrefly` blocking gate | ✅ **DONE** 2026-06-30 — enforced against `pyrefly-baseline.json` in `branch-protection.yml` (`lint` job) |
+| `pre-commit` blocking gate | ✅ **DONE** 2026-07-21 — `uv run pre-commit run --all-files` is a blocking aggregated check in `branch-protection.yml` (`lint` job) |
 | Mutation testing (periodic) | already added; re-run before releases or after major test refactors |
 
 When adding `pytest-split`: use `--splitting-algorithm least_duration` (compatible with
@@ -2289,7 +2287,7 @@ changes.
 
 ### Codecov integration (Phase 3 CI scaffolding 2026-06-30; `codecov.yml` added Phase 11, 2026-08-03)
 
-`codecov/codecov-action@v5` is wired into `branch-protection.yml` (test job, development branch only).
+`codecov/codecov-action@v6` is wired into `branch-protection.yml` (test job).
 CI emits `--cov-report=xml`; the XML is uploaded after each run including on coverage-gate
 failures, so regressions remain visible on Codecov. The README badge tracks the `development` branch.
 
@@ -2313,8 +2311,7 @@ failures, so regressions remain visible on Codecov. The README badge tracks the 
 **Notes:**
 
 - `fail_ci_if_error: false` — Codecov outages or missing token never fail the CI gate.
-- `pyrefly` is now a **blocking gate** (2026-06-30) — `continue-on-error` removed after verified green.
-- `pre-commit` remains `continue-on-error: true`; flip to blocking when it exits 0 consistently on CI.
+- `pyrefly` and `pre-commit` are both **blocking gates** in `branch-protection.yml`'s `lint` job (aggregated with `ruff check`, `ruff format`, `check_skipped_tests.py`, `scan_test_smells.py`, and `typos` into `All Gates Green`).
 
 ### Integrity-gap remediation (Phases 10–12 — 2026-08-04)
 
@@ -2851,7 +2848,7 @@ Comprehensive structural quality audit and remediation campaign executed under t
 
 #### Mechanical Smell Remediation (Phase 15.2)
 
-- Added `tools/scan_test_smells.py` and locked baseline at `.smell-baseline.json` via `[tool.scan_test_smells]` in `pyproject.toml`.
+- Added `scripts/scan_test_smells.py` and locked baseline at `.smell-baseline.json` via `[tool.scan_test_smells]` in `pyproject.toml`.
 - Enhanced AST assertion helper detector to recognize internal assertion helpers with leading underscores (`_assert_...`, `_check_...`), eliminating false positives in `test_graph_integration.py` and `test_faiss_vector_index.py`.
 - Pruned empty placeholder test (`TestGraphSizeReduction` in `tests/unit/test_relation_filter.py`).
 - Remedied all 24 true `no-assert` (shallow promises) tests across unit suites with behavioral and state assertions:
@@ -2874,7 +2871,7 @@ Comprehensive structural quality audit and remediation campaign executed under t
   - `test_storage_layout.py`: string type return assertion for model dir parser.
   - `test_console.py`: line spinner cp1252 byte-encoding assertions.
   - `test_observability.py`: noop span return value assertion and tracing overhead headroom.
-- **Result**: `no-assert` smells reduced from 33 to **0**. Total test smells dropped from 398 to **365**.
+- **Result**: `no-assert` smells reduced from 33 to **0**. Total test smells dropped from 398 to **365** (and further reduced to **316** in commit `fdf9c1c3`).
 
 #### High-CRAP & Complexity Remediation (Phase 15.3)
 
@@ -2889,4 +2886,16 @@ Comprehensive structural quality audit and remediation campaign executed under t
 #### Coverage Ratchet & Baseline Lock (Phase 15.4)
 
 - **Coverage Ratchet**: `fail_under` ratcheted from **84** to **86** in `pyproject.toml` `[tool.coverage.report]`. Verified clean run across 5,214 passing tests (0 failures, 30 snapshots passed) in 96.14s with branch coverage reaching **87.39%** across 20,766 statements and 7,252 branches.
-- **Smell Baseline**: `.smell-baseline.json` locked at 365 total smells (0 `no-assert`).
+- **Smell Baseline**: `.smell-baseline.json` locked at 316 total smells (0 `no-assert`, 0 `commented-test`, 0 `suboptimal-assert`).
+
+### CI/CD Pipeline & Test Suite Hardening (Phase 16 — 2026-10-14)
+
+Verified the repository's CI/CD pipeline and test suite against `setup-ci-cd-pipeline` (v1.6.0) and `harden-test-suite` (v1.4.1):
+
+| Dimension | Before | After |
+| --- | --- | --- |
+| Test-smell ratchet (`scripts/scan_test_smells.py`) | 322 smells (regressed +6 over 316 baseline across 5 categories) | **314 smells** (`.smell-baseline.json` ratcheted down from 316 → 314; `bitwise-assert` detector enhanced to recognize local `set`-assigned variables) |
+| Local CGW hook parity (`check_lint.sh` / `commit_enhanced.sh`) | `scan_test_smells.py`, `check_skipped_tests.py`, and `--snapshot-update` guard ran only on GitHub Actions | Enforced locally in `scripts/git/check_lint.sh` (blocking on push) and `scripts/git/commit_enhanced.sh` (advisory on commit) |
+| Pytest strictness (`[tool.pytest.ini_options]`) | `--strict-markers` in `addopts` only | Added `strict_markers = true`, `strict_config = true`, `xfail_strict = true` |
+| Installed-wheel smoke gate (`branch-protection.yml`) | `pytest tests/ -m smoke -q \|\| true` (swallowed failures and exit code 5) | Tagged `TestIsChunkId` with `@pytest.mark.smoke` and removed `\|\| true` so smoke failures fail fast |
+| Workflow security & anatomy | Read-only checkouts omitted `persist-credentials: false`; `nightly.yml`/`weekly.yml` used `windows-latest` without `concurrency:` or `shell: bash`; `mutation-testing.yml` omitted `cr-filter-pragma` | `persist-credentials: false` on all read-only checkouts; `merge_group:` trigger and `--output-format=github` on `pyrefly`; `windows-2025`, `concurrency:`, and `shell: bash` in `nightly.yml`/`weekly.yml`; `cr-filter-pragma` in `mutation-testing.yml`; `dependabot.yml` torch ignore updated to `>=2.12.0` |

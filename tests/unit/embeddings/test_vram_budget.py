@@ -537,9 +537,18 @@ class TestReapplyVramCap:
 
     @patch("embeddings.vram_budget.set_vram_limit")
     @patch("embeddings.vram_budget.get_search_config")
-    def test_failure_is_swallowed_and_logged_on_given_logger(
-        self, mock_get_cfg, mock_set
-    ):
+    def test_failure_is_swallowed_without_applying_cap(self, mock_get_cfg, mock_set):
+        mock_get_cfg.side_effect = RuntimeError("config unavailable")
+
+        from embeddings.vram_budget import reapply_vram_cap
+
+        reapply_vram_cap()
+
+        mock_set.assert_not_called()
+
+    @patch("embeddings.vram_budget.set_vram_limit")
+    @patch("embeddings.vram_budget.get_search_config")
+    def test_failure_is_logged_on_given_logger(self, mock_get_cfg, _mock_set):
         mock_get_cfg.side_effect = RuntimeError("config unavailable")
         logger = MagicMock()
 
@@ -547,7 +556,6 @@ class TestReapplyVramCap:
 
         reapply_vram_cap(logger)
 
-        mock_set.assert_not_called()
         logger.warning.assert_called_once()
         assert "non-fatal" in logger.warning.call_args.args[0]
 

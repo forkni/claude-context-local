@@ -73,7 +73,7 @@ class TestExternCBlockDescent:
         }
         for chunk in _preambles(self.chunks):
             span = set(range(chunk.start_line, chunk.end_line + 1))
-            assert not span & symbol_lines, chunk.content
+            assert span.isdisjoint(symbol_lines), chunk.content
 
     def test_symbols_inside_the_block_still_chunk(self):
         names = {c.metadata.get("name") for c in _others(self.chunks)}

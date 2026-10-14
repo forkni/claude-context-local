@@ -265,6 +265,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Harness.** `scripts/benchmark/measure_parse_recall.py` (run with `-m`) reports dropped lines per
     file, with `--compare` and `--index-filter`.
 
+- **A full reindex no longer fails on duplicate chunk ids** (`chunking/languages/_c_family.py`,
+  `chunking/languages/base.py`, `search/index_write_stage.py`,
+  [ADR-0087 addendum](docs/adr/0087-recover-dropped-c-family-regions.md#addendum-2026-10-14-unique-preamble-ids)).
+  A chunk id is `path:start-end:type[:name]`. After the change above, a TouchDesigner reindex stopped
+  with `[SYNC_CHECK] Duplicate chunk_ids` and `unicodeobject.h:780-780:module_preamble has index_id
+  23675 but is at position 23674`: two unnamed preambles shared line 780.
+  - **Bodyless specifiers are not chunks.** `class Foo;` and `enum K k` in a parameter define nothing.
+  - **Preambles never share a line**, in any language. A run that starts where the previous one ends
+    folds into it.
+  - **Chunks with the same span, type, name and parent fold into one**, in any language, so same-name
+    overloads on one line (`A() {} A(const A&) {}`) keep both texts under one id.
+  - **Write-boundary backstop.** `IndexWriteStage.add_to_index` keeps the first result per chunk id and
+    logs one WARNING, so a future collision costs one chunk, not the reindex.
+  - **Harness.** `measure_parse_recall` reports `duplicate_ids` and chunks per node type; `--compare`
+    flags any file with a duplicate.
+
 - **USD `codegenTemplates` directories are skipped by default** (`chunking/language_registry.py`). These
   directories hold Jinja templates saved as `.cpp`/`.h`, which never parse as C++. `include_dirs` can
   re-admit them.
