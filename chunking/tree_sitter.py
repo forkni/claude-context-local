@@ -269,7 +269,9 @@ def _uncovered_is_pure_trivia(content: str, uncovered: list[tuple[int, int]]) ->
     recovery). Such content carries no searchable symbols, so dropping it
     from chunking doesn't warrant a WARNING.
     """
-    source_lines = content.splitlines()
+    # Rows break on "\n" only, as tree-sitter's do: splitlines() also breaks
+    # on form feeds and other separators, shifting every later row.
+    source_lines = content.removesuffix("\n").split("\n")
     for start, end in uncovered:
         for lineno in range(start, end + 1):
             idx = lineno - 1
@@ -568,7 +570,7 @@ class TreeSitterChunker:
             )
             return
 
-        source_lines = parsed_source.content.splitlines()
+        source_lines = parsed_source.content.removesuffix("\n").split("\n")
         total_lines = len(source_lines) or 1
         # Blank lines in an uncovered span carry nothing to lose.
         lines_lost = sum(

@@ -282,8 +282,13 @@ class CppChunker(_CFamilyChunker):
                     break
 
         # A doc comment is a sibling of the node it documents, as in GLSL;
-        # fold it into the CodeChunk.docstring channel (ADR-0087).
-        docstring = self._extract_sibling_comment_docstring(node, source)
+        # fold it into the CodeChunk.docstring channel (ADR-0087). A templated
+        # class chunks without its template_declaration wrapper, whose
+        # siblings hold the comment.
+        anchor = node
+        if node.parent is not None and node.parent.type == "template_declaration":
+            anchor = node.parent
+        docstring = self._extract_sibling_comment_docstring(anchor, source)
         if docstring:
             metadata["docstring"] = docstring
 

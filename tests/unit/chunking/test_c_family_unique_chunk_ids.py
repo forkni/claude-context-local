@@ -174,6 +174,24 @@ class TestSameIdChunksFold:
         assert folded.content.startswith(first)
         assert folded.content.endswith(second)
 
+    def test_nested_same_id_chunk_keeps_its_ancestor_text(self):
+        # Levels 2 and 3 both sit in a namespace named A; level 3 is inside
+        # level 2, so the fold must not cut level 2 at level 3's end.
+        source = "namespace A { namespace A { namespace A { int x; } int y; } }\n"
+        chunks = TreeSitterChunker().chunk_file("x.hpp", content=source)
+        level2 = "namespace A { namespace A { int x; } int y; }"
+        assert any(c.content == level2 for c in chunks)
+        keys = [
+            (*key, c.parent_class) for key, c in zip(_keys(chunks), chunks, strict=True)
+        ]
+        assert [k for k, n in Counter(keys).items() if n > 1] == []
+
+    def test_fold_keeps_calls_of_every_overload(self):
+        source = "struct S { S() { a(); } S(int) { b(); } };\n"
+        chunks = TreeSitterChunker().chunk_file("x.hpp", content=source)
+        (folded,) = [c for c in chunks if c.node_type == "function_definition"]
+        assert [call[0] for call in folded.metadata["calls"]] == ["a", "b"]
+
     def test_overloads_on_separate_lines_stay_apart(self):
         source = "class A {\npublic:\n    A() {}\n    A(const A&) {}\n};\n"
         chunks = TreeSitterChunker().chunk_file("x.hpp", content=source)

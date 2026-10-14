@@ -852,7 +852,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         """
         source_bytes = bytes(source_code, "utf-8")
         chunks = []
-        first_of_id: dict[tuple[Any, ...], tuple[TreeSitterChunk, int]] = {}
+        first_of_id: dict[tuple[Any, ...], tuple[TreeSitterChunk, int, int]] = {}
 
         # Get config BEFORE traverse (needed for splitting decision in closure)
         if config is None:
@@ -900,7 +900,8 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                 # Chunks sharing span, node type, name and parent share a
                 # chunk id, and a full reindex fails on a repeated id. Two
                 # same-name overloads on one line (`A() {} A(const A&) {}`)
-                # therefore fold into the first chunk, which then spans both.
+                # therefore fold into the first chunk, which then spans both
+                # and carries both nodes' call and relationship edges.
                 id_key = (
                     start_line,
                     end_line,
@@ -911,10 +912,14 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                 )
                 folded = first_of_id.get(id_key)
                 if folded is not None:
-                    chunk, start_byte = folded
-                    chunk.content = source_bytes[start_byte : node.end_byte].decode(
-                        "utf-8"
-                    )
+                    chunk, start_byte, end_byte = folded
+                    # A repeat nested inside the first node ends before it.
+                    end_byte = max(end_byte, node.end_byte)
+                    chunk.content = source_bytes[start_byte:end_byte].decode("utf-8")
+                    first_of_id[id_key] = (chunk, start_byte, end_byte)
+                    for key in ("calls", "relationships"):
+                        if metadata.get(key):
+                            chunk.metadata.setdefault(key, []).extend(metadata[key])
                 else:
                     chunk = TreeSitterChunk(
                         content=content,
@@ -926,7 +931,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                         parent_class=parent_class_name,
                     )
                     chunks.append(chunk)
-                    first_of_id[id_key] = (chunk, node.start_byte)
+                    first_of_id[id_key] = (chunk, node.start_byte, node.end_byte)
 
                 # For containers (classes and, in overriding leaves,
                 # namespaces/structs/unions), continue traversing to find

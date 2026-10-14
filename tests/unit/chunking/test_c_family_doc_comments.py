@@ -64,6 +64,16 @@ int g() { return 1; }
 }
 """
 
+_DOC_ABOVE_TEMPLATE_CLASS = """int g;
+
+/** Holds one T. */
+template <typename T>
+class Box {
+ public:
+  T get();
+};
+"""
+
 _PREAMBLE_ENDING_IN_DEFINE = """int f(void) { return 0; }
 #define A 1
 
@@ -114,6 +124,13 @@ class TestDocCommentAdoption:
         for cls in _CHUNKERS:
             chunks = _chunks(cls, _DOC_ABOVE_FUNCTION)
             assert _named(chunks, "add").metadata.get("docstring") == "Adds one."
+
+    def test_templated_class_adopts_comment_above_its_template_head(self):
+        # The comment is a sibling of the opaque template_declaration,
+        # not of the class_specifier the chunker descends into.
+        for cls in (CppChunker, CudaChunker):
+            chunks = _chunks(cls, _DOC_ABOVE_TEMPLATE_CLASS)
+            assert _named(chunks, "Box").metadata.get("docstring") == "Holds one T."
 
     def test_comment_past_a_blank_line_is_not_adopted(self):
         for cls in _CHUNKERS:
