@@ -37,7 +37,7 @@ import re
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from .base import LanguageChunker
+from .base import LanguageChunker, node_line_span
 
 
 #: A tree-sitter `Parser.parse`-shaped callable: bytes in, a parsed tree out.
@@ -1194,6 +1194,16 @@ class _CFamilyChunker(LanguageChunker):
             self._neutralize(source_bytes), parse
         )
         return repair_bare_macro_lines(repaired, parse)
+
+    def get_line_numbers(self, node: Any) -> tuple[int, int]:
+        """Last content line, not the row a preprocessor node's newline ends on.
+
+        `#include` / `#define` nodes own their trailing newline, so they end
+        at column 0 of the next row and `end_point[0] + 1` names a line the
+        chunk does not contain. Inside a descended node that phantom line
+        counted as covered and the declaration on it was dropped.
+        """
+        return node_line_span(node)
 
     def _preamble_descend_children(self, node: Any) -> list[Any] | None:
         """Descend every chunk-holding node that is not a chunk itself.

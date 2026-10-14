@@ -108,6 +108,26 @@ class TestDeclarationWithChunkedStruct:
         assert "1," in text
 
 
+class TestPreprocessorChunkEndLine:
+    """A preprocessor node ends at column 0 of the next row (it owns its
+    newline). `end_point[0] + 1` reported that next row as the chunk's last
+    line, and descent then treated the line after a nested `#include` as
+    already covered and dropped it."""
+
+    _SOURCE = 'extern "C" {\n#include "x.h"\nint foo_data;\n}\n'
+
+    def setup_method(self):
+        self.chunks = CppChunker().chunk_code(self._SOURCE)
+
+    def test_include_chunk_ends_on_its_own_line(self):
+        (include,) = [c for c in self.chunks if c.node_type == "preproc_include"]
+        assert (include.start_line, include.end_line) == (2, 2)
+
+    def test_line_after_nested_include_is_not_dropped(self):
+        text = "\n".join(c.content for c in _preambles(self.chunks))
+        assert "int foo_data;" in text
+
+
 class TestOtherLanguagesKeepRootOnlyCollection:
     def test_base_hook_never_descends(self):
         chunker = PythonChunker()
