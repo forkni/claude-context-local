@@ -36,7 +36,10 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from chunking.language_registry import EXT_TO_LANGUAGE
+from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.tree_sitter import (
+    TreeSitterChunk,
     TreeSitterChunker,
     _collect_error_line_ranges,
     _uncovered_line_ranges,
@@ -44,21 +47,8 @@ from chunking.tree_sitter import (
 from search.filters import PathFilter
 
 
-C_FAMILY_EXTS = (
-    ".c",
-    ".h",
-    ".cpp",
-    ".cc",
-    ".cxx",
-    ".c++",
-    ".hpp",
-    ".hh",
-    ".hxx",
-    ".inl",
-    ".ipp",
-    ".tpp",
-    ".cu",
-    ".cuh",
+C_FAMILY_EXTS = tuple(
+    ext for ext, language in EXT_TO_LANGUAGE.items() if language in ("c", "cpp")
 )
 
 # The conditional directives `_neutralize` blanks before parsing: they are
@@ -67,12 +57,30 @@ _CONDITIONAL_RE = re.compile(rb"^[ \t]*#[ \t]*(?:if|ifdef|ifndef|elif|else|endif
 _TRIVIA = {b"{", b"}", b"};", b"});"}
 
 _chunker: TreeSitterChunker | None = None
+_converter: MultiLanguageChunker | None = None
 
 
 def _worker_init() -> None:
     logging.disable(logging.CRITICAL)
-    global _chunker
-    _chunker = TreeSitterChunker()
+    global _chunker, _converter
+    _converter = MultiLanguageChunker()
+    _chunker = _converter.tree_sitter_chunker
+
+
+def _chunk_id_key(chunk: TreeSitterChunk) -> tuple[Any, ...]:
+    """The parts of the chunk id `Embedder._build_chunk_id` builds, minus path.
+
+    Mirrors `MultiLanguageChunker._convert_tree_chunks`: the node type maps
+    to a chunk type (many to one) and the name is qualified by its parent.
+    """
+    assert _converter is not None
+    parent = chunk.parent_class or chunk.metadata.get("parent_name")
+    name = chunk.metadata.get("name")
+    chunk_type = _converter._map_node_type(
+        chunk.node_type, parent, chunk.metadata.get("parent_type"), chunk.language
+    )
+    qualified = f"{parent}.{name}" if parent and name else name
+    return (chunk.start_line, chunk.end_line, chunk_type, qualified)
 
 
 def _comment_rows(root_node: Any, lines: list[bytes]) -> set[int]:
@@ -161,10 +169,8 @@ def _measure_file(job: tuple[str, str]) -> dict[str, Any] | None:
         name = chunk.metadata.get("name")
         if name:
             defs[f"{chunk.node_type}:{name}"] += 1
-    # The parts of a chunk id: a repeat fails a full reindex.
-    id_keys = {
-        (c.start_line, c.end_line, c.node_type, c.metadata.get("name")) for c in chunks
-    }
+    # A repeated chunk id fails a full reindex.
+    id_keys = {_chunk_id_key(c) for c in chunks}
 
     return {
         "path": rel_path,
@@ -262,13 +268,20 @@ def _print_summary(totals: dict[str, Any], base: dict[str, Any] | None) -> None:
     print("=" * 72)
 
 
-def _compare(records: list[dict[str, Any]], base_records: list[dict[str, Any]]) -> None:
+def _compare(
+    records: list[dict[str, Any]],
+    base_records: list[dict[str, Any]],
+    failed: list[dict[str, Any]],
+) -> None:
     by_path = {r["path"]: r for r in base_records}
     regressed: list[tuple[str, int, int, list[str]]] = []
     improved = 0
+    # A baseline holds only files that chunked, so any of them failing now is
+    # a regression, not a file to skip.
+    newly_failed = [f for f in failed if f["path"] in by_path]
     for r in records:
         b = by_path.get(r["path"])
-        if b is None or "failed" in b:
+        if b is None:
             continue
         lost = Counter(b["defs"]) - Counter(r["defs"])
         more_errors = r["error_lines"] - b["error_lines"]
@@ -279,7 +292,12 @@ def _compare(records: list[dict[str, Any]], base_records: list[dict[str, Any]]) 
             r["dropped_code"] < b["dropped_code"] or r["error_lines"] < b["error_lines"]
         ):
             improved += 1
-    print(f"improved files: {improved}   regressed files: {len(regressed)}")
+    print(
+        f"improved files: {improved}   "
+        f"regressed files: {len(regressed) + len(newly_failed)}"
+    )
+    for f in newly_failed:
+        print(f"  REGRESSED {f['path']}: chunking failed: {f['failed']}")
     for path, more_errors, dups, lost in regressed[:40]:
         shown = ", ".join(lost[:8]) + (
             f" (+{len(lost) - 8} more)" if len(lost) > 8 else ""
@@ -350,7 +368,7 @@ def main() -> None:
         )
 
     if base_doc:
-        _compare(records, base_doc["files"])
+        _compare(records, base_doc["files"], failed)
 
     if args.json:
         out = Path(args.json)
