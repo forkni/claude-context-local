@@ -981,8 +981,9 @@ and `evaluation/BASELINE_20260801.md`.
 set CLAUDE_RERANKER_MODEL=jinaai/jina-reranker-v3
 
 # Via code
+from search.config import RerankerConfig
 from search.neural_reranker import create_reranker
-reranker = create_reranker("jinaai/jina-reranker-v3")
+reranker = create_reranker(RerankerConfig(model_name="jinaai/jina-reranker-v3"))
 ```
 
 For Jina v3, the packed-window controls are construction-time settings in `search_config.json`

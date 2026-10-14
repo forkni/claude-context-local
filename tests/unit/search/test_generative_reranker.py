@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from search.config import RerankerConfig
 from search.neural_reranker import (
     GENERATIVE_RERANKERS,
     GenerativeReranker,
@@ -12,6 +13,11 @@ from search.neural_reranker import (
     create_reranker,
 )
 from search.reranker import SearchResult
+
+
+def _cfg(model_name: str, **overrides) -> RerankerConfig:
+    """RerankerConfig for the factory; unset fields keep the config's defaults."""
+    return RerankerConfig(model_name=model_name, **overrides)
 
 
 class TestGenerativeReranker:
@@ -983,37 +989,50 @@ class TestTokenIdValidation:
 class TestCreateRerankerFactory:
     """Tests for create_reranker factory function."""
 
+    def test_factory_has_no_field_kwargs(self):
+        """The factory takes the RerankerConfig object and a device override, nothing else.
+
+        Re-adding a per-field kwarg would re-create the second source of
+        defaults this signature deleted (ADR-0032 addendum).
+        """
+        import inspect
+
+        assert list(inspect.signature(create_reranker).parameters) == [
+            "config",
+            "device",
+        ]
+
     def test_creates_generative_reranker_for_qwen3(self):
         """Should create GenerativeReranker for Qwen3 models."""
-        reranker = create_reranker("Qwen/Qwen3-Reranker-0.6B")
+        reranker = create_reranker(_cfg("Qwen/Qwen3-Reranker-0.6B"))
         assert isinstance(reranker, GenerativeReranker)
         assert reranker.model_name == "Qwen/Qwen3-Reranker-0.6B"
 
     def test_creates_discriminative_reranker_for_bge(self):
         """Should create NeuralReranker for BGE models."""
-        reranker = create_reranker("BAAI/bge-reranker-v2-m3")
+        reranker = create_reranker(_cfg("BAAI/bge-reranker-v2-m3"))
         assert isinstance(reranker, NeuralReranker)
         assert reranker.model_name == "BAAI/bge-reranker-v2-m3"
 
     def test_creates_discriminative_reranker_for_gte(self):
         """Should create NeuralReranker for GTE models."""
-        reranker = create_reranker("Alibaba-NLP/gte-reranker-modernbert-base")
+        reranker = create_reranker(_cfg("Alibaba-NLP/gte-reranker-modernbert-base"))
         assert isinstance(reranker, NeuralReranker)
 
     def test_discriminative_reranker_preserves_batch_size(self):
         """Discriminative rerankers should preserve batch size."""
-        reranker = create_reranker("BAAI/bge-reranker-v2-m3", batch_size=16)
+        reranker = create_reranker(_cfg("BAAI/bge-reranker-v2-m3", batch_size=16))
         assert reranker.batch_size == 16
 
     def test_device_passed_to_reranker(self):
         """Device parameter should be passed through."""
-        reranker = create_reranker("Qwen/Qwen3-Reranker-0.6B", device="cpu")
+        reranker = create_reranker(_cfg("Qwen/Qwen3-Reranker-0.6B"), device="cpu")
         assert reranker.device == "cpu"
 
     def test_all_generative_models_in_registry(self):
         """All models in GENERATIVE_RERANKERS should create GenerativeReranker."""
         for model_name in GENERATIVE_RERANKERS:
-            reranker = create_reranker(model_name)
+            reranker = create_reranker(_cfg(model_name))
             assert isinstance(reranker, GenerativeReranker)
             assert reranker.model_name == model_name
 
@@ -1024,14 +1043,14 @@ class TestCreateRerankerFactory:
         GenerativeReranker(model_name, device) with no batch_size — this asserts the
         threaded-through value actually lands on the instance.
         """
-        reranker = create_reranker("Qwen/Qwen3-Reranker-0.6B", batch_size=4)
+        reranker = create_reranker(_cfg("Qwen/Qwen3-Reranker-0.6B", batch_size=4))
         assert isinstance(reranker, GenerativeReranker)
         assert reranker.batch_size == 4
 
     def test_instruction_passthrough_to_generative_reranker(self):
         """instruction must be threaded through create_reranker to GenerativeReranker."""
         reranker = create_reranker(
-            "Qwen/Qwen3-Reranker-0.6B", instruction="custom instruction"
+            _cfg("Qwen/Qwen3-Reranker-0.6B", instruction="custom instruction")
         )
         assert isinstance(reranker, GenerativeReranker)
         assert reranker.instruction == "custom instruction"
@@ -1040,18 +1059,18 @@ class TestCreateRerankerFactory:
         """Omitting instruction must fall back to the model's built-in default."""
         from search.neural_reranker import _QWEN_RERANK_DEFAULT_INSTRUCTION
 
-        reranker = create_reranker("Qwen/Qwen3-Reranker-0.6B")
+        reranker = create_reranker(_cfg("Qwen/Qwen3-Reranker-0.6B"))
         assert isinstance(reranker, GenerativeReranker)
         assert reranker.instruction == _QWEN_RERANK_DEFAULT_INSTRUCTION
 
     def test_doc_max_chars_passthrough_to_generative_reranker(self):
         """doc_max_chars must land on GenerativeReranker (pointwise budget)."""
-        reranker = create_reranker("Qwen/Qwen3-Reranker-0.6B", doc_max_chars=2500)
+        reranker = create_reranker(_cfg("Qwen/Qwen3-Reranker-0.6B", doc_max_chars=2500))
         assert isinstance(reranker, GenerativeReranker)
         assert reranker.doc_max_chars == 2500
 
     def test_doc_max_chars_defaults_to_4000_for_generative_reranker(self):
-        reranker = create_reranker("Qwen/Qwen3-Reranker-0.6B")
+        reranker = create_reranker(_cfg("Qwen/Qwen3-Reranker-0.6B"))
         assert isinstance(reranker, GenerativeReranker)
         assert reranker.doc_max_chars == 4000
 
@@ -1061,7 +1080,7 @@ class TestCreateRerankerFactory:
         from search.neural_reranker import JinaRerankerV3
 
         reranker = create_reranker(
-            "jinaai/jina-reranker-v3", listwise_doc_max_chars=500
+            _cfg("jinaai/jina-reranker-v3", listwise_doc_max_chars=500)
         )
         assert isinstance(reranker, JinaRerankerV3)
         assert reranker.doc_max_chars == 500
@@ -1069,7 +1088,7 @@ class TestCreateRerankerFactory:
     def test_listwise_doc_max_chars_defaults_to_1000_for_jina(self):
         from search.neural_reranker import JinaRerankerV3
 
-        reranker = create_reranker("jinaai/jina-reranker-v3")
+        reranker = create_reranker(_cfg("jinaai/jina-reranker-v3"))
         assert isinstance(reranker, JinaRerankerV3)
         assert reranker.doc_max_chars == 1000
 
@@ -1083,7 +1102,7 @@ class TestCreateRerankerFactory:
         """
         from search.neural_reranker import JinaRerankerV3
 
-        reranker = create_reranker("jinaai/jina-reranker-v3", doc_max_chars=9999)
+        reranker = create_reranker(_cfg("jinaai/jina-reranker-v3", doc_max_chars=9999))
         assert isinstance(reranker, JinaRerankerV3)
         assert reranker.doc_max_chars == 1000
 
@@ -1091,14 +1110,16 @@ class TestCreateRerankerFactory:
         """listwise_dtype must land on JinaRerankerV3.dtype (fp32 determinism arm)."""
         from search.neural_reranker import JinaRerankerV3
 
-        reranker = create_reranker("jinaai/jina-reranker-v3", listwise_dtype="fp32")
+        reranker = create_reranker(
+            _cfg("jinaai/jina-reranker-v3", listwise_dtype="fp32")
+        )
         assert isinstance(reranker, JinaRerankerV3)
         assert reranker.dtype == "fp32"
 
     def test_listwise_dtype_defaults_to_auto_for_jina(self):
         from search.neural_reranker import JinaRerankerV3
 
-        reranker = create_reranker("jinaai/jina-reranker-v3")
+        reranker = create_reranker(_cfg("jinaai/jina-reranker-v3"))
         assert isinstance(reranker, JinaRerankerV3)
         assert reranker.dtype == "auto"
 
@@ -1106,13 +1127,15 @@ class TestCreateRerankerFactory:
         """Non-listwise rerankers have no dtype knob — the factory must not
         forward listwise_dtype to them (bf16 non-determinism is a listwise,
         context-dependent-scoring problem; pointwise rerankers are unaffected)."""
-        reranker = create_reranker("BAAI/bge-reranker-v2-m3", listwise_dtype="fp32")
+        reranker = create_reranker(
+            _cfg("BAAI/bge-reranker-v2-m3", listwise_dtype="fp32")
+        )
         assert not hasattr(reranker, "dtype")
 
     def test_doc_representation_mode_passthrough_to_generative_reranker(self):
         """doc_representation_mode must land on GenerativeReranker (A4 pilot)."""
         reranker = create_reranker(
-            "Qwen/Qwen3-Reranker-0.6B", doc_representation_mode="signature_head"
+            _cfg("Qwen/Qwen3-Reranker-0.6B", doc_representation_mode="signature_head")
         )
         assert isinstance(reranker, GenerativeReranker)
         assert reranker.doc_representation_mode == "signature_head"
@@ -1122,21 +1145,21 @@ class TestCreateRerankerFactory:
         from search.neural_reranker import JinaRerankerV3
 
         reranker = create_reranker(
-            "jinaai/jina-reranker-v3", doc_representation_mode="signature_head"
+            _cfg("jinaai/jina-reranker-v3", doc_representation_mode="signature_head")
         )
         assert isinstance(reranker, JinaRerankerV3)
         assert reranker.doc_representation_mode == "signature_head"
 
     def test_doc_representation_mode_defaults_to_full(self):
         for model in ("Qwen/Qwen3-Reranker-0.6B", "jinaai/jina-reranker-v3"):
-            reranker = create_reranker(model)
+            reranker = create_reranker(_cfg(model))
             assert reranker.doc_representation_mode == "full"
 
     def test_doc_representation_mode_ignored_for_cross_encoder(self):
         """NeuralReranker builds pairs from content_preview directly and never
         calls the document builder — the factory must not forward the mode."""
         reranker = create_reranker(
-            "BAAI/bge-reranker-v2-m3", doc_representation_mode="signature_head"
+            _cfg("BAAI/bge-reranker-v2-m3", doc_representation_mode="signature_head")
         )
         assert not hasattr(reranker, "doc_representation_mode")
 

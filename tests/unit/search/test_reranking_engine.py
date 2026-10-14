@@ -369,7 +369,7 @@ class TestRerankingEngine:
             instance.rerank.return_value = results
             self.engine.rerank_by_query("test query", results, k=1, config=config)
 
-        assert mock_create_reranker.call_args.kwargs["listwise_dtype"] == "fp32"
+        assert mock_create_reranker.call_args.args[0].listwise_dtype == "fp32"
 
     @patch("search.reranking_engine.torch")
     @patch("search.reranking_engine.create_reranker")
@@ -407,9 +407,48 @@ class TestRerankingEngine:
             self.engine.rerank_by_query("test query", results, k=1, config=config)
 
         assert (
-            mock_create_reranker.call_args.kwargs["doc_representation_mode"]
+            mock_create_reranker.call_args.args[0].doc_representation_mode
             == "signature_head"
         )
+
+    @patch("search.reranking_engine.torch")
+    @patch("search.reranking_engine.create_reranker")
+    def test_ensure_reranker_passes_the_reranker_config_object(
+        self, mock_create_reranker, mock_torch
+    ):
+        """_ensure_reranker hands create_reranker the RerankerConfig itself.
+
+        The factory reads every construction-baked field from the object
+        (ADR-0032 addendum), so the engine must not unpack fields into
+        kwargs: a new RerankerConfig field is then a config edit plus a
+        factory read, never an engine edit. Positional, no device override.
+        """
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.return_value = (
+            5 * 1024**3,  # 5 GB free
+            8 * 1024**3,  # 8 GB total
+        )
+        instance = MagicMock()
+        instance.model_name = "jinaai/jina-reranker-v3"
+        mock_create_reranker.return_value = instance
+
+        config = SearchConfig(
+            reranker=RerankerConfig(
+                enabled=True,
+                model_name="jinaai/jina-reranker-v3",
+                min_vram_gb=4.0,
+            )
+        )
+        with patch("search.reranking_engine.get_search_config") as mock_config:
+            mock_config.return_value = config
+            results = [SearchResult(chunk_id="chunk1", score=0.5, metadata={})]
+            instance.rerank.return_value = results
+            self.engine.rerank_by_query("test query", results, k=1, config=config)
+
+        call = mock_create_reranker.call_args
+        assert len(call.args) == 1
+        assert call.args[0] is config.reranker
+        assert call.kwargs == {}
 
     # ------------------------------------------------------------------
     # R1: single config fetch per rerank pass (direct proof)

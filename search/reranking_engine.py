@@ -177,17 +177,7 @@ class RerankingEngine:
         # and/or mutations here are boundary orchestration; equivalent under the test suite's
         # mock setup (create_reranker is mocked, _ensure_reranker is not called directly).
         if should_enable and self.neural_reranker is None:  # pragma: no mutate
-            self.neural_reranker = create_reranker(
-                model_name=config.reranker.model_name,
-                batch_size=config.reranker.batch_size,
-                instruction=config.reranker.instruction or None,
-                doc_max_chars=config.reranker.doc_max_chars,
-                listwise_doc_max_chars=config.reranker.listwise_doc_max_chars,
-                listwise_dtype=config.reranker.listwise_dtype,
-                doc_representation_mode=config.reranker.doc_representation_mode,
-                listwise_packed_token_budget=config.reranker.listwise_packed_token_budget,
-                listwise_window_fit=config.reranker.listwise_window_fit,
-            )
+            self.neural_reranker = create_reranker(config.reranker)
             self._logger.debug(f"{log_prefix} Neural reranker initialized")
         elif (
             should_enable
@@ -202,17 +192,7 @@ class RerankingEngine:
                 f"({self.neural_reranker.model_name} -> {config.reranker.model_name}), reloading"
             )
             self.neural_reranker.cleanup()
-            self.neural_reranker = create_reranker(
-                model_name=config.reranker.model_name,
-                batch_size=config.reranker.batch_size,
-                instruction=config.reranker.instruction or None,
-                doc_max_chars=config.reranker.doc_max_chars,
-                listwise_doc_max_chars=config.reranker.listwise_doc_max_chars,
-                listwise_dtype=config.reranker.listwise_dtype,
-                doc_representation_mode=config.reranker.doc_representation_mode,
-                listwise_packed_token_budget=config.reranker.listwise_packed_token_budget,
-                listwise_window_fit=config.reranker.listwise_window_fit,
-            )
+            self.neural_reranker = create_reranker(config.reranker)
         elif not should_enable and self.neural_reranker is not None:
             self.neural_reranker.cleanup()
             self.neural_reranker = None

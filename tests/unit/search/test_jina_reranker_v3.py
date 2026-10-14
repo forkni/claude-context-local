@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from search.config import RerankerConfig
 from search.neural_reranker import (
     JINA_LISTWISE_RERANKERS,
     JinaRerankerV3,
@@ -15,6 +16,11 @@ from search.neural_reranker import (
     derive_listwise_model_max_length,
 )
 from search.reranker import SearchResult
+
+
+def _cfg(model_name: str, **overrides) -> RerankerConfig:
+    """RerankerConfig for the factory; unset fields keep the config's defaults."""
+    return RerankerConfig(model_name=model_name, **overrides)
 
 
 class _FakeV3Model:
@@ -1107,19 +1113,19 @@ class TestCreateRerankerFactoryJina:
 
     def test_creates_jina_v3_reranker(self):
         """Should create JinaRerankerV3 for Jina v3 model."""
-        reranker = create_reranker("jinaai/jina-reranker-v3")
+        reranker = create_reranker(_cfg("jinaai/jina-reranker-v3"))
         assert isinstance(reranker, JinaRerankerV3)
         assert reranker.model_name == "jinaai/jina-reranker-v3"
 
     def test_device_passed_to_jina_reranker(self):
         """Device parameter should be passed through to JinaRerankerV3."""
-        reranker = create_reranker("jinaai/jina-reranker-v3", device="cpu")
+        reranker = create_reranker(_cfg("jinaai/jina-reranker-v3"), device="cpu")
         assert reranker.device == "cpu"
 
     def test_all_jina_models_in_registry(self):
         """All models in JINA_LISTWISE_RERANKERS should create JinaRerankerV3."""
         for model_name in JINA_LISTWISE_RERANKERS:
-            reranker = create_reranker(model_name)
+            reranker = create_reranker(_cfg(model_name))
             assert isinstance(reranker, JinaRerankerV3)
             assert reranker.model_name == model_name
 
@@ -1128,12 +1134,12 @@ class TestCreateRerankerFactoryJina:
         the factory to JinaRerankerV3, not silently fall back to the
         default (docs/adr/0076-bound-the-listwise-packed-window-by-tokens.md)."""
         reranker = create_reranker(
-            "jinaai/jina-reranker-v3", listwise_packed_token_budget=4096
+            _cfg("jinaai/jina-reranker-v3", listwise_packed_token_budget=4096)
         )
         assert reranker.listwise_packed_token_budget == 4096
 
     def test_listwise_packed_token_budget_defaults_to_8192(self):
-        reranker = create_reranker("jinaai/jina-reranker-v3")
+        reranker = create_reranker(_cfg("jinaai/jina-reranker-v3"))
         assert reranker.listwise_packed_token_budget == 8192
 
     def test_listwise_window_fit_passed_to_jina_reranker(self):
@@ -1141,10 +1147,10 @@ class TestCreateRerankerFactoryJina:
         factory to JinaRerankerV3, not silently fall back to the default
         (docs/adr/0077-single-block-listwise-invariant.md)."""
         reranker = create_reranker(
-            "jinaai/jina-reranker-v3", listwise_window_fit="split"
+            _cfg("jinaai/jina-reranker-v3", listwise_window_fit="split")
         )
         assert reranker.listwise_window_fit == "split"
 
     def test_listwise_window_fit_defaults_to_truncate(self):
-        reranker = create_reranker("jinaai/jina-reranker-v3")
+        reranker = create_reranker(_cfg("jinaai/jina-reranker-v3"))
         assert reranker.listwise_window_fit == "truncate"

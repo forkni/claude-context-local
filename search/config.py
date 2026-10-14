@@ -829,7 +829,7 @@ class RerankerConfig:
             flat_alias="reranker_batch_size",
             env="CLAUDE_RERANKER_BATCH_SIZE",
             mcp="reranker_echo",
-            reader="search/reranking_engine.py",
+            reader="search/neural_reranker.py",
             construction_baked=True,
         ),
     )
@@ -862,7 +862,7 @@ class RerankerConfig:
         metadata=spec(
             flat_alias="reranker_instruction",
             env="CLAUDE_RERANKER_INSTRUCTION",
-            reader="search/reranking_engine.py",
+            reader="search/neural_reranker.py",
             construction_baked=True,
         ),
     )
@@ -872,7 +872,7 @@ class RerankerConfig:
         metadata=spec(
             flat_alias="reranker_doc_max_chars",
             env="CLAUDE_RERANKER_DOC_MAX_CHARS",
-            reader="search/reranking_engine.py",
+            reader="search/neural_reranker.py",
             construction_baked=True,
         ),
     )
@@ -893,7 +893,7 @@ class RerankerConfig:
         metadata=spec(
             flat_alias="reranker_listwise_doc_max_chars",
             env="CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS",
-            reader="search/reranking_engine.py",
+            reader="search/neural_reranker.py",
             construction_baked=True,
         ),
     )
@@ -903,7 +903,7 @@ class RerankerConfig:
             choices=("auto", "fp32", "bf16", "fp16"),
             flat_alias="reranker_listwise_dtype",
             env="CLAUDE_RERANKER_LISTWISE_DTYPE",
-            reader="search/reranking_engine.py",
+            reader="search/neural_reranker.py",
             construction_baked=True,
         ),
     )  # Jina listwise rerankers only (v3/v3.5, class JinaRerankerV3). Weight

@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
     from transformers import AutoModel, PreTrainedModel
 
+    from .config import RerankerConfig
+
 
 # Reranker model registry
 # Maps reranker type to model name for environment/menu configuration
@@ -1739,86 +1741,65 @@ class JinaRerankerV3(BaseReranker):
 
 
 def create_reranker(
-    model_name: str,
+    config: "RerankerConfig",
     device: str | None = None,
-    batch_size: int = 16,
-    instruction: str | None = None,
-    doc_max_chars: int = 4000,
-    listwise_doc_max_chars: int = 1000,
-    listwise_dtype: str = "auto",
-    doc_representation_mode: str = "full",
-    listwise_packed_token_budget: int = 8192,
-    listwise_window_fit: str = "truncate",
 ) -> "NeuralReranker | GenerativeReranker | JinaRerankerV3":
-    """Factory function to create appropriate reranker based on model name.
+    """Build the reranker that ``config.model_name`` names.
 
-    This function auto-detects whether to use a discriminative cross-encoder (NeuralReranker),
-    a generative LLM reranker (GenerativeReranker), or a listwise reranker (JinaRerankerV3)
-    based on the model name.
+    Auto-detects whether to use a discriminative cross-encoder (NeuralReranker),
+    a generative LLM reranker (GenerativeReranker), or a listwise reranker
+    (JinaRerankerV3) from the model name. The ``RerankerConfig`` object is the
+    only source of constructor parameters: each branch reads the fields it
+    needs and ignores the rest, so a new reranker field is a config-field plus
+    a read here, never a new factory parameter. ``device`` is the one override
+    because it is a runtime choice, not a config field.
+
+    Which fields each branch reads (all ``construction_baked``, so a change
+    needs a reranker rebuild, see ``RerankerConfig``):
+
+    - GenerativeReranker: ``instruction`` (``""`` means "use the model's
+      built-in code-retrieval default", so it is mapped to ``None`` here),
+      ``batch_size``, ``doc_max_chars``, ``doc_representation_mode``.
+    - JinaRerankerV3: ``listwise_doc_max_chars`` (independent of
+      ``doc_max_chars`` on purpose; the listwise cost model is O(n^2) in the
+      packed sequence, see docs/adr/0011-listwise-reranker-doc-cap.md),
+      ``listwise_dtype``, ``doc_representation_mode``,
+      ``listwise_packed_token_budget``, ``listwise_window_fit``.
+    - NeuralReranker: ``batch_size`` only; it builds pairs from
+      ``content_preview`` and never calls the document builder.
 
     Args:
-        model_name: HuggingFace model ID for reranker
-        device: Device to run on ('cuda', 'cpu', or None for auto-detect)
-        batch_size: Batch size for inference (NeuralReranker and GenerativeReranker;
-            JinaRerankerV3 does its own internal batching)
-        instruction: Only used for GenerativeReranker — see its docstring.
-        doc_max_chars: Only used for GenerativeReranker (pointwise — cost scales
-            with batch_size, so it can afford a larger per-document budget).
-        listwise_doc_max_chars: Only used for the Jina listwise rerankers
-            (v3/v3.5 — ALL candidates share one context window, so cost is
-            O(n^2) in the packed sequence via attention activation memory).
-            Raising this from 1000 to 4000 clears the context-window and
-            per-doc-token checks fine, but a 4-run SSCG sweep at 4000
-            measured peak_vram_reserved_gb 27.66 on a 24GB card (WDDM spill,
-            no OOM), 42-45/96 queries stalling past 8s, and no quality gain
-            outside the noise floor — see
-            docs/adr/0011-listwise-reranker-doc-cap.md. That sweep was
-            measured on v3's full attention; v3.5's hybrid sliding-window
-            schedule changes the O(n^2) term, so the cap is a live A/B knob
-            for that arm. Not aligned with ``doc_max_chars`` above by
-            default; the two budgets are independent on purpose.
-        listwise_dtype: Only used for the Jina listwise rerankers (v3/v3.5)
-            — weight dtype ("auto", "fp32", "bf16", "fp16"); see
-            ``JinaRerankerV3.__init__``.
-        doc_representation_mode: Used by GenerativeReranker and the Jina
-            listwise rerankers — how ``_build_rerank_document`` renders each
-            candidate ("full" or "signature_head"); see
-            ``RerankerConfig.doc_representation_mode``. Ignored by
-            NeuralReranker, which builds pairs from ``content_preview``
-            directly and never calls the document builder.
-        listwise_packed_token_budget: Only used for the Jina listwise
-            rerankers (v3/v3.5) — see ``JinaRerankerV3.__init__``.
-        listwise_window_fit: Only used for the Jina listwise rerankers
-            (v3/v3.5) — "truncate" or "split"; see
-            ``JinaRerankerV3.__init__``.
+        config: The ``RerankerConfig`` to build from (``search.config``).
+        device: Device to run on ('cuda', 'cpu', or None for auto-detect).
 
     Returns:
         NeuralReranker, GenerativeReranker, or JinaRerankerV3 instance
 
     Example:
-        >>> reranker = create_reranker("Qwen/Qwen3-Reranker-0.6B")  # Returns GenerativeReranker
-        >>> reranker = create_reranker("jinaai/jina-reranker-v3")   # Returns JinaRerankerV3
-        >>> reranker = create_reranker("jinaai/jina-reranker-v3.5") # Returns JinaRerankerV3
-        >>> reranker = create_reranker("BAAI/bge-reranker-v2-m3")   # Returns NeuralReranker
+        >>> from search.config import RerankerConfig
+        >>> create_reranker(RerankerConfig(model_name="Qwen/Qwen3-Reranker-0.6B"))  # GenerativeReranker
+        >>> create_reranker(RerankerConfig(model_name="jinaai/jina-reranker-v3"))   # JinaRerankerV3
+        >>> create_reranker(RerankerConfig(model_name="BAAI/bge-reranker-v2-m3"))   # NeuralReranker
     """
+    model_name = config.model_name
     if model_name in GENERATIVE_RERANKERS:
         return GenerativeReranker(
             model_name,
             device,
-            instruction=instruction,
-            batch_size=batch_size,
-            doc_max_chars=doc_max_chars,
-            doc_representation_mode=doc_representation_mode,
+            instruction=config.instruction or None,
+            batch_size=config.batch_size,
+            doc_max_chars=config.doc_max_chars,
+            doc_representation_mode=config.doc_representation_mode,
         )
     if model_name in JINA_LISTWISE_RERANKERS:
         return JinaRerankerV3(
             model_name,
             device,
-            doc_max_chars=listwise_doc_max_chars,
-            dtype=listwise_dtype,
-            doc_representation_mode=doc_representation_mode,
-            listwise_packed_token_budget=listwise_packed_token_budget,
-            listwise_window_fit=listwise_window_fit,
+            doc_max_chars=config.listwise_doc_max_chars,
+            dtype=config.listwise_dtype,
+            doc_representation_mode=config.doc_representation_mode,
+            listwise_packed_token_budget=config.listwise_packed_token_budget,
+            listwise_window_fit=config.listwise_window_fit,
         )  # Listwise reranker
     if model_name.startswith("jinaai/"):
         # RerankerConfig.model_name has no `choices` constraint, and
@@ -1831,4 +1812,4 @@ def create_reranker(
             f"in JINA_LISTWISE_RERANKERS ({sorted(JINA_LISTWISE_RERANKERS)}); "
             "falling back to NeuralReranker (CrossEncoder) — check for a typo."
         )
-    return NeuralReranker(model_name, device, batch_size)
+    return NeuralReranker(model_name, device, config.batch_size)
