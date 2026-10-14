@@ -20,9 +20,9 @@ Per file it reports:
     - chunk count and the multiset of `(node_type, name)` definitions.
 
 Usage:
-    .venv/Scripts/python.exe scripts/benchmark/measure_parse_recall.py ROOT \\
+    .venv/Scripts/python.exe -m scripts.benchmark.measure_parse_recall ROOT \\
         --json logs/parse_recall_baseline.json
-    .venv/Scripts/python.exe scripts/benchmark/measure_parse_recall.py ROOT \\
+    .venv/Scripts/python.exe -m scripts.benchmark.measure_parse_recall ROOT \\
         --compare logs/parse_recall_baseline.json --index-filter
 """
 
@@ -31,24 +31,17 @@ import json
 import logging
 import os
 import re
-import sys
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
-
-_SCRIPT_DIR = Path(__file__).resolve().parent
-_PROJECT_ROOT = _SCRIPT_DIR.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
-
-from chunking.tree_sitter import (  # noqa: E402
+from chunking.tree_sitter import (
     TreeSitterChunker,
     _collect_error_line_ranges,
     _uncovered_line_ranges,
 )
-from search.filters import PathFilter  # noqa: E402
+from search.filters import PathFilter
 
 
 C_FAMILY_EXTS = (
