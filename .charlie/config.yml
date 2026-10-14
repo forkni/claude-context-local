@@ -1,9 +1,0 @@
-checkCommands:
-  fix: uv run --locked ruff check --fix . && uv run --locked ruff format .
-  lint: uv run --locked ruff check . && uv run --locked ruff format --check .
-  typecheck: uv run --locked pyrefly check --baseline pyrefly-baseline.json
-  test: uv run --locked pytest tests/unit/ -x -q
-beta:
-  canApprovePullRequests: false
-  # proactive:  # Uncomment to enable daily automated playbooks
-  #   - playbook: ".charlie/playbooks/dependency-check.md"
