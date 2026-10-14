@@ -18,6 +18,8 @@ buffer and filtering to matches whose macro-name group starts inside an
 ERROR span.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from chunking.languages._c_family import (
@@ -372,3 +374,19 @@ class TestExportMacroClassHeads:
 
         assert repair_export_macro_class_heads(source, parse, then=then) == source
         assert repair_export_macro_class_heads(source, parse) != source
+
+    def test_pipeline_parses_each_buffer_once(self):
+        """The repairs share one parse per distinct buffer in a call."""
+        chunker = CppChunker()
+        real_parse = chunker.parser.parse
+        parsed: list[bytes] = []
+
+        def counting_parse(src: bytes):
+            parsed.append(src)
+            return real_parse(src)
+
+        chunker.parser = SimpleNamespace(parse=counting_parse)
+        chunker.preprocess_source_for_parse(
+            b"class CV_EXPORTS Foo : public Bar {\npublic:\n    int f();\n};\n"
+        )
+        assert len(parsed) == len(set(parsed))

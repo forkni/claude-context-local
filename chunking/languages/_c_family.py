@@ -456,8 +456,11 @@ def _error_nodes(root_node: Any) -> Iterator[Any]:
 def _error_line_count(root_node: Any) -> int:
     """Sum of every ERROR node's line span (nested ERRORs count again).
 
-    The yardstick both parse-dependent repairs keep a round against.
+    The yardstick the parse-dependent repairs keep a round against. A tree
+    without `has_error` counts 0 without a walk.
     """
+    if not root_node.has_error:
+        return 0
     return sum(n.end_point[0] - n.start_point[0] + 1 for n in _error_nodes(root_node))
 
 
@@ -583,10 +586,8 @@ def repair_macro_wrapped_declarations(
         matches = [
             m
             for m in _MACRO_WRAPPED_RETURN.finditer(current)
-            if any(
-                start < _macro_wrapped_reach(current, m) and m.start(2) < end
-                for start, end in spans
-            )
+            for reach in (_macro_wrapped_reach(current, m),)
+            if any(start < reach and m.start(2) < end for start, end in spans)
         ]
         if not matches:
             break
@@ -607,11 +608,7 @@ def repair_macro_wrapped_declarations(
             break
 
         candidate_tree = parse(candidate_bytes)
-        candidate_error_lines = (
-            _error_line_count(candidate_tree.root_node)
-            if candidate_tree.root_node.has_error
-            else 0
-        )
+        candidate_error_lines = _error_line_count(candidate_tree.root_node)
         # Guard: only keep a round that strictly improves. Without this, a
         # global rewrite regresses real C++ method names that happen to
         # match the same shape -- see this function's docstring.
@@ -815,10 +812,8 @@ def repair_bare_macro_lines(source_bytes: bytes, parse: _ParseFn) -> bytes:
         reaching = [
             m
             for m in bare_macro_line_matches(current)
-            if any(
-                start < _bare_macro_reach(current, m) and m.start(0) < end
-                for start, end in spans
-            )
+            for reach in (_bare_macro_reach(current, m),)
+            if any(start < reach and m.start(0) < end for start, end in spans)
         ]
         touching = [
             m
@@ -837,11 +832,7 @@ def repair_bare_macro_lines(source_bytes: bytes, parse: _ParseFn) -> bytes:
                 candidate[m.start(0) : m.end(0)] = blank_preserving_layout(m)
             candidate_bytes = bytes(candidate)
             candidate_tree = parse(candidate_bytes)
-            candidate_error_lines = (
-                _error_line_count(candidate_tree.root_node)
-                if candidate_tree.root_node.has_error
-                else 0
-            )
+            candidate_error_lines = _error_line_count(candidate_tree.root_node)
             if candidate_error_lines < error_lines:
                 current, tree, error_lines = (
                     candidate_bytes,
@@ -876,8 +867,7 @@ _EXPORT_MACRO_CLASS_HEAD = re.compile(
 
 
 def _parse_error_lines(parse: _ParseFn, source_bytes: bytes) -> int:
-    root = parse(source_bytes).root_node
-    return _error_line_count(root) if root.has_error else 0
+    return _error_line_count(parse(source_bytes).root_node)
 
 
 def repair_export_macro_class_heads(
@@ -1348,7 +1338,15 @@ class _CFamilyChunker(LanguageChunker):
         )
 
     def preprocess_source_for_parse(self, source_bytes: bytes) -> bytes:
-        parse = self.parser.parse
+        # Each repair parses its input, and the export-macro repair runs the
+        # rest twice, then parses both results: share one tree per buffer.
+        trees: dict[bytes, Any] = {}
+
+        def parse(source: bytes) -> Any:
+            tree = trees.get(source)
+            if tree is None:
+                tree = trees[source] = self.parser.parse(source)
+            return tree
 
         def repair_errors(source: bytes) -> bytes:
             repaired = repair_macro_wrapped_declarations(source, parse)
