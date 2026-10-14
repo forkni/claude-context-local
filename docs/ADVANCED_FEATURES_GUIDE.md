@@ -828,9 +828,12 @@ set CLAUDE_RERANKER_ENABLED=false
 
 ### Implementation Details
 
-**File**: `search/vram_manager.py` (`VRAMTierManager`)
+**Files**: `search/vram_manager.py` (`VRAM_TIERS` table), `search/index_probe.py` (`_tier_for`,
+the probe rules that apply a tier), `embeddings/vram_budget.py` (`VramBudget`: per-process cap
+and batch sizing)
 
-**Test Coverage**: 42 unit tests
+**Tests**: `tests/unit/search/test_vram_manager.py`, `tests/unit/search/test_index_probe.py`,
+`tests/unit/embeddings/test_vram_budget.py`
 
 **See also**: [Model Selection Guide](#model-selection-guide) above
 

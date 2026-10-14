@@ -1,10 +1,10 @@
-"""VRAM tier management for adaptive model selection based on GPU capabilities."""
+"""VRAM tier table: which embedder and reranker each GPU size gets.
 
-import logging
+``search/index_probe.py`` maps a measured GPU to a tier with ``_tier_for``;
+the per-process VRAM cap and batch sizing live in ``embeddings/vram_budget.py``.
+"""
+
 from dataclasses import dataclass
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -66,106 +66,3 @@ VRAM_TIERS: list[VRAMTier] = [
         reranker_model="full",
     ),
 ]
-
-
-class VRAMTierManager:
-    """Auto-detect GPU VRAM and configure features accordingly.
-
-    This manager detects available GPU VRAM and selects appropriate
-    embedding models and feature enablement based on hardware capabilities.
-
-    Example:
-        >>> manager = VRAMTierManager()
-        >>> tier = manager.detect_tier()
-        >>> print(f"Tier: {tier.name}, Model: {tier.recommended_model}")
-        Tier: workstation, Model: Qwen/Qwen3-Embedding-0.6B
-    """
-
-    def __init__(self) -> None:
-        """Initialize VRAMTierManager."""
-        self._detected_tier: VRAMTier | None = None
-
-    def detect_tier(self) -> VRAMTier:
-        """Detect VRAM tier based on available GPU memory.
-
-        Returns:
-            VRAMTier object with configuration for detected hardware.
-
-        Note:
-            This method caches the result on first call. Subsequent calls
-            return the cached tier without re-detection.
-        """
-        if self._detected_tier:
-            return self._detected_tier
-
-        available_gb = self._get_available_vram_gb()
-
-        logger.info(f"Detected {available_gb:.1f}GB total VRAM")
-
-        # Find matching tier
-        for tier in VRAM_TIERS:
-            if tier.min_vram_gb <= available_gb < tier.max_vram_gb:
-                self._detected_tier = tier
-                logger.info(
-                    f"Selected tier: {tier.name} "
-                    f"(recommended model: {tier.recommended_model})"
-                )
-                return tier
-
-        # Fallback to minimal tier
-        self._detected_tier = VRAM_TIERS[0]
-        logger.warning(f"No matching tier for {available_gb:.1f}GB, using minimal tier")
-        return self._detected_tier
-
-    def _get_available_vram_gb(self) -> float:
-        """Get total available VRAM in GB.
-
-        Returns:
-            Total VRAM in GB, or 0.0 if no GPU available.
-        """
-        try:
-            import torch
-
-            if not torch.cuda.is_available():
-                logger.warning("CUDA not available, using CPU mode")
-                return 0.0
-
-            props = torch.cuda.get_device_properties(0)
-            vram_gb = props.total_memory / (1024**3)
-            return vram_gb
-
-        except ImportError:
-            logger.warning("PyTorch not available, cannot detect VRAM")
-            return 0.0
-        except (RuntimeError, AssertionError, AttributeError) as e:
-            logger.error(f"Error detecting VRAM: {e}", exc_info=True)
-            return 0.0
-
-    def get_model_for_tier(self, tier_name: str) -> str:
-        """Get recommended model for a specific tier name.
-
-        Args:
-            tier_name: Tier name (minimal, laptop, desktop, workstation)
-
-        Returns:
-            Full model name from MODEL_REGISTRY
-
-        Raises:
-            ValueError: If tier_name is not found
-        """
-        for tier in VRAM_TIERS:
-            if tier.name == tier_name:
-                return tier.recommended_model
-
-        raise ValueError(
-            f"Unknown tier: {tier_name}. Valid tiers: {[t.name for t in VRAM_TIERS]}"
-        )
-
-    def should_enable_neural_reranking(self) -> bool:
-        """Check if neural reranking should be enabled.
-
-        Returns:
-            True if current tier supports neural reranking
-        """
-        tier = self.detect_tier()
-        return tier.neural_reranking_enabled

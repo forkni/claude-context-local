@@ -184,13 +184,12 @@ H_QUERIES: dict[str, tuple[str, list[str], str]] = {
     ),
     "H034": (
         "cap the inference batch size for the ONNX backend based on free GPU memory so the very first run doesn't immediately run out of VRAM",
-        ["embeddings/embedder.py:function:calculate_optimal_batch_size"],
+        ["embeddings/vram_budget.py:function:calculate_optimal_batch_size"],
         "train",
     ),
     "H039": (
         "change the recommended embedding model for high-VRAM workstations to a newer retrieval-tuned model",
         [
-            "search/vram_manager.py:class:VRAMTierManager",
             "search/vram_manager.py:decorated_definition:VRAMTier",
         ],
         "train",

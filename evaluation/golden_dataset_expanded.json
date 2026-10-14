@@ -192,6 +192,13 @@
         "changes": [
           "Q12: mcp_server/tools/status_handlers.py:method:handle_get_index_status kept as-is. It is the normalize_chunk_id form of the three split_block fragments the adaptive-sizing indexer (repo P75 threshold) stores for this 105-line decorated_definition; the static-threshold fresh chunker never splits it. tests/unit/evaluation/test_golden_set_guard.py now accepts the method: alias for split-eligible nodes (kind function/decorated_definition, longer than chunking.max_chunk_lines) instead of the gold being rewritten to a form the index does not hold."
         ]
+      },
+      {
+        "date": "2026-10-13",
+        "changes": [
+          "H039: dropped search/vram_manager.py:class:VRAMTierManager (grade 3). The class had no production callers and was deleted with ADR-0086 (VRAM budget has one home); the tier table the query asks to change is VRAM_TIERS, next to the remaining gold search/vram_manager.py:decorated_definition:VRAMTier. Comparability break vs. earlier canons: H039 moves from two golds to one.",
+          "Q116, H034: embeddings/embedder.py:function:calculate_optimal_batch_size -> embeddings/vram_budget.py:function:calculate_optimal_batch_size (same function, moved with the rest of the VRAM budget in ef596ce7; grades unchanged)."
+        ]
       }
     ]
   },
@@ -2306,14 +2313,14 @@
       "split": "val",
       "expected": [
         "search/gpu_monitor.py:method:GPUMemoryMonitor.estimate_batch_memory",
-        "embeddings/embedder.py:function:calculate_optimal_batch_size"
+        "embeddings/vram_budget.py:function:calculate_optimal_batch_size"
       ],
       "expected_primary": [
         "search/gpu_monitor.py:method:GPUMemoryMonitor.estimate_batch_memory"
       ],
       "relevance_grades": {
         "search/gpu_monitor.py:method:GPUMemoryMonitor.estimate_batch_memory": 3,
-        "embeddings/embedder.py:function:calculate_optimal_batch_size": 2,
+        "embeddings/vram_budget.py:function:calculate_optimal_batch_size": 2,
         "search/gpu_monitor.py:method:GPUMemoryMonitor.can_use_gpu": 1,
         "embeddings/embedder.py:method:CodeEmbedder._check_vram_status": 1
       }
@@ -2990,13 +2997,13 @@
       "category": "H",
       "split": "train",
       "expected": [
-        "embeddings/embedder.py:function:calculate_optimal_batch_size"
+        "embeddings/vram_budget.py:function:calculate_optimal_batch_size"
       ],
       "expected_primary": [
-        "embeddings/embedder.py:function:calculate_optimal_batch_size"
+        "embeddings/vram_budget.py:function:calculate_optimal_batch_size"
       ],
       "relevance_grades": {
-        "embeddings/embedder.py:function:calculate_optimal_batch_size": 3
+        "embeddings/vram_budget.py:function:calculate_optimal_batch_size": 3
       }
     },
     {
@@ -3005,15 +3012,12 @@
       "category": "H",
       "split": "train",
       "expected": [
-        "search/vram_manager.py:class:VRAMTierManager",
         "search/vram_manager.py:decorated_definition:VRAMTier"
       ],
       "expected_primary": [
-        "search/vram_manager.py:class:VRAMTierManager",
         "search/vram_manager.py:decorated_definition:VRAMTier"
       ],
       "relevance_grades": {
-        "search/vram_manager.py:class:VRAMTierManager": 3,
         "search/vram_manager.py:decorated_definition:VRAMTier": 3
       }
     },
