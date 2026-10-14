@@ -1194,3 +1194,20 @@ class _CFamilyChunker(LanguageChunker):
             self._neutralize(source_bytes), parse
         )
         return repair_bare_macro_lines(repaired, parse)
+
+    def _preamble_descend_children(self, node: Any) -> list[Any] | None:
+        """Descend every chunk-holding node that is not a chunk itself.
+
+        `extern "C" {}` blocks, declarations wrapping a chunked struct
+        (`static struct T {...} x = {...};`) and root ERROR nodes hold
+        `#define`s, data declarations and prototypes that no chunk covers.
+        A `body` field is entered directly, so its `extern "C" {` / `}`
+        tokens never start a run. A `template_declaration` stays opaque: its
+        `template <...>` line is the chunked definition's own header.
+        """
+        if self.should_chunk_node(node) or node.type == "template_declaration":
+            return None
+        body = node.child_by_field_name("body")
+        if body is None:
+            return node.named_children
+        return [body] if self.should_chunk_node(body) else body.named_children

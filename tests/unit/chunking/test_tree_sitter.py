@@ -618,7 +618,7 @@ class TestParseFileSingleRead(TestCase):
         from chunking.tree_sitter import ParsedSource
 
         # 200 single-line, non-adjacent (gap >= 2) uncovered spans so
-        # _uncovered_line_ranges's merge() keeps them distinct, each with
+        # _uncovered_line_ranges's merge_line_ranges() keeps them distinct, each with
         # real (non-trivia) content so the WARNING path is exercised.
         lines = []
         for i in range(1, 400):

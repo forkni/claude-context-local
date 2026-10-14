@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 from abc import ABC
+from bisect import bisect_right
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +33,33 @@ if TYPE_CHECKING:
     from search.config import ChunkingConfig
 
 logger = logging.getLogger(__name__)
+
+
+def merge_line_ranges(ranges: Iterable[tuple[int, int]]) -> list[list[int]]:
+    """Sort and coalesce inclusive 1-based line spans.
+
+    Adjacent spans coalesce too -- there is no line between N and N+1 to
+    fall through. Shared by the parse-error report (`_uncovered_line_ranges`)
+    and the preamble collector's coverage check.
+    """
+    merged: list[list[int]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return merged
+
+
+def node_line_span(node: Any) -> tuple[int, int]:
+    """1-based inclusive line span of a tree-sitter node.
+
+    `end_point` is exclusive: a multi-line node ending at column 0 has no
+    content on its end row (same rule as `_collect_error_line_ranges`).
+    """
+    start_row, (end_row, end_col) = node.start_point[0], node.end_point
+    end_line = end_row if (end_col == 0 and end_row > start_row) else end_row + 1
+    return start_row + 1, end_line
 
 
 @dataclass
@@ -911,7 +940,12 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         # are never subject to synthetic-chunk demotion/exclusion logic
         # (search/graph_scoring_stage.py, search/centrality_ranker.py, etc.).
         chunks.extend(
-            self._collect_module_preamble_chunks(tree.root_node, source_bytes, config)
+            self._collect_module_preamble_chunks(
+                tree.root_node,
+                source_bytes,
+                config,
+                chunk_spans=[(c.start_line, c.end_line) for c in chunks],
+            )
         )
 
         # If no chunks found, create a single module-level chunk
@@ -950,6 +984,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         root_node: Any,
         source_bytes: bytes,
         config: ChunkingConfig | None = None,
+        chunk_spans: Iterable[tuple[int, int]] = (),
     ) -> list[TreeSitterChunk]:
         """Collect contiguous root-level statement runs not covered by
         function/class/decorated_definition chunking (Fix A).
@@ -962,7 +997,13 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
 
         Only inspects *direct* children of the module root — non-chunkable
         code nested inside e.g. an `if TYPE_CHECKING:` guard is out of scope;
-        the reported gap was specifically top-of-file statements.
+        the reported gap was specifically top-of-file statements. The one
+        exception is opt-in per language: a root child that holds a chunk but
+        is not one itself is descended when `_preamble_descend_children`
+        returns its children (C-family `extern "C" {}` blocks, declarations
+        wrapping a chunked struct, root ERROR nodes; ADR-0087). Runs never
+        cross into or out of a descended node, and a descended child whose
+        lines another chunk already covers is not collected again.
 
         Two duplication/loss failure modes, both measured on a real GLSL
         file and fixed here:
@@ -994,6 +1035,8 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                 ``config.max_chunk_lines``, the run is packed into
                 size-bounded pieces at sibling boundaries (see
                 ``_preamble_groups``) instead of emitted as one chunk.
+            chunk_spans: Line spans of the chunks ``traverse`` already
+                emitted; consulted only inside descended nodes.
 
         Returns:
             One chunk per contiguous run that contains more than
@@ -1004,6 +1047,13 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         preamble_chunks: list[TreeSitterChunk] = []
         run_nodes: list[Any] = []
         seen_chunk = False
+        covered = merge_line_ranges(chunk_spans)
+        covered_starts = [start for start, _ in covered]
+
+        def fully_covered(node: Any) -> bool:
+            start, end = node_line_span(node)
+            i = bisect_right(covered_starts, start) - 1
+            return i >= 0 and covered[i][1] >= end
 
         def flush(next_node: Any | None) -> None:
             if not run_nodes:
@@ -1017,17 +1067,44 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                     self._append_preamble_chunk(group, source_bytes, preamble_chunks)
             run_nodes.clear()
 
-        for child in root_node.children:
-            if self._child_is_chunked(child):
-                flush(child)
-                seen_chunk = True
-                continue
-            if self._is_trailing_comment_of_chunked_sibling(child):
-                continue
-            run_nodes.append(child)
+        def collect(children: list[Any], descended: bool) -> None:
+            nonlocal seen_chunk
+            for child in children:
+                if self._child_is_chunked(child):
+                    inner = self._preamble_descend_children(child)
+                    if inner is None:
+                        flush(child)
+                        seen_chunk = True
+                    else:
+                        # Nothing claims the comments above a descended node:
+                        # it is never a chunk itself.
+                        flush(None)
+                        collect(inner, True)
+                        flush(None)
+                    continue
+                if self._is_trailing_comment_of_chunked_sibling(child):
+                    continue
+                if descended and fully_covered(child):
+                    # e.g. the `static` before a chunked struct: a run must
+                    # not span it, or its byte slice re-emits that chunk.
+                    flush(None)
+                    continue
+                run_nodes.append(child)
+
+        collect(root_node.children, False)
         flush(None)
 
         return preamble_chunks
+
+    def _preamble_descend_children(self, node: Any) -> list[Any] | None:
+        """Children to collect preamble runs from inside a chunk-holding node.
+
+        Called for a node that holds a chunk (`_child_is_chunked`). None --
+        the default for every language -- keeps it opaque, as before: the
+        collector flushes at it and moves on. A language returning a list
+        opts that node into descent (see `_collect_module_preamble_chunks`).
+        """
+        return None
 
     def _preamble_groups(
         self,

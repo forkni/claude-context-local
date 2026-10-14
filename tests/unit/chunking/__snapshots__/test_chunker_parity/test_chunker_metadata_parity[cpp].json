@@ -236,5 +236,15 @@
     },
     "start_line": 1,
     "type": "module_preamble"
+  },
+  {
+    "content": ";\n\n// Anonymous struct typedef -- exercises the cpp-path anonymous-typedef\n// naming fallback (name lives on the parent type_definition, not this\n// specifier).",
+    "end_line": 56,
+    "language": "cpp",
+    "metadata": {
+      "type": "module_preamble"
+    },
+    "start_line": 52,
+    "type": "module_preamble"
   }
 ]

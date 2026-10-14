@@ -53,6 +53,7 @@ from .languages import (
     TreeSitterChunk,
     TypeScriptChunker,
 )
+from .languages.base import merge_line_ranges
 
 
 if TYPE_CHECKING:
@@ -232,22 +233,12 @@ def _uncovered_line_ranges(
     content is the verbatim contiguous source slice of its line span, so a
     fully-covered error range means the ERROR text was indexed, not dropped.
     """
-
-    def merge(ranges: list[tuple[int, int]]) -> list[list[int]]:
-        merged: list[list[int]] = []
-        for start, end in sorted(ranges):
-            if merged and start <= merged[-1][1] + 1:
-                merged[-1][1] = max(merged[-1][1], end)
-            else:
-                merged.append([start, end])
-        return merged
-
-    covered = merge([(c.start_line, c.end_line) for c in chunks])
+    covered = merge_line_ranges((c.start_line, c.end_line) for c in chunks)
 
     uncovered: list[tuple[int, int]] = []
     # Merging the error ranges too keeps nested ERROR nodes (subranges of
     # their parent ERROR) from reporting the same uncovered lines twice.
-    for start, end in merge(list(error_ranges)):
+    for start, end in merge_line_ranges(error_ranges):
         cursor = start
         for cov_start, cov_end in covered:
             if cov_end < cursor:
