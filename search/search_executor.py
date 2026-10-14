@@ -452,21 +452,13 @@ class SearchExecutor:
                     self._logger.warning(
                         "No embedder provided to SearchExecutor, creating new instance"
                     )
-                    from pathlib import Path
-
                     from embeddings.embedder import CodeEmbedder
+                    from search.storage_layout import resolve_storage_root
 
-                    # Use same cache directory as main embedder. Route through
-                    # get_storage_dir() so this honors CODE_SEARCH_STORAGE (test
-                    # redirection) instead of reading Path.home() directly --
-                    # see merkle/snapshot_manager.py's __init__ for the same
-                    # try/except fallback pattern.
-                    try:
-                        from mcp_server.storage_manager import get_storage_dir
-
-                        cache_dir = get_storage_dir() / "models"
-                    except Exception:  # noqa: BLE001 - resilience: fall back to default storage dir if import fails
-                        cache_dir = Path.home() / ".claude_code_search" / "models"
+                    # Use same cache directory as main embedder.
+                    # resolve_storage_root() honors CODE_SEARCH_STORAGE (test
+                    # redirection) and owns the ~/.claude_code_search fallback.
+                    cache_dir = resolve_storage_root() / "models"
                     cache_dir.mkdir(parents=True, exist_ok=True)
                     self.embedder = CodeEmbedder(cache_dir=str(cache_dir))
                     self._logger.info(

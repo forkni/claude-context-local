@@ -403,6 +403,11 @@ class HybridSearcher(BaseSearcher):
                 self._logger.info("HybridSearcher shut down")
 
     @property
+    def is_shutdown(self) -> bool:
+        """Check if the searcher has been shut down."""
+        return self._is_shutdown
+
+    @property
     def is_ready(self) -> bool:
         """Check if both indices are ready."""
         bm25_ready = not self.bm25_index.is_empty

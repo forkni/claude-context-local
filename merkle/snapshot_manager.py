@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
+from search.storage_layout import resolve_storage_root
 from utils.atomic_io import write_json_atomic
 
 from .merkle_dag import MerkleDAG
@@ -22,17 +23,11 @@ class SnapshotManager:
 
         Args:
             storage_dir: Directory to store snapshots. Defaults to
-                ``get_storage_dir() / "merkle"`` (honoring CODE_SEARCH_STORAGE),
-                falling back to ``~/.claude_code_search/merkle`` if the import
-                fails (e.g. when running outside the installed package).
+                ``resolve_storage_root() / "merkle"`` (honoring
+                CODE_SEARCH_STORAGE, else ``~/.claude_code_search/merkle``).
         """
         if storage_dir is None:
-            try:
-                from mcp_server.storage_manager import get_storage_dir
-
-                storage_dir = get_storage_dir() / "merkle"
-            except Exception:  # noqa: BLE001 - resilience: fall back to default storage dir if import fails
-                storage_dir = Path.home() / ".claude_code_search" / "merkle"
+            storage_dir = resolve_storage_root() / "merkle"
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 

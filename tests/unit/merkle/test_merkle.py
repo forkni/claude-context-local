@@ -981,65 +981,36 @@ class TestSnapshotManagerStorageDir:
         assert sm.storage_dir == tmp_path
         assert sm.storage_dir.exists()
 
-    def test_default_is_merkle_subdir_of_get_storage_dir(self, tmp_path: Path) -> None:
-        """Default storage_dir must be get_storage_dir() / 'merkle', not hardcoded home."""
-
-        fake_storage = tmp_path / "fake_storage"
-        fake_storage.mkdir()
-
-        # Patch the lazy import path inside __init__
-        import types
-
-        fake_module = types.ModuleType("mcp_server.storage_manager")
-        fake_module.get_storage_dir = lambda: fake_storage  # type: ignore[attr-defined]
-
-        import sys
-
-        orig = sys.modules.get("mcp_server.storage_manager")
-        sys.modules["mcp_server.storage_manager"] = fake_module
-        try:
-            sm = SnapshotManager()
-        finally:
-            if orig is None:
-                del sys.modules["mcp_server.storage_manager"]
-            else:
-                sys.modules["mcp_server.storage_manager"] = orig
-
-        assert sm.storage_dir == fake_storage / "merkle"
-
-    def test_default_without_storage_manager_falls_back(
+    def test_default_is_merkle_subdir_of_storage_root(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If mcp_server.storage_manager can't be imported, falls back to ~/.claude_code_search/merkle.
+        """Default storage_dir is resolve_storage_root() / 'merkle' (honors CODE_SEARCH_STORAGE)."""
+        storage = tmp_path / "storage"
+        monkeypatch.setenv("CODE_SEARCH_STORAGE", str(storage))
 
-        Patches Path.home() to a tmp_path stand-in first — the real fallback
-        computes ``Path.home() / ".claude_code_search" / "merkle"`` and then
+        sm = SnapshotManager()
+
+        assert sm.storage_dir == storage / "merkle"
+        assert sm.storage_dir.exists()
+
+    def test_default_without_env_falls_back_to_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With CODE_SEARCH_STORAGE unset, falls back to ~/.claude_code_search/merkle.
+
+        Patches Path.home() to a tmp_path stand-in first — the fallback
+        computes ``Path.home() / ".claude_code_search"`` and then
         unconditionally ``mkdir(parents=True)``s it, so exercising this branch
         against the real Path.home() creates real on-disk state every run
         (the exact "production-directory pollution" smell the suite's own
         _no_real_storage_pollution guard exists to catch — see AUDIT.md Step 7).
         """
-        import sys
-        import types
-
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.delenv("CODE_SEARCH_STORAGE", raising=False)
 
-        # Replace mcp_server.storage_manager with a module whose get_storage_dir raises
-        broken = types.ModuleType("mcp_server.storage_manager")
-        broken.get_storage_dir = None  # type: ignore[attr-defined]  # will raise TypeError on call
+        sm = SnapshotManager()
 
-        orig = sys.modules.get("mcp_server.storage_manager")
-        sys.modules["mcp_server.storage_manager"] = broken
-        try:
-            sm = SnapshotManager()
-        finally:
-            if orig is None:
-                del sys.modules["mcp_server.storage_manager"]
-            else:
-                sys.modules["mcp_server.storage_manager"] = orig
-
-        expected = tmp_path / ".claude_code_search" / "merkle"
-        assert sm.storage_dir == expected
+        assert sm.storage_dir == tmp_path / ".claude_code_search" / "merkle"
 
 
 class TestChangeDetectorSnapshotIgnore(TestCase):

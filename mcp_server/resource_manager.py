@@ -231,8 +231,10 @@ class McpResourceRefresher:
         logger.info("[FULL_INDEX] Fresh embedder acquired for reindex")
 
         # Step 4: Refresh indexer/searcher (required since cleanup shut it down)
-        # Only refresh if the indexer was actually shut down (has _is_shutdown flag set to True)
-        if hasattr(indexer, "_is_shutdown") and indexer._is_shutdown:
+        # Only refresh if the indexer was actually shut down. HybridSearcher
+        # exposes is_shutdown; CodeIndexManager has no such state, so it
+        # defaults to False.
+        if getattr(indexer, "is_shutdown", False):
             from mcp_server.search_factory import get_searcher
 
             # load_existing=False (#reindex-log-audit-2026-07-30): this searcher

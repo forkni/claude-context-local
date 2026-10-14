@@ -23,9 +23,11 @@ import pytest
 
 from search.storage_layout import (
     MODEL_DIR_TEMPLATE,
+    STORAGE_SENTINEL,
     build_model_dir_name,
     project_id_from_index_dir,
     project_id_from_model_dir_name,
+    resolve_storage_root,
 )
 
 
@@ -124,3 +126,56 @@ class TestAnchorAgainstRealStorageDir:
         ).rsplit("_", 1)[0]
 
         assert project_id_from_model_dir_name(model_dir.name) == expected_project_id
+
+
+# ---------------------------------------------------------------------------
+# resolve_storage_root
+# ---------------------------------------------------------------------------
+
+
+class TestResolveStorageRoot:
+    """Uncached storage-root resolution (moved from mcp_server.storage_manager
+    so search/ and merkle/ need not import mcp_server -- ADR-0051)."""
+
+    def test_safe_env_value_is_used_and_marked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        storage = tmp_path / "storage"
+        monkeypatch.setenv("CODE_SEARCH_STORAGE", str(storage))
+
+        result = resolve_storage_root()
+
+        assert result == storage
+        assert (storage / STORAGE_SENTINEL).is_file()
+
+    def test_env_inside_project_tree_falls_back_with_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / "pyproject.toml").write_text("", encoding="utf-8")
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: home)
+        monkeypatch.setenv("CODE_SEARCH_STORAGE", str(project / "store"))
+
+        with caplog.at_level("ERROR", logger="search.storage_layout"):
+            result = resolve_storage_root()
+
+        assert result == home / ".claude_code_search"
+        assert not (project / "store").exists()
+        assert "is unsafe" in caplog.text
+
+    def test_unset_env_uses_home_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.delenv("CODE_SEARCH_STORAGE", raising=False)
+
+        result = resolve_storage_root()
+
+        assert result == tmp_path / ".claude_code_search"
+        assert (result / STORAGE_SENTINEL).is_file()

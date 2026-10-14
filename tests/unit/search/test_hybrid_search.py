@@ -97,14 +97,14 @@ class TestHybridSearcher:
         searcher = HybridSearcher(self.temp_dir)
 
         assert searcher.max_workers == 2
-        assert not searcher._is_shutdown
+        assert not searcher.is_shutdown
 
     def test_context_manager(self):
         """Test context manager functionality."""
         with HybridSearcher(self.temp_dir) as searcher:
-            assert not searcher._is_shutdown
+            assert not searcher.is_shutdown
 
-        assert searcher._is_shutdown
+        assert searcher.is_shutdown
 
     def test_close_metadata_connections_delegates_to_dense_index_close(self):
         """close_metadata_connections collapses to dense_index.close()

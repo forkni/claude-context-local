@@ -18,11 +18,8 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from mcp_server.storage_manager import (  # noqa: E402
-    _PROJECT_MARKERS,
-    STORAGE_SENTINEL,
-    get_storage_dir,
-)
+from mcp_server.storage_manager import get_storage_dir  # noqa: E402
+from search.storage_layout import _PROJECT_MARKERS, STORAGE_SENTINEL  # noqa: E402
 
 
 def safe_rmtree_project(project_hash: str, retry: bool = False) -> int:

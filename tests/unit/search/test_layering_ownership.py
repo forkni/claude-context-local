@@ -2,7 +2,7 @@
 
 Converts ADR-0051's prose import count and this refactor's wiring invariant
 into checked facts. If either test fails you have either:
-- Added a new runtime `mcp_server` import under search/ (inverts ADR-0004's
+- Added a new runtime `mcp_server` import under search/ or merkle/ (inverts ADR-0004's
   layering rule — route through a protocol seam like
   search.resource_refresh.ResourceRefresher instead), OR
 - Added an IncrementalIndexer(...) construction under mcp_server/ without an
@@ -61,30 +61,31 @@ class _UpwardImportVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+# Lower layers that must never import mcp_server/ at runtime.
+_LOWER_LAYER_ROOTS = ("search", "merkle")
+
 # Files with a documented, deliberate runtime mcp_server import.
-# Keep this list short -- each entry is a standing exception to ADR-0004.
-_UPWARD_IMPORT_ALLOWLIST = {
-    # Cache-dir fallback for a caller-omitted embedder; wrapped in its own
-    # try/except so an import failure degrades to Path.home() rather than
-    # crashing search. Predates this refactor (see ADR-0051's deferral list).
-    "search/search_executor.py",
-}
+# Each entry is a standing exception to ADR-0004 -- keep it empty. The last
+# one (search_executor's embedder cache-dir fallback, ADR-0051's deferral)
+# closed when the storage root moved to search.storage_layout.
+_UPWARD_IMPORT_ALLOWLIST: set[str] = set()
 
 
 class TestSearchMcpLayering:
-    """ADR-0004: search/ must not import mcp_server/ at runtime."""
+    """ADR-0004: search/ and merkle/ must not import mcp_server/ at runtime."""
 
     def test_no_runtime_mcp_server_imports_outside_allowlist(self):
         stray: list[str] = []
-        for norm, tree in _iter_production_trees("search"):
-            if norm in _UPWARD_IMPORT_ALLOWLIST:
-                continue
-            visitor = _UpwardImportVisitor()
-            visitor.visit(tree)
-            stray.extend(f"{norm}:{lineno}" for lineno in visitor.lines)
+        for root in _LOWER_LAYER_ROOTS:
+            for norm, tree in _iter_production_trees(root):
+                if norm in _UPWARD_IMPORT_ALLOWLIST:
+                    continue
+                visitor = _UpwardImportVisitor()
+                visitor.visit(tree)
+                stray.extend(f"{norm}:{lineno}" for lineno in visitor.lines)
 
         assert not stray, (
-            f"Stray runtime mcp_server imports under search/: {stray}. "
+            f"Stray runtime mcp_server imports under search/ or merkle/: {stray}. "
             "Route through a protocol seam (see search.resource_refresh."
             "ResourceRefresher) instead of importing mcp_server/ directly."
         )

@@ -269,21 +269,21 @@ class TestInitializeServerStateSwallowsBindFailure:
 
 
 class _StubIndexer:
-    """No `_is_shutdown` attribute -- exercises the 'no refresh needed'
-    branch the way a never-shutdown production indexer would (hasattr is
-    False, not just falsy)."""
+    """No `is_shutdown` attribute -- exercises the 'no refresh needed'
+    branch the way CodeIndexManager does (the attribute is absent, not just
+    falsy)."""
 
 
 class _ShutdownIndexer:
     """Marks itself shut down -- exercises the get_searcher refresh branch."""
 
-    _is_shutdown = True
+    is_shutdown = True
 
 
 class _NotShutdownIndexer:
     """Explicit False -- distinct from the absent-attribute case."""
 
-    _is_shutdown = False
+    is_shutdown = False
 
 
 class TestMcpResourceRefresherRefreshBeforeFullIndex:

@@ -203,6 +203,26 @@ def test_search_dense_creates_embedder_lazily_when_none(executor):
     assert executor.embedder is mock_instance
 
 
+def test_search_dense_lazy_embedder_uses_storage_root_cache_dir(
+    executor, tmp_path, monkeypatch
+):
+    """The lazily built CodeEmbedder caches under resolve_storage_root()/models
+    (search.storage_layout, not mcp_server -- ADR-0004)."""
+    executor.embedder = None
+    monkeypatch.setenv("CODE_SEARCH_STORAGE", str(tmp_path / "storage"))
+
+    mock_instance = Mock()
+    mock_instance.embed_query.return_value = [0.0] * 768
+
+    with patch(
+        "embeddings.embedder.CodeEmbedder", return_value=mock_instance
+    ) as mock_cls:
+        executor.search_dense("query", 5, None)
+
+    mock_cls.assert_called_once_with(cache_dir=str(tmp_path / "storage" / "models"))
+    assert (tmp_path / "storage" / "models").is_dir()
+
+
 def test_stats_increment_after_each_search(executor):
     """stats property reflects total_searches count after calls."""
     assert executor.stats["total_searches"] == 0

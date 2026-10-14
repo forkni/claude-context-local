@@ -743,11 +743,11 @@ def mock_snapshot_manager_for_unit_tests(
 
     Exemption: tests/unit/merkle/test_merkle.py's TestSnapshotManagerStorageDir
     calls bare SnapshotManager() specifically to exercise the class's *own*
-    default-resolution logic (the get_storage_dir() branch and the
+    default-resolution logic (the resolve_storage_root() branch and the
     Path.home() fallback branch) — forcing storage_dir there would defeat
     the test. Those two tests already protect themselves against real-home
-    pollution independently (faking mcp_server.storage_manager / monkeypatching
-    Path.home()), so this fixture skips that one file rather than patching
+    pollution independently (setting CODE_SEARCH_STORAGE to tmp_path /
+    monkeypatching Path.home()), so this fixture skips that one file rather than patching
     it and immediately un-patching around those tests.
 
     This fixture's yielded value has no consumers (nothing requests it by
