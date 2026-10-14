@@ -250,3 +250,32 @@ but the set does.
 - Emitting dataclass defaults into `tool_registry.py`'s derived `configure_chunking` JSON
   schema, closing the `MCP_TOOLS_REFERENCE.md` prose-drift class at the root — named as a
   follow-up above, not implemented here.
+
+## Addendum (2026-10-14): `create_reranker` takes the `RerankerConfig`
+
+D2 and D4 describe `search/reranking_engine.py`'s `create_reranker(...)` call as the read site
+for six reranker fields. The architecture review of 2026-10-13 (card `#reranker-config-unpack`)
+found that both branches of `RerankingEngine._ensure_reranker` unpacked the same nine fields
+into the factory, and that the factory re-declared each field's default. The seam is now
+Preserve Whole Object (commit fba38893):
+
+- **One read site, one default.** `create_reranker(config: RerankerConfig, device=None)` in
+  `search/neural_reranker.py` reads the per-branch fields itself; the nine kwargs and their
+  duplicated defaults are deleted, so `RerankerConfig` is the only default. The engine's two
+  branches pass `config.reranker` through unchanged. `device` is not a config field and stays the
+  one override. The `instruction or None` normalisation moved into the factory with the read, so
+  an empty configured instruction still selects the generative default.
+- **Five `reader=` tags moved with the reads.** `batch_size`, `instruction`, `doc_max_chars`,
+  `listwise_doc_max_chars` and `listwise_dtype` now name `search/neural_reranker.py`, which is
+  what `test_reader_files_mention_field_name` greps. `construction_baked=True` is unchanged on all
+  twelve pinned fields, and `requires_rebuild()` derives from `construction_baked`, never from
+  `reader`, so D2's rebuild guarantee is untouched. The single-caller chain D2 relies on still
+  holds: `_ensure_reranker` is the factory's only production caller.
+- **Behaviour check.** One 63-query SSCG run on the laptop configuration (RTX 4060, F2LLM-v2-330M
+  - gte-reranker-modernbert-base, `logs/sscg_option4_63q_20261014_133119.json`) against the
+  2026-10-08 B1 leg (`logs/ab_B1_63q_r1.json`): MRR 0.6968 vs 0.7047 (−0.0079), R@10 0.7142 vs
+  0.7142, R@20 0.8199 vs 0.8199, 60/63 successes both. Gate (|ΔMRR| ≤ 0.02, ΔR@20 ≥ −0.02) passes;
+  the MRR drift sits inside the commits that landed between the two runs, and recall is identical.
+  Caveat: the gte reranker takes the plain `NeuralReranker` branch, so the generative and Jina
+  listwise branches are covered on this machine by the factory unit tests only. `BENCHMARKS.md`
+  is not re-pinned; its canon is the 4090 configuration.

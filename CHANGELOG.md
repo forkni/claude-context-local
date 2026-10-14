@@ -484,6 +484,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Internal: `create_reranker` takes the `RerankerConfig`**
+  ([ADR-0032 addendum](docs/adr/0032-config-liveness-audit.md#addendum-2026-10-14-create_reranker-takes-the-rerankerconfig)).
+  There is no behaviour change; a 63-query SSCG run on the laptop configuration matches the
+  2026-10-08 B1 leg on recall and is within gate on MRR.
+  - `create_reranker(config, device=None)` reads the per-branch fields itself; the nine per-field
+    kwargs and their duplicated defaults are gone, and `RerankerConfig` is the only default.
+  - Both `RerankingEngine._ensure_reranker` branches pass `config.reranker` through.
+  - Five config-liveness `reader=` tags moved to `search/neural_reranker.py`; `construction_baked`
+    and `requires_rebuild()` are unchanged.
+
 - **Internal: tighter search/mcp_server layering**
   ([ADR-0051](docs/adr/0051-delete-graph-scoring-stage-upward-import.md#addendum-2026-10-14-the-deferred-fallback-is-closed),
   [ADR-0053](docs/adr/0053-resource-refresher-protocol-seam.md#addendum-2026-10-14-one-construction-site-public-is_shutdown)).
