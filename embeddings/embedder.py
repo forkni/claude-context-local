@@ -38,8 +38,7 @@ from embeddings.query_cache import QueryEmbeddingCache
 from embeddings.vram_budget import (
     _DEFAULT_MIN_ROOM_GB,
     _MIN_ROOM_ITEMS,
-    calculate_optimal_batch_size,
-    set_vram_limit,
+    VramBudget,
 )
 from search.config import (
     get_search_config,
@@ -305,18 +304,18 @@ class CodeEmbedder:
 
         # Set hard VRAM limit early to prevent shared memory spillover
         # This must be called before any CUDA allocations
-        # Try to get fraction from config, fallback to 0.90
+        # Budget comes from config; VramBudget.default() when it cannot be read
         try:
             config = get_search_config()
             if config and config.performance:
-                fraction = config.performance.vram_limit_fraction
+                budget = VramBudget.from_config(config.performance)
             else:
-                fraction = 0.90
+                budget = VramBudget.default()
             query_cache_size = config.embedding.query_cache_size if config else 128
         except (RuntimeError, AttributeError):
-            fraction = 0.90
+            budget = VramBudget.default()
             query_cache_size = 128
-        set_vram_limit(fraction)
+        budget.apply_cap()
 
         # Query embedding cache (LRU)
         self._query_cache = QueryEmbeddingCache(max_size=query_cache_size)
@@ -764,7 +763,7 @@ class CodeEmbedder:
         # Log VRAM usage after model load
         self._log_vram_usage("MODEL_LOADED")
 
-        cap_fraction: float | None = None
+        budget: VramBudget | None = None
         min_room_gb = _DEFAULT_MIN_ROOM_GB
         cap_refreshed = False  # batch-1 OOM re-measures the cap once per chunk
         # Re-apply VRAM cap with fresh memory readings — other processes may have
@@ -773,9 +772,9 @@ class CodeEmbedder:
         try:
             _embed_cfg = get_search_config()
             if _embed_cfg and _embed_cfg.performance:
-                cap_fraction = _embed_cfg.performance.vram_limit_fraction
+                budget = VramBudget.from_config(_embed_cfg.performance)
                 min_room_gb = self._min_working_room_gb()
-                set_vram_limit(cap_fraction, min_room_gb=min_room_gb)
+                budget.apply_cap(min_room_gb)
         except (RuntimeError, AttributeError) as _cap_err:
             self._logger.debug(
                 "Ignoring %s re-applying VRAM cap", type(_cap_err).__name__
@@ -822,18 +821,8 @@ class CodeEmbedder:
                             f"{activation_gb_per_item:.3f} GB/item"
                         )
 
-                # Derive memory_fraction from vram_limit_fraction to maintain consistent safety margin
-                # Target ~81% of hard VRAM ceiling for batch sizing (0.8125 ratio)
-                memory_fraction = config.performance.vram_limit_fraction * 0.8125
-                memory_fraction = max(
-                    0.05, min(memory_fraction, 0.95)
-                )  # Clamp to safe range
-
-                batch_size = calculate_optimal_batch_size(
+                batch_size = VramBudget.from_config(config.performance).batch_size(
                     embedding_dim=config.embedding.dimension,
-                    min_batch=config.performance.dynamic_batch_min,
-                    max_batch=config.performance.dynamic_batch_max,
-                    memory_fraction=memory_fraction,
                     model_vram_gb=model_vram_gb,
                     model_name=self.model_name,
                     activation_gb_per_item=activation_gb_per_item,
@@ -999,8 +988,8 @@ class CodeEmbedder:
                             if torch and torch.cuda.is_available():
                                 torch.cuda.empty_cache()
                             gc.collect()
-                            if cap_fraction is not None:
-                                set_vram_limit(cap_fraction, min_room_gb=min_room_gb)
+                            if budget is not None:
+                                budget.apply_cap(min_room_gb)
                             batch_num -= 1
                             continue
                         else:

@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestSetVramLimitEffective:
     """Tests for set_vram_limit() effective-fraction computation.
@@ -548,3 +550,92 @@ class TestReapplyVramCap:
         mock_set.assert_not_called()
         logger.debug.assert_called_once()
         assert "non-fatal" in logger.debug.call_args.args[0]
+
+
+class TestVramBudget:
+    """VramBudget: the one object callers hold for cap + batch sizing."""
+
+    @staticmethod
+    def _perf(fraction=0.8, bmin=4, bmax=48):
+        perf = MagicMock()
+        perf.vram_limit_fraction = fraction
+        perf.dynamic_batch_min = bmin
+        perf.dynamic_batch_max = bmax
+        return perf
+
+    def test_from_config_reads_the_three_fields_once(self):
+        from embeddings.vram_budget import VramBudget
+
+        budget = VramBudget.from_config(self._perf(0.7, 8, 96))
+
+        assert (budget.cap_fraction, budget.batch_min, budget.batch_max) == (
+            0.7,
+            8,
+            96,
+        )
+
+    def test_default_uses_config_bounds_with_the_no_config_cap(self):
+        from embeddings.vram_budget import VramBudget
+        from search.config import PerformanceConfig
+
+        budget = VramBudget.default()
+
+        assert budget.cap_fraction == 0.90
+        assert budget.batch_min == PerformanceConfig().dynamic_batch_min
+        assert budget.batch_max == PerformanceConfig().dynamic_batch_max
+
+    @patch("embeddings.vram_budget.set_vram_limit", return_value=True)
+    def test_apply_cap_forwards_fraction_and_room(self, mock_set):
+        from embeddings.vram_budget import VramBudget
+
+        assert VramBudget.from_config(self._perf(0.8)).apply_cap(0.5) is True
+
+        mock_set.assert_called_once_with(0.8, min_room_gb=0.5)
+
+    @patch("embeddings.vram_budget.set_vram_limit")
+    def test_apply_cap_defaults_to_the_minimum_room(self, mock_set):
+        from embeddings.vram_budget import _DEFAULT_MIN_ROOM_GB, VramBudget
+
+        VramBudget.from_config(self._perf(0.8)).apply_cap()
+
+        assert mock_set.call_args.kwargs["min_room_gb"] == _DEFAULT_MIN_ROOM_GB
+
+    def test_batch_memory_fraction_is_81_percent_of_cap_clamped(self):
+        from embeddings.vram_budget import VramBudget
+
+        assert VramBudget.from_config(
+            self._perf(0.8)
+        ).batch_memory_fraction == pytest.approx(0.65)
+        assert VramBudget.from_config(self._perf(0.01)).batch_memory_fraction == 0.05
+        assert VramBudget.from_config(self._perf(1.5)).batch_memory_fraction == 0.95
+
+    @patch("embeddings.vram_budget.calculate_optimal_batch_size", return_value=24)
+    def test_batch_size_forwards_bounds_and_derived_fraction(self, mock_calc):
+        from embeddings.vram_budget import VramBudget
+
+        got = VramBudget.from_config(self._perf(0.8, 4, 48)).batch_size(
+            embedding_dim=1024,
+            model_vram_gb=1.5,
+            model_name="m",
+            activation_gb_per_item=0.02,
+        )
+
+        assert got == 24
+        mock_calc.assert_called_once_with(
+            embedding_dim=1024,
+            min_batch=4,
+            max_batch=48,
+            memory_fraction=pytest.approx(0.65),
+            model_vram_gb=1.5,
+            model_name="m",
+            activation_gb_per_item=0.02,
+        )
+
+    @patch("embeddings.vram_budget.reapply_vram_cap")
+    def test_reapply_cap_delegates(self, mock_reapply):
+        from embeddings.vram_budget import VramBudget
+
+        logger = MagicMock()
+        VramBudget.reapply_cap(logger)
+
+        mock_reapply.assert_called_once_with(logger)

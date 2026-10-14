@@ -588,13 +588,13 @@ class PerformanceConfig:
     )
     vram_limit_fraction: float = field(
         default=0.80,  # Hard VRAM ceiling (80% of dedicated)
-        metadata=spec(reader="embeddings/embedder.py"),
+        metadata=spec(reader="embeddings/vram_budget.py"),
     )
     allow_ram_fallback: bool = field(
         default=True,  # Allow spillover to system RAM (slower but reliable); indexing
         # overrides this locally via temporary_ram_fallback_off()
         metadata=spec(
-            flat_alias="allow_shared_memory", reader="embeddings/embedder.py"
+            flat_alias="allow_shared_memory", reader="embeddings/vram_budget.py"
         ),
     )
 
@@ -630,7 +630,7 @@ class PerformanceConfig:
         metadata=spec(
             flat_alias="dynamic_batch_min",
             env="CLAUDE_DYNAMIC_BATCH_MIN",
-            reader="embeddings/embedder.py",
+            reader="embeddings/vram_budget.py",
         ),
     )
     dynamic_batch_max: int = field(
@@ -638,7 +638,7 @@ class PerformanceConfig:
         metadata=spec(
             flat_alias="dynamic_batch_max",
             env="CLAUDE_DYNAMIC_BATCH_MAX",
-            reader="embeddings/embedder.py",
+            reader="embeddings/vram_budget.py",
         ),
     )
 

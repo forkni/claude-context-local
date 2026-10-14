@@ -7,13 +7,15 @@ cap; ``compute_effective_vram_cap`` is the pure measurement behind it;
 """
 
 import logging
+from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 from search.config import (
-    get_indexing_ram_fallback_override as _get_ram_fallback_override,
+    PerformanceConfig,
+    get_search_config,
 )
 from search.config import (
-    get_search_config,
+    get_indexing_ram_fallback_override as _get_ram_fallback_override,
 )
 
 
@@ -344,3 +346,74 @@ def calculate_optimal_batch_size(
             f"using min_batch={min_batch}"
         )
         return min_batch  # Fallback on error
+
+
+@dataclass(frozen=True)
+class VramBudget:
+    """One process's VRAM budget, read once from ``PerformanceConfig``.
+
+    Callers build it from the active config (or ``default()`` when no config is
+    available) and then only ask it to ``apply_cap`` or pick a ``batch_size``;
+    the cap fraction, the batch-sizing share of it and the batch bounds never
+    leave this class.  RAM fallback is resolved inside ``set_vram_limit`` at
+    apply time because the indexing override is per-run (ADR-0011).
+    """
+
+    cap_fraction: float
+    batch_min: int
+    batch_max: int
+
+    # Share of the hard VRAM ceiling the batch sizer may plan for (~81%).
+    BATCH_SHARE_OF_CAP = 0.8125
+    # Cap used when no config can be read at all.
+    NO_CONFIG_CAP_FRACTION = 0.90
+
+    @classmethod
+    def from_config(cls, performance: PerformanceConfig) -> "VramBudget":
+        """Read the budget fields once from a ``PerformanceConfig``."""
+        return cls(
+            cap_fraction=performance.vram_limit_fraction,
+            batch_min=performance.dynamic_batch_min,
+            batch_max=performance.dynamic_batch_max,
+        )
+
+    @classmethod
+    def default(cls) -> "VramBudget":
+        """Budget when no config is available: config defaults with a 0.90 cap."""
+        return replace(
+            cls.from_config(PerformanceConfig()),
+            cap_fraction=cls.NO_CONFIG_CAP_FRACTION,
+        )
+
+    def apply_cap(self, min_room_gb: float = _DEFAULT_MIN_ROOM_GB) -> bool:
+        """Apply the per-process cap; see ``set_vram_limit`` for the contract."""
+        return set_vram_limit(self.cap_fraction, min_room_gb=min_room_gb)
+
+    @property
+    def batch_memory_fraction(self) -> float:
+        """Fraction of total VRAM the batch sizer plans for, clamped to [0.05, 0.95]."""
+        return max(0.05, min(self.cap_fraction * self.BATCH_SHARE_OF_CAP, 0.95))
+
+    def batch_size(
+        self,
+        *,
+        embedding_dim: int,
+        model_vram_gb: float,
+        model_name: str | None,
+        activation_gb_per_item: float,
+    ) -> int:
+        """Batch size that fits this budget; see ``calculate_optimal_batch_size``."""
+        return calculate_optimal_batch_size(
+            embedding_dim=embedding_dim,
+            min_batch=self.batch_min,
+            max_batch=self.batch_max,
+            memory_fraction=self.batch_memory_fraction,
+            model_vram_gb=model_vram_gb,
+            model_name=model_name,
+            activation_gb_per_item=activation_gb_per_item,
+        )
+
+    @staticmethod
+    def reapply_cap(logger: logging.Logger | None = None) -> None:
+        """Non-fatal re-apply from the active config; see ``reapply_vram_cap``."""
+        reapply_vram_cap(logger)

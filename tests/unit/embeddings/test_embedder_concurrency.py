@@ -28,7 +28,7 @@ def _make_embedder_with_mock_loader() -> tuple[CodeEmbedder, MagicMock]:
     with (
         patch("embeddings.embedder.ModelLoader") as mock_loader,
         patch("embeddings.embedder.ModelCacheManager"),
-        patch("embeddings.embedder.set_vram_limit"),
+        patch("embeddings.vram_budget.set_vram_limit"),
         patch("embeddings.embedder.get_search_config", return_value=None),
     ):
         mock_loader.return_value = fake_loader

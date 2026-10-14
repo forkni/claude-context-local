@@ -1050,7 +1050,7 @@ class TestOomRecoveryBackoff:
     def _no_vram_cap(self):
         # These tests mock ``embeddings.embedder.torch`` with CUDA unavailable;
         # the cap lives in ``embeddings.vram_budget`` and must stay inert too.
-        with patch("embeddings.embedder.set_vram_limit"):
+        with patch("embeddings.vram_budget.set_vram_limit"):
             yield
 
     def _make_chunks(self, n: int):
@@ -1313,7 +1313,7 @@ class TestOomRecoveryBackoff:
         embedder.create_embedding_content = MagicMock(side_effect=lambda c: c.content)
         return embedder
 
-    @patch("embeddings.embedder.set_vram_limit")
+    @patch("embeddings.vram_budget.set_vram_limit")
     @patch("embeddings.embedder.torch")
     @patch("embeddings.embedder.get_search_config")
     def test_batch1_oom_remeasures_cap_and_retries_once(
@@ -1337,7 +1337,7 @@ class TestOomRecoveryBackoff:
         assert mock_set_limit.call_count == 2  # initial apply + one re-measure
         assert mock_set_limit.call_args.kwargs["min_room_gb"] >= 0.25
 
-    @patch("embeddings.embedder.set_vram_limit")
+    @patch("embeddings.vram_budget.set_vram_limit")
     @patch("embeddings.embedder.torch")
     @patch("embeddings.embedder.get_search_config")
     def test_batch1_oom_twice_raises_vram_exhausted(
