@@ -7,7 +7,7 @@ cap; ``compute_effective_vram_cap`` is the pure measurement behind it;
 """
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields
 from typing import NamedTuple
 
 from search.config import (
@@ -232,14 +232,14 @@ def reapply_vram_cap(logger: logging.Logger | None = None) -> None:
 
     Rerankers call this right before loading: the embedder and other
     processes may have changed free VRAM since the cap was first applied.
-    Non-fatal by design -- any failure is logged at debug level on ``logger``
+    Non-fatal by design -- any failure is logged as a warning on ``logger``
     and swallowed so the model load continues uncapped.
     """
     try:
         set_vram_limit(get_search_config().performance.vram_limit_fraction)
     except Exception as e:  # noqa: BLE001 - resilience: VRAM cap re-apply non-fatal, model load continues
-        (logger or logging.getLogger(__name__)).debug(
-            "VRAM cap re-apply skipped (non-fatal): %s", e
+        (logger or logging.getLogger(__name__)).warning(
+            "VRAM cap re-apply skipped (non-fatal), model loads uncapped: %s", e
         )
 
 
@@ -383,9 +383,14 @@ class VramBudget:
     @classmethod
     def default(cls) -> "VramBudget":
         """Budget when no config is available: config defaults with a 0.90 cap."""
-        return replace(
-            cls.from_config(PerformanceConfig()),
+        defaults = {f.name: f.default for f in fields(PerformanceConfig)}
+        batch_min = defaults["dynamic_batch_min"]
+        batch_max = defaults["dynamic_batch_max"]
+        assert isinstance(batch_min, int) and isinstance(batch_max, int)
+        return cls(
             cap_fraction=cls.NO_CONFIG_CAP_FRACTION,
+            batch_min=batch_min,
+            batch_max=batch_max,
         )
 
     def apply_cap(self, min_room_gb: float = DEFAULT_MIN_ROOM_GB) -> bool:

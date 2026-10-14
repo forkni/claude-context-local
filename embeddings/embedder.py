@@ -764,6 +764,7 @@ class CodeEmbedder:
         self._log_vram_usage("MODEL_LOADED")
 
         budget: VramBudget | None = None
+        _embed_cfg = None
         min_room_gb = DEFAULT_MIN_ROOM_GB
         cap_refreshed = False  # batch-1 OOM re-measures the cap once per chunk
         # Re-apply VRAM cap with fresh memory readings — other processes may have
@@ -782,7 +783,8 @@ class CodeEmbedder:
 
         # Load batch size from config if not explicitly provided
         if batch_size is None:
-            config = get_search_config()
+            # Same config object the cap was applied with (one read per call).
+            config = _embed_cfg if _embed_cfg is not None else get_search_config()
 
             # Try dynamic GPU-based batch size first
             if (

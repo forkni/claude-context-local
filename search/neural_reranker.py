@@ -509,9 +509,14 @@ class NeuralReranker(BaseReranker):
                 if self._model is None:
                     # Re-apply VRAM cap before loading reranker weights — embedder and
                     # other processes may have changed free VRAM since server startup.
-                    from embeddings.vram_budget import VramBudget
-
-                    VramBudget.reapply_cap(self._logger)
+                    try:
+                        from embeddings.vram_budget import VramBudget
+                    except ImportError as e:
+                        self._logger.debug(
+                            "VRAM cap re-apply skipped (non-fatal): %s", e
+                        )
+                    else:
+                        VramBudget.reapply_cap(self._logger)
                     self._logger.info(f"Loading reranker model: {self.model_name}")
                     from sentence_transformers import CrossEncoder
 
@@ -768,9 +773,12 @@ class GenerativeReranker(BaseReranker):
         """Lazy load model and tokenizer on first access."""
         if self._model is None:
             # Re-apply VRAM cap before loading generative reranker weights.
-            from embeddings.vram_budget import VramBudget
-
-            VramBudget.reapply_cap(self._logger)
+            try:
+                from embeddings.vram_budget import VramBudget
+            except ImportError as e:
+                self._logger.debug("VRAM cap re-apply skipped (non-fatal): %s", e)
+            else:
+                VramBudget.reapply_cap(self._logger)
             self._logger.info(f"Loading generative reranker: {self.model_name}")
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -1165,9 +1173,12 @@ class JinaRerankerV3(BaseReranker):
     def _load_or_fetch(self) -> None:
         """Internal: load model from cache or HuggingFace. Called under _load_lock."""
         # Re-apply VRAM cap before loading Jina reranker weights.
-        from embeddings.vram_budget import VramBudget
-
-        VramBudget.reapply_cap(self._logger)
+        try:
+            from embeddings.vram_budget import VramBudget
+        except ImportError as e:
+            self._logger.debug("VRAM cap re-apply skipped (non-fatal): %s", e)
+        else:
+            VramBudget.reapply_cap(self._logger)
         import transformers as _tf
         from huggingface_hub import try_to_load_from_cache
         from transformers import AutoConfig, AutoModel

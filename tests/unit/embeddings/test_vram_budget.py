@@ -548,8 +548,8 @@ class TestReapplyVramCap:
         reapply_vram_cap(logger)
 
         mock_set.assert_not_called()
-        logger.debug.assert_called_once()
-        assert "non-fatal" in logger.debug.call_args.args[0]
+        logger.warning.assert_called_once()
+        assert "non-fatal" in logger.warning.call_args.args[0]
 
 
 class TestVramBudget:
