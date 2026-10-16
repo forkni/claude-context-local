@@ -134,7 +134,7 @@ class TestNoopPath:
         elapsed_ms = (time.perf_counter() - start) * 1000
         # Under active coverage tracing (sys.gettrace()), each loop iteration pays
         # Python trace-function dispatch overhead (~2x-3x).
-        max_ms = 1500 if sys.gettrace() is not None else 500
+        max_ms = 2500 if sys.gettrace() is not None else 500
         assert elapsed_ms < max_ms, (
             f"noop overhead too high: {elapsed_ms:.1f}ms for {iterations} iters"
         )

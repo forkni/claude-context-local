@@ -860,7 +860,7 @@ source = [
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 86  # Ratchet 2026-10-01 (Phase 15.4): bumped 84 -> 86 following clean baseline audit (87.39% measured across 20,766 statements)
+fail_under = 87  # Ratchet 2026-10-09 (Phase 16.4): bumped 86 -> 87 following clean baseline audit (88.06% measured across 20,894 statements)
 # Re-scoped 2026-08-20 (Phase 13.1): "tools" dropped from [tool.coverage.run]
 # source= above (see that comment). This is a pure denominator correction, not an earned ratchet
 # -- the same code is tested to exactly the same degree before and after; only the statement

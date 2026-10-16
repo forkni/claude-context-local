@@ -116,7 +116,7 @@ class TestFilteredWidening:
         assert manager.search(vectors[5], k=3, filters={"chunk_type": "module"}) == []
         manager.close()
 
-    @pytest.mark.parametrize("k", [1, 7], ids=["k_1", "k_7"])
+    @pytest.mark.parametrize("k", [1, 7], ids=["k=1", "k=7"])
     def test_filtered_results_match_brute_force(self, tmp_path, k):
         manager, vectors = _manager(tmp_path)
         unit = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)

@@ -268,6 +268,7 @@ class TestConfigToolSchemaMatchesFieldSpec:
             ("configure_search_mode", SearchModeConfig, _SEARCH_MODE_FIELDS),
             ("configure_search_mode", PerformanceConfig, _PERFORMANCE_SEARCH_FIELDS),
         ],
+        ids=["chunking", "reranking", "search_mode", "performance"],
     )
     def test_numeric_and_choice_bounds_match(self, tool_name, section_cls, field_map):
         properties = TOOL_SPECS_BY_NAME[tool_name].input_schema["properties"]
