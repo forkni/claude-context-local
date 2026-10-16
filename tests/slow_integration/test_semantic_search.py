@@ -45,7 +45,9 @@ class TestSemanticSearch:
 
         # Initialize components. embedder is constructed before index_manager
         # and passed in so the FAISS dimension-validation guard is armed.
-        embedder = CodeEmbedder(cache_dir=str(tmp_path / "models"))
+        # Default cache_dir (the shared HF hub cache): a per-run tmp cache
+        # re-downloads the full model every run and trips pytest-timeout.
+        embedder = CodeEmbedder()
         index_manager = CodeIndexManager(str(index_dir), embedder=embedder)
         chunker = MultiLanguageChunker(str(test_project_path))
 
