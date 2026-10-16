@@ -35,6 +35,33 @@ def generate_chunk_id(chunk: Any) -> str:
     return chunk_id
 
 
+class DeterministicQueryEmbedder:
+    """Query-side stub matching create_test_embeddings' deterministic mode.
+
+    Pass this instead of embedder=None when a test indexes deterministic
+    embeddings and then searches. With embedder=None, SearchExecutor.search_dense
+    lazily builds a real CodeEmbedder under get_storage_dir()/"models", which the
+    session storage redirect points at an empty tmp dir, so every run downloads
+    the full BAAI/bge-m3 checkpoint (~2.3 GB) and trips pytest-timeout. The real
+    model's 1024-d vectors would not match a 768-d deterministic index anyway.
+    """
+
+    model_name = "deterministic-test-embedder"
+
+    def __init__(self, embedding_dim: int = 768) -> None:
+        self.embedding_dim = embedding_dim
+
+    def embed_query(self, query: str) -> np.ndarray:
+        seed = int(hashlib.sha256(query.encode()).hexdigest(), 16) % 10000
+        return np.random.RandomState(seed).random(self.embedding_dim).astype(np.float32)
+
+    def get_model_info(self) -> dict[str, Any]:
+        return {
+            "model_name": self.model_name,
+            "embedding_dimension": self.embedding_dim,
+        }
+
+
 def create_test_embeddings(
     chunks: list[Any], embedder: Any | None = None, embedding_dim: int = 768
 ) -> list[Any]:
