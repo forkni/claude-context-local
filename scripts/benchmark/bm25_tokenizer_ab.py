@@ -68,7 +68,7 @@ except ImportError as e:
         "Install with: pip install rank_bm25"
     ) from e
 
-VARIANTS = ("split", "split_nostem", "whole", "additive")
+VARIANTS = ("split", "split_nostem", "whole", "additive", "case_gated")
 
 
 def _make_preprocessor(variant: str) -> TextPreprocessor:
@@ -93,6 +93,10 @@ def _make_preprocessor(variant: str) -> TextPreprocessor:
     elif variant == "additive":
         prep = TextPreprocessor(
             use_stopwords=True, use_stemming=False, tokenizer="additive"
+        )
+    elif variant == "case_gated":
+        prep = TextPreprocessor(
+            use_stopwords=True, use_stemming=False, tokenizer="case_gated"
         )
     else:
         raise ValueError(f"Unknown variant: {variant!r}, expected one of {VARIANTS}")

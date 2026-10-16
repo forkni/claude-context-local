@@ -120,6 +120,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import re
 import statistics
@@ -133,6 +134,7 @@ from mcp_server.tools.result_view import (
     _NON_SIGNATURE_CHUNK_TYPES,
     _extract_signature_estimate,
 )
+from mcp_server.tools.search_orchestrator import _JSON_CHARS_PER_TOKEN
 
 
 try:
@@ -214,14 +216,15 @@ def count_tokens_tiktoken(text: str) -> int | None:
 
 
 def count_tokens_prod_heuristic(results: list[dict[str, Any]]) -> int:
-    """Production's exact per-result heuristic, verbatim from
-    ``mcp_server/tools/search_orchestrator.py``'s Block H
-    (``_apply_source_order_and_budget``): ``len(json.dumps(r)) // 4``,
-    summed **per result** -- not ``len(json.dumps(whole_list)) // 4``, which
-    would count the list's own bracket/comma overhead differently than
-    production's truncation loop does.
+    """Production's per-result heuristic, mirroring ``search_orchestrator.py``'s
+    Block H (``_apply_source_order_and_budget``):
+    ``ceil(len(json.dumps(r)) / _JSON_CHARS_PER_TOKEN)``, summed **per result** --
+    not over the whole list, which would count the list's own bracket/comma
+    overhead differently than production's truncation loop does. The
+    ``tiktoken_cl100k / production_heuristic`` ratio should sit near 1.0; drift
+    from it means ``_JSON_CHARS_PER_TOKEN`` needs re-measuring.
     """
-    return sum(len(json.dumps(r)) // 4 for r in results)
+    return sum(math.ceil(len(json.dumps(r)) / _JSON_CHARS_PER_TOKEN) for r in results)
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +362,51 @@ def _load_relationship_golden(path: Path) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Per-query metrics
 # ---------------------------------------------------------------------------
+
+
+TOKEN_BUDGETS: tuple[int, ...] = (2000, 4000, 8000)
+
+
+def _span_tokens(result: dict[str, Any], project_root: Path) -> int | None:
+    """cl100k tokens of a result's targeted ``lines`` span, or None if unreadable."""
+    rel = result.get("file")
+    if not rel:
+        return None
+    path = project_root / rel
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    start, end = _parse_lines(result.get("lines", ""))
+    if not (start and end and end >= start):
+        return None
+    span = "\n".join(text.split("\n")[max(start - 1, 0) : end])
+    tok = count_tokens_tiktoken(span)
+    return tok if tok is not None else len(span) // 4
+
+
+def _recall_at_token_budgets(
+    results: list[dict[str, Any]],
+    gold_ids: set[str],
+    project_root: Path,
+    budgets: tuple[int, ...] = TOKEN_BUDGETS,
+) -> dict[int, bool]:
+    """Recall@K-tokens: is a gold chunk read before the cumulative targeted-span
+    tokens of the ranked results pass each budget?
+
+    Walks ``results`` in rank order, adding each result's span tokens (unreadable
+    spans cost 0). A gold result counts as a hit for budget K when its running
+    total, itself included, is <= K. A result-count cutoff (recall@k) hides how
+    much reading a hit costs; this charges for it.
+    """
+    gold_cost: int | None = None
+    running = 0
+    for r in results:
+        running += _span_tokens(r, project_root) or 0
+        if normalize_chunk_id(r.get("chunk_id", "")) in gold_ids:
+            gold_cost = running
+            break
+    return {b: gold_cost is not None and gold_cost <= b for b in budgets}
 
 
 def _downstream_read_cost(
@@ -596,6 +644,9 @@ async def probe_query(
     )
 
     downstream = _downstream_read_cost(top_k, project_root)
+    recall_at_tokens = (
+        _recall_at_token_budgets(top_k, gold_ids, project_root) if gold_ids else None
+    )
     signature_tokens = _signature_view_tokens(top_k, metadata_store)
 
     return {
@@ -619,6 +670,7 @@ async def probe_query(
             "located": located,
             "content_present": content_present,
             "signature_present": signature_present,
+            "recall_at_tokens": recall_at_tokens,
         },
         "downstream_read_cost": downstream,
         "signature_view_tokens": signature_tokens,
@@ -807,6 +859,11 @@ def summarize(
         [1.0 if g["signature_present"] else 0.0 for g in gold_rows]
     )
 
+    recall_at_tokens_rate = {
+        str(b): _mean([1.0 if g["recall_at_tokens"][b] else 0.0 for g in gold_rows])
+        for b in TOKEN_BUDGETS
+    }
+
     ego_off_within_k_rate = _mean(
         [1.0 if r["ego_contract"]["ego_off_within_k"] else 0.0 for r in reports]
     )
@@ -917,6 +974,7 @@ def summarize(
             "located_rate": located_rate,
             "content_present_rate": content_present_rate,
             "signature_present_rate": signature_present_rate,
+            "recall_at_tokens_rate": recall_at_tokens_rate,
         },
         "ego_contract": {
             "ego_off_within_k_rate": ego_off_within_k_rate,
@@ -983,6 +1041,10 @@ def print_summary(summary: dict[str, Any]) -> None:
         f"content_present_rate={gs['content_present_rate']} "
         "(expected structural 0.0 -- search_code returns coordinates only) "
         f"signature_present_rate={gs['signature_present_rate']}"
+    )
+    print(
+        "recall@K-tokens (targeted-span read cost, cl100k): "
+        + " ".join(f"{b}={v}" for b, v in gs["recall_at_tokens_rate"].items())
     )
 
     ec = summary["ego_contract"]

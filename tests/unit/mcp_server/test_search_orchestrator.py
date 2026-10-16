@@ -900,6 +900,35 @@ class TestApplySourceOrderAndBudget:
         )
         assert len(out) < len(big_results)
 
+    def test_context_budget_boundary_uses_json_chars_per_token(self):
+        """The estimate is ceil(len(json.dumps(r)) / _JSON_CHARS_PER_TOKEN): a
+        budget equal to the summed estimates keeps every result, one token less
+        drops the last.
+        """
+        import json
+        import math
+
+        from mcp_server.tools.search_orchestrator import _JSON_CHARS_PER_TOKEN
+
+        sc = SearchConfig()
+        sc.output.source_order_output = False
+        outcome = _make_outcome(effective_config=sc)
+        results = [
+            {"chunk_id": f"f.py:{i}-{i + 10}:function:f{i}", "file": "f.py"}
+            for i in range(4)
+        ]
+        total = sum(
+            math.ceil(len(json.dumps(r)) / _JSON_CHARS_PER_TOKEN) for r in results
+        )
+        exact = SearchOrchestrator._apply_source_order_and_budget(
+            _make_plan(max_context_tokens=total), outcome, list(results)
+        )
+        short = SearchOrchestrator._apply_source_order_and_budget(
+            _make_plan(max_context_tokens=total - 1), outcome, list(results)
+        )
+        assert len(exact) == len(results)
+        assert len(short) == len(results) - 1
+
     def test_context_budget_zero_keeps_all(self):
         """max_context_tokens=0 means no truncation."""
         plan = _make_plan(max_context_tokens=0)
