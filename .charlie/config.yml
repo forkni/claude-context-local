@@ -1,9 +1,0 @@
-checkCommands:
-  fix: pip install ruff && ruff check --fix . && ruff format .
-  lint: pip install ruff && ruff check .
-  typecheck: pip install pyrefly && pyrefly check
-  test: pip install pytest && pytest tests/ -x -q
-beta:
-  canApprovePullRequests: false
-  # proactive:  # Uncomment to enable daily automated playbooks
-  #   - playbook: ".charlie/playbooks/dependency-check.md"
