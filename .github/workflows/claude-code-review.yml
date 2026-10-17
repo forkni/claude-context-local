@@ -12,6 +12,8 @@ on:
       - "scripts/**"
       - "tests/**"
 
+permissions: {}
+
 # Prevent multiple runs on rapid PR updates
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
