@@ -16,7 +16,7 @@ defaults:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # pushes to development/main always get a verdict
 
 jobs:
   validate:
@@ -135,7 +135,7 @@ jobs:
             echo "commit_sha=${{ github.sha }}"
             echo "workflow_run=${{ github.run_id }}"
             for f in dist/*; do
-              echo "$(sha256sum "$f")"
+              sha256sum "$f"
             done
           } | tee dist/BUILD_INFO.txt
 
@@ -167,7 +167,7 @@ jobs:
           enable-cache: true  # uploads uv store to GitHub Actions cache (10 GB free tier)
 
       - name: Download built wheel artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
         with:
           name: dist
           path: dist/
@@ -285,7 +285,7 @@ jobs:
         continue-on-error: true
         run: uv run pre-commit run --all-files --show-diff-on-failure
         # Blocking gate — enforces markdownlint, file hygiene, ruff --fix
-        # (ruff-pre-commit pinned to match project's ruff>=0.15.20; verified green 2026-07-21)
+        # (ruff-pre-commit pinned to match uv.lock's ruff 0.16.9)
         # `uv run`, not `uvx`: pre-commit>=4.6.0 is already in the dev extra installed
         # above, so uvx would build a second, unpinned copy for no reason.
         # Deliberately overlaps the ruff steps above: .pre-commit-config.yaml pins
@@ -299,6 +299,20 @@ jobs:
         with:
           files: docs/ README.md CHANGELOG.md
 
+      # Workflow lint. actionlint reads .github/actionlint.yaml and shellchecks every `run:`
+      # (shellcheck is preinstalled on ubuntu-latest). zizmor --offline keeps the gate
+      # deterministic: its online audits query live advisories, so an unchanged tree could
+      # turn red.
+      - name: Lint workflows (actionlint)
+        id: actionlint
+        continue-on-error: true
+        run: uvx --from actionlint-py==1.7.12.25 actionlint
+
+      - name: Audit workflows (zizmor)
+        id: zizmor
+        continue-on-error: true
+        run: uvx zizmor@1.31.1 --offline --format=github .github/workflows/
+
       - name: Aggregate lint results
         if: always()
         run: |
@@ -309,7 +323,9 @@ jobs:
                    "skipped tests:${{ steps.skip_drift.outcome }}" \
                    "test smells:${{ steps.test_smells.outcome }}" \
                    "pre-commit:${{ steps.precommit.outcome }}" \
-                   "typos:${{ steps.typos.outcome }}"; do
+                   "typos:${{ steps.typos.outcome }}" \
+                   "actionlint:${{ steps.actionlint.outcome }}" \
+                   "zizmor:${{ steps.zizmor.outcome }}"; do
             name="${r%%:*}"; out="${r##*:}"
             if [ "$out" != "success" ]; then echo "FAIL  $name"; fail=1; else echo "ok    $name"; fi
           done

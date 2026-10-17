@@ -40,13 +40,15 @@ jobs:
   prepare:
     name: Prepare Mutation Targets
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       targets: ${{ steps.set-targets.outputs.targets }}
     steps:
       - name: Resolve matrix targets
         id: set-targets
+        env:
+          TARGET: ${{ github.event.inputs.target }}
         run: |
-          TARGET="${{ github.event.inputs.target }}"
           if [ -z "$TARGET" ] || [ "$TARGET" = "all" ]; then
             echo 'targets=["cr-metrics.toml", "cr-reranker.toml", "cr-call_edge.toml", "cr-centrality_ranker.toml", "cr-reranking_engine.toml"]' >> "$GITHUB_OUTPUT"
           else
@@ -58,6 +60,8 @@ jobs:
     needs: prepare
     runs-on: windows-2025
     timeout-minutes: 60
+    env:
+      TARGET: ${{ matrix.target }}  # via env, not inline ${{ }} in run: (template injection)
     strategy:
       fail-fast: false
       matrix:
@@ -78,22 +82,22 @@ jobs:
         run: uv sync --locked --extra test --extra dev --extra callgraph
 
       - name: Verify baseline (tests must pass on unmodified source)
-        run: uv run cosmic-ray baseline "${{ matrix.target }}"
+        run: uv run cosmic-ray baseline "$TARGET"
 
       - name: Initialize session database
-        run: uv run cosmic-ray init "${{ matrix.target }}" "${{ matrix.target }}.sqlite"
+        run: uv run cosmic-ray init "$TARGET" "$TARGET.sqlite"
 
       - name: Filter pragma no-mutate lines
-        run: uv run cr-filter-pragma "${{ matrix.target }}.sqlite"
+        run: uv run cr-filter-pragma "$TARGET.sqlite"
 
       - name: Execute mutations
-        run: uv run cosmic-ray exec "${{ matrix.target }}" "${{ matrix.target }}.sqlite"
+        run: uv run cosmic-ray exec "$TARGET" "$TARGET.sqlite"
 
       - name: Report survivors
-        run: uv run cr-report "${{ matrix.target }}.sqlite"
+        run: uv run cr-report "$TARGET.sqlite"
 
       - name: Gate on survival rate
-        run: uv run cr-rate --fail-over 25.0 "${{ matrix.target }}.sqlite"
+        run: uv run cr-rate --fail-over 25.0 "$TARGET.sqlite"
 
       - name: Upload mutation database artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0

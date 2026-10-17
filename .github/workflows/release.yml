@@ -4,16 +4,19 @@ on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write  # softprops/action-gh-release creates the release
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
           fetch-depth: 0
+          persist-credentials: false  # action-gh-release authenticates with GITHUB_TOKEN, not git creds
 
       - name: Extract changelog section for tag
         run: |
@@ -25,7 +28,7 @@ jobs:
           ' CHANGELOG.md > RELEASE_NOTES.md
           echo "Release notes: $(wc -l < RELEASE_NOTES.md) lines"
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release  # zizmor: ignore[superfluous-actions] -- kept: reads body_path directly, no gh script to maintain
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v3.0.2
         with:
           name: ${{ github.ref_name }}

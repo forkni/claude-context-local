@@ -19,15 +19,18 @@ concurrency:
   cancel-in-progress: false  # deliberate: cancelling a half-finished merge-and-push is
                               # worse than queueing the next dispatch behind it
 
+permissions: {}
+
 jobs:
   merge:
     name: Merge development → main
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository  # zizmor: ignore[artipacked] -- the job pushes the merge and backup tag with the persisted token
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
           fetch-depth: 0
@@ -69,7 +72,7 @@ jobs:
           git push origin "$BACKUP_TAG"
 
           echo "✅ Backup tag created: $BACKUP_TAG"
-          echo "BACKUP_TAG=$BACKUP_TAG" >> $GITHUB_ENV
+          echo "BACKUP_TAG=$BACKUP_TAG" >> "$GITHUB_ENV"
 
       - name: Preview merge (Dry Run)
         if: ${{ inputs.dry_run == true }}

@@ -1,0 +1,2 @@
+# actionlint config. All runners are GitHub-hosted, so no self-hosted labels are declared.
+# Add `ignore:` entries under `paths:` only for a known false positive, with the reason.
