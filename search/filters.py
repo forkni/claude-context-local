@@ -120,8 +120,11 @@ def find_project_at_different_drive(original_path: str) -> str | None:
     for letter in "DEFGHIJKLMN":
         candidate = f"{letter}:{agnostic}"
         candidate_path = Path(candidate)
-        if candidate_path.exists() and candidate_path.name == orig_name:
-            return str(candidate_path.resolve())
+        try:
+            if candidate_path.exists() and candidate_path.name == orig_name:
+                return str(candidate_path.resolve())
+        except OSError:
+            continue
 
     return None
 

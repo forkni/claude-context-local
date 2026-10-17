@@ -32,6 +32,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from mcp_server.storage_manager import FILTER_SEMANTICS_VERSION
 from mcp_server.tools.index_handlers import _is_filter_semantics_stale
 
@@ -220,3 +222,120 @@ class TestUpdateProjectFiltersDeferredStamp:
 
         updated = json.loads(info_file.read_text())
         assert updated["filter_semantics_version"] == FILTER_SEMANTICS_VERSION
+
+
+class TestCheckFilterSemanticsMigration:
+    """Tests for storage_manager.check_filter_semantics_migration and _patterns_touching_dependency_tree."""
+
+    def test_current_version_returns_early_without_warning(self, caplog):
+        from mcp_server.storage_manager import check_filter_semantics_migration
+
+        with caplog.at_level("WARNING"):
+            check_filter_semantics_migration(
+                {
+                    "filter_semantics_version": FILTER_SEMANTICS_VERSION,
+                    "user_included_dirs": ["venv"],
+                }
+            )
+        assert "[FILTER_SEMANTICS]" not in caplog.text
+
+    def test_future_version_returns_early(self, caplog):
+        from mcp_server.storage_manager import check_filter_semantics_migration
+
+        with caplog.at_level("WARNING"):
+            check_filter_semantics_migration(
+                {
+                    "filter_semantics_version": FILTER_SEMANTICS_VERSION + 1,
+                    "user_included_dirs": ["venv"],
+                }
+            )
+        assert "[FILTER_SEMANTICS]" not in caplog.text
+
+    def test_version_zero_separator_free_logs_version_2_warning(self, caplog):
+        from mcp_server.storage_manager import check_filter_semantics_migration
+
+        with caplog.at_level("WARNING"):
+            check_filter_semantics_migration(
+                {
+                    "filter_semantics_version": 0,
+                    "user_included_dirs": ["src", "tests/unit"],
+                    "user_excluded_dirs": ["build"],
+                }
+            )
+        assert "filter_semantics_version=2" in caplog.text
+        assert "Separator-free patterns" in caplog.text
+
+    def test_version_1_with_anchored_patterns_skips_version_2_warning(self, caplog):
+        from mcp_server.storage_manager import check_filter_semantics_migration
+
+        with caplog.at_level("WARNING"):
+            check_filter_semantics_migration(
+                {
+                    "filter_semantics_version": 1,
+                    "user_included_dirs": ["/src", "sub/dir"],
+                }
+            )
+        assert "filter_semantics_version=2" not in caplog.text
+
+    def test_version_2_dependency_pattern_without_exclusive_logs_version_3_warning(
+        self, caplog
+    ):
+        from mcp_server.storage_manager import check_filter_semantics_migration
+
+        with caplog.at_level("WARNING"):
+            check_filter_semantics_migration(
+                {
+                    "filter_semantics_version": 2,
+                    "user_included_dirs": ["/src", "venv/lib"],
+                    "include_exclusive": False,
+                }
+            )
+        assert "filter_semantics_version=3" in caplog.text
+        assert "ADDITIVE on the next full reindex" in caplog.text
+
+    def test_version_2_dependency_pattern_with_exclusive_skips_version_3_warning(
+        self, caplog
+    ):
+        from mcp_server.storage_manager import check_filter_semantics_migration
+
+        with caplog.at_level("WARNING"):
+            check_filter_semantics_migration(
+                {
+                    "filter_semantics_version": 2,
+                    "user_included_dirs": ["/src", "venv/lib"],
+                    "include_exclusive": True,
+                }
+            )
+        assert "filter_semantics_version=3" not in caplog.text
+
+    def test_empty_or_none_filters_logs_nothing(self, caplog):
+        from mcp_server.storage_manager import check_filter_semantics_migration
+
+        with caplog.at_level("WARNING"):
+            check_filter_semantics_migration(
+                {
+                    "filter_semantics_version": 0,
+                    "user_included_dirs": None,
+                    "user_excluded_dirs": None,
+                }
+            )
+        assert "[FILTER_SEMANTICS]" not in caplog.text
+
+    @pytest.mark.parametrize(
+        ("patterns", "expected"),
+        [
+            ([], []),
+            (["", "   "], []),
+            (["src", "lib/utils"], []),
+            (
+                ["venv", ".venv/site-packages", "node_modules/pkg"],
+                ["venv", ".venv/site-packages", "node_modules/pkg"],
+            ),
+            (["vendor\\bundle", "env/lib"], ["vendor\\bundle", "env/lib"]),
+        ],
+        ids=["empty", "blank", "source_dirs", "dep_dirs_forward", "dep_dirs_mixed"],
+    )
+    def test_patterns_touching_dependency_tree(self, patterns, expected):
+        from mcp_server.storage_manager import _patterns_touching_dependency_tree
+
+        assert _patterns_touching_dependency_tree(patterns) == expected

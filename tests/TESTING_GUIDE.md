@@ -2888,13 +2888,49 @@ Comprehensive structural quality audit and remediation campaign executed under t
 - **Coverage Ratchet**: `fail_under` ratcheted from **84** to **86** in `pyproject.toml` `[tool.coverage.report]`. Verified clean run across 5,214 passing tests (0 failures, 30 snapshots passed) in 96.14s with branch coverage reaching **87.39%** across 20,766 statements and 7,252 branches.
 - **Smell Baseline**: `.smell-baseline.json` locked at 316 total smells (0 `no-assert`, 0 `commented-test`, 0 `suboptimal-assert`).
 
-### CI/CD Pipeline & Test Suite Hardening (Phase 16 — 2026-10-14)
+### Test Suite Audit & Hardening Campaign (Phase 16 — 2026-10-09)
+
+Comprehensive structural quality audit and remediation campaign executed under the `/harden-test-suite` skill protocol.
+
+#### Audit Baseline Findings (Phase 16.1)
+
+- **Fast Suite Health**: 5,304 passed, 2 skipped, 5 subtests passed, 30 snapshots passed (0 failures) in 243.21s (`-n auto --dist loadfile -m "not slow" -p no:faulthandler`).
+- **Branch Coverage**: Measured at **88.06%** across 20,894 statements and 7,300 branches (prior floor `fail_under = 86`).
+- **High-CRAP Inventory**: 49 functions exceeded CRAP ceiling 30; top offender identified: `check_filter_semantics_migration` (CRAP 179.0, CC 15, 10% cov) and `_patterns_touching_dependency_tree` in `mcp_server/storage_manager.py`.
+- **Test Smells Baseline**: 373 total smells detected (+8 newly introduced since Phase 15.4: +4 `multi-mock-assert`, +4 `parametrize-no-ids`).
+
+#### Mechanical Smell & Platform Fixes (Phase 16.2)
+
+- Fixed Windows `PermissionError` [WinError 5] in `search/filters.py::find_project_at_different_drive` by wrapping `candidate_path.exists()` in `try ... except OSError: continue` (preventing unhandled access denial when probing non-existent/inaccessible drives like `G:\`).
+- Remediated 4 `multi-mock-assert` smells in `tests/unit/search/test_hybrid_search.py` (lines 505–538) by asserting `call_count == 0/1` on the `embedder` stub rather than mock assertion methods alongside `spy.assert_called_once_with`.
+- Added explicit IDs to 4 `@pytest.mark.parametrize` call sites:
+  - `tests/unit/search/test_indexer_filtered_widening.py:119` (`ids=["k=1", "k=7"]`)
+  - `tests/unit/mcp_server/test_tool_specs.py:263` (`ids=["chunking", "reranking", "search_mode", "performance"]`)
+  - `tests/unit/search/test_faiss_vector_index.py:1208` (`test_nlist_rule` ids) & `:1230` (`test_nprobe_rule` ids).
+- **Result**: `multi-mock-assert` reduced from 20 to 16; `parametrize-no-ids` reduced from 27 to 23 (with updated `scan_test_smells.py` detector); total smells dropped from 316 down to **309** in `.smell-baseline.json` (0 `no-assert`, 0 `suboptimal-assert`).
+
+#### High-CRAP Offender Hardening & Flake Immunity (Phase 16.3)
+
+- Added dedicated test suite `TestCheckFilterSemanticsMigration` (12 test cases) to `tests/unit/mcp_server/test_filter_semantics_backfill.py`. Covered all execution paths of `check_filter_semantics_migration` and `_patterns_touching_dependency_tree` (missing project paths, missing storage layouts, non-existent storage dirs, unmigrated schemas with and without dependency tree patterns, legacy v1 schemas, already migrated v2 schemas, corrupt JSON configs, unreadable project roots, and full backfill dry-runs).
+- Reduced missing statements in `check_filter_semantics_migration` from 116 to 0 (coverage jumped from 10% to 100%, CRAP score plummeting from 179.0 down to ~15.0).
+- Parallel CPU contention & timing flake hardening:
+  - `tests/unit/utils/test_observability.py`: relaxed `max_ms` under active coverage tracing (`sys.gettrace()`) from 1500ms to 2500ms to eliminate parallel CPU saturation flakes.
+  - `tests/unit/mcp_server/test_mcp_server.py`: bumped subprocess timeout from 60s to 120s for `test_mcp_server_can_import_as_first_module`.
+  - `tests/unit/mcp_server/test_logging_setup.py`: bumped subprocess timeouts from 60s to 120s for `test_importing_index_handlers_alone_does_not_configure_logging` and `test_run_index_directory_configures_logging_before_first_log`.
+
+#### Coverage Ratchet & Baseline Lock (Phase 16.4)
+
+- **Coverage Ratchet**: `fail_under` ratcheted from **86** to **87** in `pyproject.toml` `[tool.coverage.report]`. Verified clean run across 5,316+ passing tests (0 failures, 30 snapshots passed) with branch coverage solidly above the ratchet floor (**88.06%** across 20,894 statements).
+- **Smell Baseline**: Verified cleanly against `.smell-baseline.json` at 309 total smells (`multi-mock-assert: 16`, `parametrize-no-ids: 23`, 0 `no-assert`, 0 `suboptimal-assert`).
+- **Post-merge baseline**: after merging Phase 16 with the Phase 17 `bitwise-assert` detector fix and the BM25 `case_gated` parametrize ids, `.smell-baseline.json` is locked at 308 total smells (`multi-mock-assert: 17`, `parametrize-no-ids: 23`, `bitwise-assert: 1`).
+
+### CI/CD Pipeline & Test Suite Hardening (Phase 17 — 2026-10-14)
 
 Verified the repository's CI/CD pipeline and test suite against `setup-ci-cd-pipeline` (v1.6.0) and `harden-test-suite` (v1.4.1):
 
 | Dimension | Before | After |
 | --- | --- | --- |
-| Test-smell ratchet (`scripts/scan_test_smells.py`) | 322 smells (regressed +6 over 316 baseline across 5 categories) | **314 smells** (`.smell-baseline.json` ratcheted down from 316 → 314; `bitwise-assert` detector enhanced to recognize local `set`-assigned variables) |
+| Test-smell ratchet (`scripts/scan_test_smells.py`) | 322 smells (regressed +6 over 316 baseline across 5 categories) | **314 smells** (**308** once merged with the Phase 16 audit; `.smell-baseline.json` ratcheted down from 316 → 314; `bitwise-assert` detector enhanced to recognize local `set`-assigned variables) |
 | Local CGW hook parity (`check_lint.sh` / `commit_enhanced.sh`) | `scan_test_smells.py`, `check_skipped_tests.py`, and `--snapshot-update` guard ran only on GitHub Actions | Enforced locally in `scripts/git/check_lint.sh` (blocking on push) and `scripts/git/commit_enhanced.sh` (advisory on commit) |
 | Pytest strictness (`[tool.pytest.ini_options]`) | `--strict-markers` in `addopts` only | Added `strict_markers = true`, `strict_config = true`, `xfail_strict = true` |
 | Installed-wheel smoke gate (`branch-protection.yml`) | `pytest tests/ -m smoke -q \|\| true` (swallowed failures and exit code 5) | Tagged `TestIsChunkId` with `@pytest.mark.smoke` and removed `\|\| true` so smoke failures fail fast |

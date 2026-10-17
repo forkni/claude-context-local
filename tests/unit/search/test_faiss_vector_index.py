@@ -1215,6 +1215,7 @@ class TestIvfPolicy:
             (50_001, 894),
             (100_000, 1265),
         ],
+        ids=["n=1", "n=200", "n=400", "n=17197", "n=50001", "n=100000"],
     )
     def test_nlist_rule(self, n, nlist):
         assert ivf_nlist_for(n) == nlist
@@ -1236,6 +1237,7 @@ class TestIvfPolicy:
             (5, 200, 5),
             (1, 1, 1),
         ],
+        ids=["nlist=894", "nlist=100", "nlist=10", "nlist=5", "nlist=1"],
     )
     def test_nprobe_rule(self, nlist, n, nprobe):
         assert ivf_nprobe_for(nlist, n) == nprobe

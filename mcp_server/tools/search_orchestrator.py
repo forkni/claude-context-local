@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -42,6 +43,15 @@ if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder
 
 logger = logging.getLogger(__name__)
+
+# Chars per token of a ``json.dumps``-ed search_code result row, for the
+# ``max_context_tokens`` budget. search_code returns JSON coordinates, not code,
+# so the ~4 chars/token rule of thumb for prose overshoots: cl100k counted
+# 1.399x the old ``len // 4`` estimate on that payload (133 queries, 4 / 1.399 ~= 2.86), and
+# the budget was silently exceeded by that factor. cl100k is only a proxy for
+# the caller's tokenizer, so this is a constant, not a config knob. Re-measure
+# with ``scripts/benchmark/probe_context_cost.py`` (tokens_returned).
+_JSON_CHARS_PER_TOKEN = 2.85
 
 
 @dataclass
@@ -505,7 +515,7 @@ class SearchOrchestrator:
             budget_used = 0
             truncated = []
             for r in formatted_results:
-                est_tokens = len(_json.dumps(r)) // 4
+                est_tokens = math.ceil(len(_json.dumps(r)) / _JSON_CHARS_PER_TOKEN)
                 if budget_used + est_tokens <= plan.max_context_tokens:
                     truncated.append(r)
                     budget_used += est_tokens

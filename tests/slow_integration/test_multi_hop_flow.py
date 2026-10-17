@@ -9,7 +9,7 @@ from chunking.multi_language_chunker import MultiLanguageChunker
 from search.config import MultiHopConfig, SearchConfig
 from search.hybrid_searcher import HybridSearcher
 from search.types import RetrievalRequest
-from tests.helpers.embeddings import create_test_embeddings
+from tests.helpers.embeddings import DeterministicQueryEmbedder, create_test_embeddings
 
 
 def _mh_request(query, k, search_mode="hybrid", config=None):
@@ -66,7 +66,8 @@ class TestMultiHopSearchFlow:
         # Index the chunks once
         hybrid_searcher = HybridSearcher(
             storage_dir=str(storage_dir),
-            embedder=None,  # Don't need embedder for deterministic test
+            # A stub, not None: None makes search_dense download a real model.
+            embedder=DeterministicQueryEmbedder(),
         )
 
         # Index documents

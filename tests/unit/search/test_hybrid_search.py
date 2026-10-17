@@ -507,7 +507,7 @@ class TestHybridSearcher:
 
         searcher.find_similar_to_chunk("doc1", k=3)
 
-        embedder.embed_code_query.assert_not_called()
+        assert embedder.embed_code_query.call_count == 0
         spy.assert_called_once_with("doc1", 3, exclude_same_file=False)
 
     def test_find_similar_instructed_without_bm25_text_falls_back(self):
@@ -515,7 +515,7 @@ class TestHybridSearcher:
 
         searcher.find_similar_to_chunk("doc1", k=3)
 
-        embedder.embed_code_query.assert_not_called()
+        assert embedder.embed_code_query.call_count == 0
         spy.assert_called_once_with("doc1", 3, exclude_same_file=False)
 
     def test_find_similar_instructed_without_instruction_falls_back(self):
@@ -523,7 +523,7 @@ class TestHybridSearcher:
 
         searcher.find_similar_to_chunk("doc1", k=3)
 
-        embedder.embed_code_query.assert_called_once()
+        assert embedder.embed_code_query.call_count == 1
         spy.assert_called_once_with("doc1", 3, exclude_same_file=False)
 
     def test_find_similar_instructed_preview_only_text_falls_back(self):
@@ -533,7 +533,7 @@ class TestHybridSearcher:
 
         searcher.find_similar_to_chunk("doc1", k=3)
 
-        embedder.embed_code_query.assert_not_called()
+        assert embedder.embed_code_query.call_count == 0
         spy.assert_called_once_with("doc1", 3, exclude_same_file=False)
 
     def test_find_similar_instructed_short_chunk_still_probes(self):

@@ -82,7 +82,9 @@ def test_auto_reindex(mock_sentence_transformer, tmp_path):
     index_dir = storage_dir / "index"
     index_dir.mkdir(exist_ok=True)
 
-    embedder = CodeEmbedder(cache_dir=str(storage_dir / "models"))
+    # Default cache_dir (the shared HF hub cache): a per-run tmp cache
+    # re-downloads the full model every run and trips pytest-timeout.
+    embedder = CodeEmbedder()
     index_manager = CodeIndexManager(str(index_dir))
     chunker = MultiLanguageChunker(str(test_project))
 

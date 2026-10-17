@@ -59,13 +59,21 @@ class TextPreprocessor:
       no destructive split, no stemming (T1 in the paper).
     - "additive": whole identifiers PLUS their camel/snake sub-tokens, so
       both `get_user_name` and `get`/`user`/`name` are index terms (T2).
+    - "case_gated": like "additive", but sub-tokens are emitted only for
+      identifiers with a case transition (`getUserName`, `HTMLParser`); pure
+      snake_case, UPPER and lowercase identifiers stay whole-only.
     """
 
-    TOKENIZER_VARIANTS = ("legacy", "whole", "additive")
+    TOKENIZER_VARIANTS = ("legacy", "whole", "additive", "case_gated")
 
     # Identifier-preserving token extraction: identifiers (incl. underscores)
-    # or bare number runs. Used by the "whole"/"additive" variants.
+    # or bare number runs. Used by the "whole"/"additive"/"case_gated" variants.
     _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d+")
+
+    # Case-transition gate for "case_gated": lower->UPPER (`getUser`) or an
+    # acronym run followed by lowercase (`HTMLParser`). Deliberately not
+    # `search.tokenization.is_camelcase`, which misses `HTMLParser`.
+    _CASE_TRANSITION_RE = re.compile(r"[a-z][A-Z]|[A-Z]{2}[a-z]")
 
     # Bounded LRU cap for the stemmer memo (see _stem_token). This project's
     # corpus has ~18k distinct tokens today; the cap leaves headroom for
@@ -231,21 +239,26 @@ class TextPreprocessor:
 
         return code
 
-    def _tokenize_identifiers(self, text: str, *, additive: bool) -> list[str]:
-        """Identifier-preserving tokenization ("whole"/"additive" variants).
+    def _tokenize_identifiers(
+        self, text: str, *, additive: bool, case_gated: bool = False
+    ) -> list[str]:
+        """Identifier-preserving tokenization ("whole"/"additive"/"case_gated").
 
         Extracts identifiers and numbers, lowercases them but keeps them
         intact (`getUserName` → `getusername`, `get_user_name` unchanged).
         In additive mode, multi-part identifiers additionally emit their
         camel/snake sub-tokens via normalize_to_tokens — whole AND parts,
-        never parts-only. No stemming in either mode.
+        never parts-only. With ``case_gated`` the sub-tokens are emitted only
+        when the identifier has a case transition, so snake_case stays
+        whole-only. A mixed identifier (`get_userName`) splits fully,
+        underscores included. No stemming in any mode.
         """
         from search.tokenization import normalize_to_tokens
 
         tokens: list[str] = []
         for raw in self._IDENTIFIER_RE.findall(text):
             tokens.append(raw.lower())
-            if additive:
+            if additive or (case_gated and self._CASE_TRANSITION_RE.search(raw)):
                 parts = normalize_to_tokens(raw, split_acronyms=True)
                 if len(parts) > 1:
                     tokens.extend(parts)
@@ -265,6 +278,8 @@ class TextPreprocessor:
             return self._tokenize_identifiers(text, additive=False)
         if self.tokenizer == "additive":
             return self._tokenize_identifiers(text, additive=True)
+        if self.tokenizer == "case_gated":
+            return self._tokenize_identifiers(text, additive=False, case_gated=True)
         return self.tokenize(self.preprocess_code(text))
 
 

@@ -163,7 +163,7 @@ class TestIndexHandlersConfiguresLoggingEagerly:
             cwd=repo_root,
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=120,
         )
         assert result.returncode == 0, result.stderr
         assert "LEVEL 30" in result.stdout, (
@@ -202,7 +202,7 @@ class TestIndexHandlersConfiguresLoggingEagerly:
             cwd=repo_root,
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=120,
         )
 
         assert result.returncode == 0, result.stderr

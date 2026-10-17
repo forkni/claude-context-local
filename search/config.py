@@ -402,7 +402,8 @@ class SearchModeConfig:
     )
     # Tokenizer variant (arXiv 2605.18561): "legacy" = destructive camel/snake
     # split + stemming; "whole" = identifiers kept intact, no stemming;
-    # "additive" = whole identifiers + camel/snake sub-tokens. Changing this
+    # "additive" = whole identifiers + camel/snake sub-tokens; "case_gated" =
+    # additive, but sub-tokens only for identifiers with a case transition. Changing this
     # requires a re-index (index/query tokenization must match) — also read
     # once at construction (construction_baked=True).
     # Default "whole": +0.05/+0.07 Recall@5, +0.09/+0.10 MRR vs legacy on the
@@ -410,7 +411,7 @@ class SearchModeConfig:
     bm25_tokenizer: str = field(
         default="whole",
         metadata=spec(
-            choices=("legacy", "whole", "additive"),
+            choices=("legacy", "whole", "additive", "case_gated"),
             flat_alias="bm25_tokenizer",
             reader="search/hybrid_searcher.py",
             construction_baked=True,

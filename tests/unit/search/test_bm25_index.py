@@ -186,6 +186,38 @@ class TestTextPreprocessor:
         assert "html" in tokens
         assert "parser" in tokens
 
+    @pytest.mark.parametrize(
+        ("text", "expected", "absent"),
+        [
+            ("HTMLParser", {"htmlparser", "html", "parser"}, set()),
+            ("getUserName", {"getusername", "get", "user", "name"}, set()),
+            ("get_user_name", {"get_user_name"}, {"get", "user", "name"}),
+            ("TOP", {"top"}, set()),
+            ("textDAT", {"textdat", "text", "dat"}, set()),
+            ("get_userName", {"get_username", "get", "user", "name"}, set()),
+        ],
+        ids=[
+            "pascal-acronym",
+            "camel",
+            "snake-not-split",
+            "all-caps",
+            "camel-suffix-acronym",
+            "mixed-snake-camel",
+        ],
+    )
+    def test_case_gated_splits_only_on_case_transition(self, text, expected, absent):
+        """ "case_gated" emits sub-tokens only for identifiers with a case change."""
+        preprocessor = TextPreprocessor(
+            use_stopwords=False, use_stemming=False, tokenizer="case_gated"
+        )
+
+        tokens = preprocessor.process(text)
+
+        assert expected <= set(tokens)
+        assert not (absent & set(tokens))
+        if text in ("get_user_name", "TOP"):
+            assert tokens == [text.lower()]
+
     def test_code_variant_stopword_filtering(self):
         """Stopwords are filtered from whole tokens and sub-tokens alike."""
         preprocessor = TextPreprocessor(
