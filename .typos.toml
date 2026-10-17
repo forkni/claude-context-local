@@ -22,3 +22,4 @@ certifi = "certifi"  # PyPI package name
 unparseable = "unparseable"  # valid spelling variant of unparsable, used in docs/
 mis = "mis"  # hyphenated compound prefix (e.g. "mis-flagging"), not a typo of miss/mist
 unparented = "unparented"  # has no parent_chunk_id (chunking/graph docs), not a typo of parentless
+ERRO = "ERRO"  # "ERROR" + plural s ("ERRORs") for tree-sitter ERROR nodes in ADR-0087, not a typo of ERROR
