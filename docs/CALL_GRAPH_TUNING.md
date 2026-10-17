@@ -147,12 +147,12 @@ Our filter is `_CALLEE_FLAVORS = _CALLABLE_FLAVORS | {"CLASS"}` applied at
 ### 2.6 Node Attributes Used for Filtering
 
 ```python
-node.flavor          # Flavor enum instance
-node.namespace       # str | None  (None = wildcard node from contract_nonexistents)
-node.defined         # bool (False = external/undefined target, e.g. stdlib stubs)
-node.filename        # str | None  (absolute path to defining file)
-node.ast_node        # ast.AST | None
-node.get_name()      # → str (short name, not FQN)
+node.flavor  # Flavor enum instance
+node.namespace  # str | None  (None = wildcard node from contract_nonexistents)
+node.defined  # bool (False = external/undefined target, e.g. stdlib stubs)
+node.filename  # str | None  (absolute path to defining file)
+node.ast_node  # ast.AST | None
+node.get_name()  # → str (short name, not FQN)
 ```
 
 **Guard order** (applied in `external_call_graph.py` before chunk-ID lookup):
