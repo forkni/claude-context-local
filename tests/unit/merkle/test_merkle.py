@@ -511,11 +511,8 @@ class TestMerkleDAG(TestCase):
         """A file literally named 'nul' is a device to Path.is_file(); keep skipping it."""
         self.create_test_files()
         raw = "\\\\?\\" + str(self.test_path / "nul")
-        try:
-            with open(raw, "wb") as fh:
-                fh.write(b"x")
-        except OSError:
-            pytest.skip("Cannot create a reserved-name file on this filesystem")
+        with open(raw, "wb") as fh:
+            fh.write(b"x")
         try:
             dag = MerkleDAG(self.temp_dir)
             dag.build()
