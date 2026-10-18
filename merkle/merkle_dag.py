@@ -1,5 +1,6 @@
 """Merkle DAG (Directed Acyclic Graph) implementation for file change tracking."""
 
+import errno
 import hashlib
 import logging
 import os
@@ -17,13 +18,32 @@ logger = logging.getLogger(__name__)
 # path-based check for them to keep results unchanged.
 _WIN_RESERVED_NAMES: frozenset[str] = (
     frozenset(
-        {"CON", "PRN", "AUX", "NUL"}
-        | {f"COM{i}" for i in range(1, 10)}
-        | {f"LPT{i}" for i in range(1, 10)}
+        {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+        | {f"COM{i}" for i in [*range(1, 10), "¹", "²", "³"]}
+        | {f"LPT{i}" for i in [*range(1, 10), "¹", "²", "³"]}
     )
     if os.name == "nt"
     else frozenset()
 )
+
+# errnos pathlib's is_file()/is_dir() read as "not there"; stat failures with
+# any other errno propagate, exactly as in the former Path-based walk.
+_MISSING_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
+_MISSING_WINERRORS = frozenset({21, 123, 1921})
+
+
+def _needs_path_check(name: str) -> bool:
+    """True for names whose Path-based and scandir answers differ on Windows.
+
+    Reserved device names resolve to the device; names ending in a dot or space
+    are normalised by Win32 to a different (or missing) file.
+    """
+    if not _WIN_RESERVED_NAMES:
+        return False
+    return (
+        name.endswith((".", " "))
+        or name.partition(".")[0].rstrip(" ").upper() in _WIN_RESERVED_NAMES
+    )
 
 
 @dataclass
@@ -131,37 +151,17 @@ class MerkleDAG:
         Returns:
             True if path should be ignored
         """
-        name = path.name
-
-        # Check exact matches and patterns.
-        # Patterns containing a path separator are matched against the path
-        # relative to the project root (normalised to forward-slashes so they
-        # work identically on Windows and POSIX).  Separator-free patterns
-        # continue to match on the basename only, preserving existing behaviour
-        # for entries like ".DS_Store" and "*.pyc".
-        for pattern in self.ignore_patterns:
-            if pattern.startswith("*"):
-                if name.endswith(pattern[1:]):
-                    return True
-            elif "/" in pattern or "\\" in pattern:
-                # Multi-segment pattern — compare against the root-relative path.
-                try:
-                    rel = path.relative_to(self.root_path).as_posix()
-                except ValueError:
-                    # Path is not under root; ignore it.
-                    return True
-                if rel == pattern.replace("\\", "/"):
-                    return True
-            elif name == pattern:
-                return True
-
-        # Delegate default-ignore + include/exclude precedence to PathFilter.
-        # Root directory should never be filtered — only its contents.
         try:
             relative_path = str(path.relative_to(self.root_path))
         except ValueError:
             # Path not under root, ignore it
             return True
+
+        if self._matches_ignore(path.name, relative_path, self._ignore_rules()):
+            return True
+
+        # Delegate default-ignore + include/exclude precedence to PathFilter.
+        # Root directory should never be filtered — only its contents.
         if relative_path == ".":
             return False
 
@@ -210,18 +210,6 @@ class MerkleDAG:
 
         return sha256.hexdigest(), size
 
-    def hash_directory(self, dir_path: Path, child_hashes: list[str]) -> str:
-        """Calculate hash for a directory based on its children.
-
-        Args:
-            dir_path: Path to directory
-            child_hashes: List of child hashes
-
-        Returns:
-            Directory hash
-        """
-        return self._hash_dir_name(dir_path.name, child_hashes)
-
     @staticmethod
     def _hash_dir_name(name: str, child_hashes: list[str]) -> str:
         sha256 = hashlib.sha256()
@@ -235,14 +223,11 @@ class MerkleDAG:
 
         return sha256.hexdigest()
 
-    def build_node(
-        self, path: Path, base_path: Path | None = None
-    ) -> MerkleNode | None:
+    def build_node(self, path: Path) -> MerkleNode | None:
         """Recursively build a Merkle node for a path.
 
         Args:
             path: Path to build node for
-            base_path: Base path for relative path calculation
 
         Returns:
             MerkleNode or None if path should be ignored
@@ -274,7 +259,12 @@ class MerkleDAG:
         return None
 
     def _ignore_rules(self) -> tuple[tuple[str, ...], frozenset[str], frozenset[str]]:
-        """Split ``ignore_patterns`` by how should_ignore() compares them.
+        """Split ``ignore_patterns`` by how _matches_ignore() compares them.
+
+        Patterns containing a path separator are matched against the path
+        relative to the project root (normalised to forward-slashes so they
+        work identically on Windows and POSIX). Separator-free patterns match
+        the basename only, as for ".DS_Store" and "*.pyc".
 
         Returns:
             (name suffixes for ``*``-patterns, root-relative POSIX paths for
@@ -292,14 +282,28 @@ class MerkleDAG:
                 names.add(pattern)
         return tuple(suffixes), frozenset(rel_paths), frozenset(names)
 
-    def _file_node(
-        self,
-        file_path: str,
+    @staticmethod
+    def _matches_ignore(
         name: str,
         relative_path: str,
-        entry: "os.DirEntry[str] | None" = None,
-    ) -> MerkleNode:
-        """Build the node for a file; ``entry`` supplies stat data without a syscall."""
+        rules: tuple[tuple[str, ...], frozenset[str], frozenset[str]],
+    ) -> bool:
+        """Apply the ``ignore_patterns`` split from _ignore_rules() to one path.
+
+        Args:
+            name: Basename of the path
+            relative_path: Root-relative path with the native separator
+            rules: Result of _ignore_rules()
+        """
+        suffixes, rel_paths, names = rules
+        return (
+            name.endswith(suffixes)
+            or name in names
+            or (bool(rel_paths) and relative_path.replace(os.sep, "/") in rel_paths)
+        )
+
+    def _file_node(self, file_path: str, name: str, relative_path: str) -> MerkleNode:
+        """Build the node for a file."""
         if (
             self.supported_extensions is not None
             and extension_key(file_path) not in self.supported_extensions
@@ -308,7 +312,7 @@ class MerkleDAG:
             # hash on Windows (no Defender scan, no content read). Detects
             # renames/moves via mtime+size; accurate enough for change tracking.
             try:
-                stat = entry.stat() if entry is not None else os.stat(file_path)
+                stat = os.stat(file_path)
                 fast_content = f"{name}:{stat.st_size}:{int(stat.st_mtime)}"
             except OSError:
                 fast_content = file_path
@@ -368,21 +372,27 @@ class MerkleDAG:
     ) -> MerkleNode | None:
         """Scandir-based equivalent of should_ignore() + build_node() for a child."""
         name = entry.name
-        if _WIN_RESERVED_NAMES and (
-            name.partition(".")[0].rstrip(" ").upper() in _WIN_RESERVED_NAMES
-        ):
+        if _needs_path_check(name):
             return self.build_node(Path(entry.path))
         relative_path = (
             name if parent_relative == "." else f"{parent_relative}{os.sep}{name}"
         )
 
-        suffixes, rel_paths, names = rules
-        if (
-            name.endswith(suffixes)
-            or name in names
-            or (rel_paths and relative_path.replace(os.sep, "/") in rel_paths)
-        ):
+        if self._matches_ignore(name, relative_path, rules):
             return None
+
+        # DirEntry.is_dir()/is_file() read the d_type from the listing on POSIX
+        # and never fail, where Path.is_dir()/is_file() stat the path. Stat first
+        # so an unreadable child is skipped (or dropped when missing) exactly as before.
+        try:
+            entry.stat()
+        except OSError as exc:
+            if (
+                exc.errno in _MISSING_ERRNOS
+                or getattr(exc, "winerror", None) in _MISSING_WINERRORS
+            ):
+                return None
+            raise
 
         is_dir = entry.is_dir()
         if is_dir:
@@ -392,7 +402,7 @@ class MerkleDAG:
             return None
 
         if entry.is_file():
-            return self._file_node(entry.path, name, relative_path, entry)
+            return self._file_node(entry.path, name, relative_path)
         if is_dir:
             # (a) Skip directory symlinks (see build_node).
             if entry.is_symlink():

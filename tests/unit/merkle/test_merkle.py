@@ -465,13 +465,14 @@ class TestMerkleDAG(TestCase):
         from unittest.mock import patch
 
         self.create_test_files()
-        target = self.test_path / "src" / "main.py"
+        # MerkleDAG resolves its root, so compare against the resolved path.
+        target = (self.test_path / "src" / "main.py").resolve()
         expected_mtime = int(target.stat().st_mtime)
 
         real_open = open
 
         def fake_open(file, *args, **kwargs):
-            if Path(file) == target:
+            if Path(file).resolve() == target:
                 raise PermissionError("simulated")
             return real_open(file, *args, **kwargs)
 
@@ -522,6 +523,58 @@ class TestMerkleDAG(TestCase):
             assert str(Path("src") / "main.py") in dag.nodes
         finally:
             os.remove(raw)
+
+    @pytest.mark.skipif(os.name != "nt", reason="Win32 name normalisation")
+    def test_win32_special_names_take_path_check(self):
+        """Reserved device names and trailing dot/space names keep the Path-based check."""
+        from merkle.merkle_dag import _needs_path_check
+
+        for name in (
+            "nul",
+            "NUL.txt",
+            "con ",
+            "CONIN$",
+            "conout$",
+            "COM¹",
+            "lpt³.log",
+            "COM1",
+            "foo.",
+            "bar ",
+        ):
+            assert _needs_path_check(name), name
+
+    def test_ordinary_names_skip_path_check(self):
+        from merkle.merkle_dag import _needs_path_check
+
+        for name in ("main.py", "com.py", "console", "COM10", "a.b"):
+            assert not _needs_path_check(name), name
+
+    def _fake_entry(self, exc):
+        class FakeEntry:
+            name = "child.py"
+            path = str(self.test_path / "child.py")
+
+            def stat(self):
+                raise exc
+
+        return FakeEntry()
+
+    def test_missing_entry_is_dropped_silently(self):
+        """ENOENT-class stat failures read as 'not there' (pathlib is_file() == False)."""
+        import errno
+
+        dag = MerkleDAG(self.temp_dir)
+        entry = self._fake_entry(OSError(errno.ENOENT, "gone"))
+        assert dag._entry_node(entry, ".", dag._ignore_rules()) is None
+
+    def test_unreadable_entry_error_propagates_to_the_walk(self):
+        """Other stat errors propagate so _dir_node skips the child with a warning."""
+        import errno
+
+        dag = MerkleDAG(self.temp_dir)
+        entry = self._fake_entry(PermissionError(errno.EACCES, "denied"))
+        with pytest.raises(PermissionError):
+            dag._entry_node(entry, ".", dag._ignore_rules())
 
 
 class TestSnapshotManager(TestCase):
