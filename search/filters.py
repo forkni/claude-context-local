@@ -14,6 +14,7 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -321,6 +322,7 @@ def is_dependency_pattern(pattern: DirPattern) -> bool:
     return any(seg in DEPENDENCY_TREE_DIRS for seg in pattern.segments)
 
 
+@lru_cache(maxsize=8192)
 def _segment_matches(pattern_seg: str, path_seg: str) -> bool:
     """Match one path segment against one pattern segment.
 
