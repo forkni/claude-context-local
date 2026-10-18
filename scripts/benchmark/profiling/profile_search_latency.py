@@ -25,9 +25,10 @@ The four attributed sites:
      inside the reindex read lock; not a CPU-cost fix, but timed here so its
      wall-clock share and stability are visible before/after the lock change)
 
-`RerankingEngine.rerank_by_query` is also timed, unpatched, purely as
-background context — it is explicitly OUT of scope (~80% of wall-clock,
-buys ranking quality; "we do not trade speed for accuracy").
+`RerankingEngine._run_rerank` is also timed (every Rerank call: the Hop-1
+rerank plus both Rerank passes), unpatched, purely as background context —
+it is explicitly OUT of scope for ranking changes ("we do not trade speed
+for accuracy").
 
 Layer 1 (phase wall-clock attribution) only — this script has no cProfile
 layer and no GPU/CPU split; those are file-index-profiling concerns
@@ -212,8 +213,10 @@ def _install_patches() -> None:
 
     # Background context only — NOT a fix target (~80% of wall-clock, buys
     # ranking quality; explicitly out of scope per "we do not trade speed
-    # for accuracy").
-    _timed_wrap(RerankingEngine, "rerank_by_query", "rerank")
+    # for accuracy"). Wrapped at _run_rerank so every Rerank call is timed:
+    # the Hop-1 rerank (apply_neural_reranking) plus both Rerank passes
+    # (rerank_by_query). Wrapping rerank_by_query alone missed the Hop-1 rerank.
+    _timed_wrap(RerankingEngine, "_run_rerank", "rerank")
 
 
 _PHASE_NAMES = [
