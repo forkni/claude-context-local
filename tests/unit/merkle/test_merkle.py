@@ -564,8 +564,102 @@ class TestMerkleDAG(TestCase):
         import errno
 
         dag = MerkleDAG(self.temp_dir)
-        entry = self._fake_entry(OSError(errno.ENOENT, "gone"))
-        assert dag._entry_node(entry, ".", dag._ignore_rules()) is None
+        for code in (errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP):
+            with self.subTest(errno=code):
+                entry = self._fake_entry(OSError(code, "gone"))
+                assert dag._entry_node(entry, ".", dag._ignore_rules()) is None
+
+    @pytest.mark.skipif(os.name != "nt", reason="winerror is Windows-only")
+    def test_missing_winerror_is_dropped_silently(self):
+        """Win32 'not there' codes without a mapped errno read as missing too."""
+        dag = MerkleDAG(self.temp_dir)
+        for winerror in (21, 123, 1921):
+            with self.subTest(winerror=winerror):
+                # OSError(errno, strerror, filename, winerror) maps winerror to errno
+                # itself, so the errno alone would not have matched.
+                entry = self._fake_entry(OSError(None, "gone", None, winerror))
+                assert dag._entry_node(entry, ".", dag._ignore_rules()) is None
+
+    def test_unreadable_directory_listing_skips_only_that_directory(self):
+        """A directory whose listing fails yields no children; siblings are indexed."""
+        from unittest.mock import patch
+
+        self.create_test_files()
+        broken = os.path.normcase(str((self.test_path / "src").resolve()))
+        real_scandir = os.scandir
+
+        def fake_scandir(path="."):
+            if os.path.normcase(os.fspath(path)) == broken:
+                raise PermissionError("simulated")
+            return real_scandir(path)
+
+        with patch("merkle.merkle_dag.os.scandir", side_effect=fake_scandir):
+            dag = MerkleDAG(self.temp_dir)
+            dag.build()
+
+        files = dag.get_all_files()
+        assert not any(f.startswith("src") for f in files), files
+        assert "README.md" in files, files
+        # The directory itself stays in the tree, empty, rather than being dropped.
+        assert "src" in dag.nodes
+        assert not dag.nodes["src"].children
+
+    def test_unstatable_file_falls_back_to_path_hash(self):
+        """If os.stat fails when hashing a non-content file, the path is hashed."""
+        import hashlib
+        from unittest.mock import patch
+
+        self.create_test_files()
+        asset = self.test_path / "data.bin"
+        asset.write_bytes(b"\x00\x01")
+        target = os.path.normcase(str(asset.resolve()))
+        real_stat = os.stat
+
+        def fake_stat(path, *args, **kwargs):
+            if os.path.normcase(os.fspath(path)) == target:
+                raise OSError("simulated")
+            return real_stat(path, *args, **kwargs)
+
+        with patch("merkle.merkle_dag.os.stat", side_effect=fake_stat):
+            dag = MerkleDAG(self.temp_dir, supported_extensions={".py"})
+            dag.build()
+
+        expected = hashlib.sha256(str(asset.resolve()).encode()).hexdigest()
+        assert dag.nodes["data.bin"].hash == expected
+
+    def test_unreadable_and_unstatable_file_gets_epoch_zero_sentinel(self):
+        """No readable content and no mtime: the sentinel falls back to mtime 0."""
+        from unittest.mock import patch
+
+        self.create_test_files()
+        target = os.path.normcase(str((self.test_path / "src" / "main.py").resolve()))
+        real_open = open
+        real_stat = os.stat
+
+        def fake_open(file, *args, **kwargs):
+            if os.path.normcase(os.fspath(file)) == target:
+                raise PermissionError("simulated")
+            return real_open(file, *args, **kwargs)
+
+        def fake_stat(path, *args, **kwargs):
+            if os.path.normcase(os.fspath(path)) == target:
+                raise OSError("simulated")
+            return real_stat(path, *args, **kwargs)
+
+        with (
+            patch("builtins.open", side_effect=fake_open),
+            patch("merkle.merkle_dag.os.stat", side_effect=fake_stat),
+        ):
+            dag = MerkleDAG(self.temp_dir)
+            dag.build()
+
+        assert dag.nodes[str(Path("src") / "main.py")].hash == "UNREADABLE:0"
+
+    def test_path_outside_root_is_ignored(self):
+        """should_ignore() treats anything outside the project root as ignored."""
+        dag = MerkleDAG(self.temp_dir)
+        with tempfile.TemporaryDirectory() as other:
+            assert dag.should_ignore(Path(other) / "x.py") is True
 
     def test_unreadable_entry_error_propagates_to_the_walk(self):
         """Other stat errors propagate so _dir_node skips the child with a warning."""
