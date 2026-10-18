@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,6 +10,20 @@ from chunking.language_registry import extension_key
 
 
 logger = logging.getLogger(__name__)
+
+# Win32 device names (NUL, CON, COM1, ...). A real file can carry one of these
+# names, but Path.is_file()/stat() resolve it to the device, while os.scandir
+# reports the directory entry as a regular file -- so build_node() keeps the
+# path-based check for them to keep results unchanged.
+_WIN_RESERVED_NAMES: frozenset[str] = (
+    frozenset(
+        {"CON", "PRN", "AUX", "NUL"}
+        | {f"COM{i}" for i in range(1, 10)}
+        | {f"LPT{i}" for i in range(1, 10)}
+    )
+    if os.name == "nt"
+    else frozenset()
+)
 
 
 @dataclass
@@ -154,7 +169,7 @@ class MerkleDAG:
             return not self.path_filter.should_traverse_dir(relative_path)
         return not self.path_filter.should_index_file(relative_path)
 
-    def hash_file(self, file_path: Path) -> tuple[str, int]:
+    def hash_file(self, file_path: Path | str) -> tuple[str, int]:
         """Calculate SHA-256 hash of a file.
 
         Args:
@@ -183,7 +198,7 @@ class MerkleDAG:
             # fall back to an epoch-0 sentinel — still safe, because any change
             # to the real file will flip the mtime on the next readable snapshot.
             try:
-                mtime = str(int(file_path.stat().st_mtime))
+                mtime = str(int(os.stat(file_path).st_mtime))
             except OSError:
                 mtime = "0"
             sentinel = f"UNREADABLE:{mtime}"
@@ -205,10 +220,14 @@ class MerkleDAG:
         Returns:
             Directory hash
         """
+        return self._hash_dir_name(dir_path.name, child_hashes)
+
+    @staticmethod
+    def _hash_dir_name(name: str, child_hashes: list[str]) -> str:
         sha256 = hashlib.sha256()
 
         # Include directory name
-        sha256.update(dir_path.name.encode())
+        sha256.update(name.encode())
 
         # Include sorted child hashes for deterministic results
         for child_hash in sorted(child_hashes):
@@ -233,9 +252,6 @@ class MerkleDAG:
         if path != self.root_path and self.should_ignore(path):
             return None
 
-        if base_path is None:
-            base_path = self.root_path
-
         # Calculate relative path
         if path == self.root_path:
             relative_path = "."
@@ -243,27 +259,7 @@ class MerkleDAG:
             relative_path = str(path.relative_to(self.root_path))
 
         if path.is_file():
-            if (
-                self.supported_extensions is not None
-                and extension_key(str(path)) not in self.supported_extensions
-            ):
-                # Stat-based hash for non-indexed files: ~100x cheaper than content
-                # hash on Windows (no Defender scan, no content read). Detects
-                # renames/moves via mtime+size; accurate enough for change tracking.
-                try:
-                    stat = path.stat()
-                    fast_content = f"{path.name}:{stat.st_size}:{int(stat.st_mtime)}"
-                except OSError:
-                    fast_content = str(path)
-                file_hash = hashlib.sha256(fast_content.encode()).hexdigest()
-                size = 0
-            else:
-                file_hash, size = self.hash_file(path)
-            node = MerkleNode(
-                path=relative_path, hash=file_hash, is_file=True, size=size
-            )
-            self.nodes[relative_path] = node
-            return node
+            return self._file_node(str(path), path.name, relative_path)
 
         elif path.is_dir():
             # (a) Skip directory symlinks — following them risks infinite
@@ -271,37 +267,140 @@ class MerkleDAG:
             if path.is_symlink():
                 logger.warning("Skipping symlinked directory (cycle-safe): %s", path)
                 return None
-
-            children = []
-            child_hashes = []
-
-            # (b) Wrap the directory listing and each child separately so that
-            # one unreadable entry does not silently drop its siblings.
-            try:
-                child_paths = sorted(path.iterdir())
-            except (PermissionError, OSError) as exc:
-                logger.warning(
-                    "Cannot list directory %s (%s); skipping its children", path, exc
-                )
-                child_paths = []
-
-            for child_path in child_paths:
-                try:
-                    child_node = self.build_node(child_path, base_path)
-                except (PermissionError, OSError) as exc:
-                    logger.warning("Skipping unreadable path %s (%s)", child_path, exc)
-                    continue
-                if child_node:
-                    children.append(child_node)
-                    child_hashes.append(child_node.hash)
-
-            dir_hash = self.hash_directory(path, child_hashes)
-            node = MerkleNode(
-                path=relative_path, hash=dir_hash, is_file=False, children=children
+            return self._dir_node(
+                str(path), path.name, relative_path, self._ignore_rules()
             )
-            self.nodes[relative_path] = node
-            return node
 
+        return None
+
+    def _ignore_rules(self) -> tuple[tuple[str, ...], frozenset[str], frozenset[str]]:
+        """Split ``ignore_patterns`` by how should_ignore() compares them.
+
+        Returns:
+            (name suffixes for ``*``-patterns, root-relative POSIX paths for
+            multi-segment patterns, exact basenames)
+        """
+        suffixes: list[str] = []
+        rel_paths: set[str] = set()
+        names: set[str] = set()
+        for pattern in self.ignore_patterns:
+            if pattern.startswith("*"):
+                suffixes.append(pattern[1:])
+            elif "/" in pattern or "\\" in pattern:
+                rel_paths.add(pattern.replace("\\", "/"))
+            else:
+                names.add(pattern)
+        return tuple(suffixes), frozenset(rel_paths), frozenset(names)
+
+    def _file_node(
+        self,
+        file_path: str,
+        name: str,
+        relative_path: str,
+        entry: "os.DirEntry[str] | None" = None,
+    ) -> MerkleNode:
+        """Build the node for a file; ``entry`` supplies stat data without a syscall."""
+        if (
+            self.supported_extensions is not None
+            and extension_key(file_path) not in self.supported_extensions
+        ):
+            # Stat-based hash for non-indexed files: ~100x cheaper than content
+            # hash on Windows (no Defender scan, no content read). Detects
+            # renames/moves via mtime+size; accurate enough for change tracking.
+            try:
+                stat = entry.stat() if entry is not None else os.stat(file_path)
+                fast_content = f"{name}:{stat.st_size}:{int(stat.st_mtime)}"
+            except OSError:
+                fast_content = file_path
+            file_hash = hashlib.sha256(fast_content.encode()).hexdigest()
+            size = 0
+        else:
+            file_hash, size = self.hash_file(file_path)
+        node = MerkleNode(path=relative_path, hash=file_hash, is_file=True, size=size)
+        self.nodes[relative_path] = node
+        return node
+
+    def _dir_node(
+        self,
+        dir_path: str,
+        name: str,
+        relative_path: str,
+        rules: tuple[tuple[str, ...], frozenset[str], frozenset[str]],
+    ) -> MerkleNode:
+        """Build the node for a directory by walking it with os.scandir."""
+        children = []
+        child_hashes = []
+
+        # (b) Wrap the directory listing and each child separately so that
+        # one unreadable entry does not silently drop its siblings.
+        try:
+            with os.scandir(dir_path) as it:
+                # Path ordering compares normcased names; match it exactly.
+                entries = sorted(it, key=lambda e: os.path.normcase(e.name))
+        except (PermissionError, OSError) as exc:
+            logger.warning(
+                "Cannot list directory %s (%s); skipping its children", dir_path, exc
+            )
+            entries = []
+
+        for entry in entries:
+            try:
+                child_node = self._entry_node(entry, relative_path, rules)
+            except (PermissionError, OSError) as exc:
+                logger.warning("Skipping unreadable path %s (%s)", entry.path, exc)
+                continue
+            if child_node:
+                children.append(child_node)
+                child_hashes.append(child_node.hash)
+
+        dir_hash = self._hash_dir_name(name, child_hashes)
+        node = MerkleNode(
+            path=relative_path, hash=dir_hash, is_file=False, children=children
+        )
+        self.nodes[relative_path] = node
+        return node
+
+    def _entry_node(
+        self,
+        entry: "os.DirEntry[str]",
+        parent_relative: str,
+        rules: tuple[tuple[str, ...], frozenset[str], frozenset[str]],
+    ) -> MerkleNode | None:
+        """Scandir-based equivalent of should_ignore() + build_node() for a child."""
+        name = entry.name
+        if _WIN_RESERVED_NAMES and (
+            name.partition(".")[0].rstrip(" ").upper() in _WIN_RESERVED_NAMES
+        ):
+            return self.build_node(Path(entry.path))
+        relative_path = (
+            name if parent_relative == "." else f"{parent_relative}{os.sep}{name}"
+        )
+
+        suffixes, rel_paths, names = rules
+        if (
+            name.endswith(suffixes)
+            or name in names
+            or (rel_paths and relative_path.replace(os.sep, "/") in rel_paths)
+        ):
+            return None
+
+        is_dir = entry.is_dir()
+        if is_dir:
+            if not self.path_filter.should_traverse_dir(relative_path):
+                return None
+        elif not self.path_filter.should_index_file(relative_path):
+            return None
+
+        if entry.is_file():
+            return self._file_node(entry.path, name, relative_path, entry)
+        if is_dir:
+            # (a) Skip directory symlinks (see build_node).
+            if entry.is_symlink():
+                logger.warning(
+                    "Skipping symlinked directory (cycle-safe): %s", entry.path
+                )
+                return None
+            return self._dir_node(entry.path, name, relative_path, rules)
         return None
 
     def build(self) -> None:

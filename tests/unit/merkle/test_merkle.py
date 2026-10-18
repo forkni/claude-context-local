@@ -1,6 +1,7 @@
 """Unit tests for Merkle tree change detection."""
 
 import json
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -369,8 +370,6 @@ class TestMerkleDAG(TestCase):
 
     def test_symlink_dir_is_skipped(self):
         """build_node must skip symlinked directories to prevent cycle recursion (#21a)."""
-        import os
-
         self.create_test_files()
         real_target = self.test_path / "src"
         link = self.test_path / "src_link"
@@ -405,24 +404,25 @@ class TestMerkleDAG(TestCase):
         self.create_test_files()
         dag = MerkleDAG(self.temp_dir)
 
-        original_build_node = dag.build_node
+        original_entry_node = dag._entry_node
 
         call_count = [0]
 
-        def patched_build_node(path, base_path=None):
+        def patched_entry_node(entry, parent_relative, rules):
             call_count[0] += 1
             # Raise OSError for the second child encountered (one sibling fails)
             if call_count[0] == 2:
                 raise OSError("simulated permission error")
-            return original_build_node(path, base_path)
+            return original_entry_node(entry, parent_relative, rules)
 
-        with patch.object(dag, "build_node", side_effect=patched_build_node):
+        with patch.object(dag, "_entry_node", side_effect=patched_entry_node):
             dag.build()
 
         # The build should have completed and indexed remaining files
         # (not zero files just because one child failed)
         all_files = dag.get_all_files()
         assert len(all_files) > 0, "Siblings of a failing entry should still be indexed"
+        assert call_count[0] > 2, "Entries after the failing one must still be visited"
 
     def test_multi_segment_ignore_pattern_excludes_nested_dir(self):
         """A separator-bearing ignore pattern excludes a nested directory (#21c)."""
@@ -443,6 +443,85 @@ class TestMerkleDAG(TestCase):
             f"Nested snapshot dir should be excluded, but found: "
             f"{[f for f in all_files if 'snapshots' in f]}"
         )
+
+    # --- scandir walk: behavior pinned to the former Path-based walk ---
+
+    def test_children_follow_path_sort_order(self):
+        """Sibling order must equal sorted(Path.iterdir()), which normcases names."""
+        for name in ("B.py", "a.py", "_c.py", "Z.py", "m.py", "M_.py"):
+            (self.test_path / name).write_text(f"# {name}")
+        (self.test_path / "Sub").mkdir()
+        (self.test_path / "sub2").mkdir()
+        (self.test_path / "Sub" / "x.py").write_text("x = 1")
+
+        dag = MerkleDAG(self.temp_dir)
+        dag.build()
+
+        expected = [p.name for p in sorted(self.test_path.iterdir())]
+        assert [Path(c.path).name for c in dag.root_node.children] == expected
+
+    def test_unreadable_file_gets_sentinel_hash(self):
+        """A file that cannot be opened hashes to UNREADABLE:<mtime>, not an error."""
+        from unittest.mock import patch
+
+        self.create_test_files()
+        target = self.test_path / "src" / "main.py"
+        expected_mtime = int(target.stat().st_mtime)
+
+        real_open = open
+
+        def fake_open(file, *args, **kwargs):
+            if Path(file) == target:
+                raise PermissionError("simulated")
+            return real_open(file, *args, **kwargs)
+
+        with patch("builtins.open", side_effect=fake_open):
+            dag = MerkleDAG(self.temp_dir)
+            dag.build()
+
+        node = dag.nodes[str(Path("src") / "main.py")]
+        assert node.hash == f"UNREADABLE:{expected_mtime}"
+        assert node.size == 0
+        # Siblings are untouched
+        assert dag.nodes[str(Path("src") / "utils.py")].hash != node.hash
+
+    def test_non_supported_extension_uses_stat_hash(self):
+        """Files outside supported_extensions hash name:size:int(mtime), no content read."""
+        import hashlib
+
+        self.create_test_files()
+        asset = self.test_path / "data.bin"
+        asset.write_bytes(b"\x00\x01\x02")
+        stat = asset.stat()
+
+        dag = MerkleDAG(self.temp_dir, supported_extensions={".py"})
+        dag.build()
+
+        expected = hashlib.sha256(
+            f"data.bin:{stat.st_size}:{int(stat.st_mtime)}".encode()
+        ).hexdigest()
+        assert dag.nodes["data.bin"].hash == expected
+        assert dag.nodes["data.bin"].size == 0
+        # Supported files still get a content hash with their size recorded
+        assert dag.nodes[str(Path("src") / "main.py")].size > 0
+
+    @pytest.mark.skipif(os.name != "nt", reason="Win32 reserved device names")
+    def test_reserved_device_name_file_is_not_indexed(self):
+        """A file literally named 'nul' is a device to Path.is_file(); keep skipping it."""
+        self.create_test_files()
+        raw = "\\\\?\\" + str(self.test_path / "nul")
+        try:
+            with open(raw, "wb") as fh:
+                fh.write(b"x")
+        except OSError:
+            pytest.skip("Cannot create a reserved-name file on this filesystem")
+        try:
+            dag = MerkleDAG(self.temp_dir)
+            dag.build()
+            assert "nul" not in dag.nodes
+            assert str(Path("src") / "main.py") in dag.nodes
+        finally:
+            os.remove(raw)
 
 
 class TestSnapshotManager(TestCase):
