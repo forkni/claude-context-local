@@ -69,6 +69,7 @@ from mcp_server.model_pool_manager import (  # noqa: E402
 # Output formatting
 from mcp_server.output_formatter import format_response  # noqa: E402
 from mcp_server.tools import responses  # noqa: E402
+from utils.console_colors import ColorFormatter  # noqa: E402
 
 
 # Configure logging - dual-handler: console (colored) + rotating file (plain)
@@ -84,40 +85,6 @@ file_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 _log_dir = PROJECT_ROOT / "logs"
 _log_path = _log_dir / "mcp_server.log"
 _SESSION_START = datetime.now().strftime("%m%d%y%H%M%S")
-
-# ANSI color codes
-_ANSI_RED = "\033[91m"
-_ANSI_YELLOW = "\033[93m"
-_ANSI_BLUE = "\033[94m"
-_ANSI_RESET = "\033[0m"
-
-# Stage-completion keywords -> blue in console output
-_STAGE_KEYWORDS: frozenset[str] = frozenset(
-    [
-        "\u2713",  # checkmark (escaped to keep this file ASCII-only; still
-        # matches the literal glyph some log messages emit, e.g. embeddings/model_loader.py)
-        "ready",
-        "complete",
-        "loaded",
-        "startup",
-        "starting",
-        "shutdown",
-        "initialized",
-        "indexed",
-        "built",
-        "preload",
-        "pre-load",
-        "[tool_call]",
-        "[tool_cancelled]",
-        "[resource_read]",
-        "[prompt_get]",
-        "[init]",
-        "[http cleanup]",
-        "[http config]",
-        "[shutdown]",
-        "[switch_project]",
-    ]
-)
 
 
 def _enable_windows_ansi() -> None:
@@ -136,22 +103,6 @@ def _enable_windows_ansi() -> None:
                 kernel32.SetConsoleMode(handle, mode.value | 0x0004)
     except Exception:  # noqa: BLE001 - cosmetic: best-effort ANSI console support
         pass
-
-
-class _ColorFormatter(logging.Formatter):
-    """Console formatter: ERROR/CRITICAL->red, WARNING->yellow, stage INFO->blue."""
-
-    def format(self, record: logging.LogRecord) -> str:
-        text = super().format(record)
-        if record.levelno >= logging.ERROR:
-            return f"{_ANSI_RED}{text}{_ANSI_RESET}"
-        if record.levelno == logging.WARNING:
-            return f"{_ANSI_YELLOW}{text}{_ANSI_RESET}"
-        if record.levelno == logging.INFO:
-            msg_lower = record.getMessage().lower()
-            if any(kw in msg_lower for kw in _STAGE_KEYWORDS):
-                return f"{_ANSI_BLUE}{text}{_ANSI_RESET}"
-        return text
 
 
 class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
@@ -257,7 +208,7 @@ def _configure_logging() -> None:
 
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
-    console_handler.setFormatter(_ColorFormatter(console_format, datefmt="%H:%M:%S"))
+    console_handler.setFormatter(ColorFormatter(console_format, datefmt="%H:%M:%S"))
 
     _log_dir.mkdir(parents=True, exist_ok=True)
     file_handler = _SafeRotatingFileHandler(
@@ -277,6 +228,9 @@ def _configure_logging() -> None:
     # (#reindex-log-audit-2026-07-30); tests/conftest.py silences this for the
     # test session, this is the production counterpart.
     logging.getLogger("torch._dynamo").setLevel(logging.WARNING)
+    # The Windows faiss-cpu wheel ships only the generic build, so faiss.loader logs
+    # "Could not load library with AVX2 support" at INFO and falls back -- expected.
+    logging.getLogger("faiss.loader").setLevel(logging.WARNING)
 
 
 _configure_logging()

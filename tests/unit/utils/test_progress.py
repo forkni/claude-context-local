@@ -15,6 +15,7 @@ import sys
 
 import pytest
 
+from utils.console_colors import ColorFormatter
 from utils.progress import configure_child_logging, heartbeat
 
 
@@ -55,6 +56,11 @@ class TestConfigureChildLogging:
         added = root.handlers[-1]
         assert isinstance(added, logging.StreamHandler)
         assert added.stream is sys.stderr
+
+    def test_handler_uses_color_formatter(self, isolated_root_logger) -> None:
+        root, _baseline = isolated_root_logger
+        configure_child_logging(logging.INFO)
+        assert isinstance(root.handlers[-1].formatter, ColorFormatter)
 
     def test_sets_root_level(self, isolated_root_logger) -> None:
         root, _baseline = isolated_root_logger

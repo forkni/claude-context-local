@@ -93,6 +93,16 @@ class TestConfigureLoggingIdempotent:
                 root.addHandler(h)
 
 
+class TestFaissLoaderSuppressed:
+    """The Windows faiss wheel has no AVX2 build; faiss.loader's INFO fallback noise
+    ("Could not load library with AVX2 support") must not reach the console."""
+
+    def test_faiss_loader_logger_is_warning_or_higher(self) -> None:
+        import mcp_server.server  # noqa: F401 - import configures logging
+
+        assert logging.getLogger("faiss.loader").level >= logging.WARNING
+
+
 class TestIndexHandlersConfiguresLoggingEagerly:
     """Log-hygiene item F: a real force-reindex (tools/batch_index.py ->
     mcp_server.tool_specs.handle_index_directory) showed zero INFO-level

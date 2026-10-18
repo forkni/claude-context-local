@@ -22,6 +22,8 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
+from utils.console_colors import ColorFormatter
+
 
 _CHILD_LOGGING_CONFIGURED = "_code_search_child_logging_configured"
 
@@ -52,7 +54,7 @@ def configure_child_logging(level: int) -> None:
         return
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(
-        logging.Formatter("%(asctime)s - %(message)s", datefmt="%H:%M:%S")
+        ColorFormatter("%(asctime)s - %(message)s", datefmt="%H:%M:%S")
     )
     root.addHandler(handler)
     root.setLevel(level)
