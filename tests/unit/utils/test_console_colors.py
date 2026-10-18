@@ -32,7 +32,9 @@ def _render(level: int, message: str, name: str = "test") -> str:
 
 
 class TestColorFormatter:
-    @pytest.mark.parametrize("level", [logging.ERROR, logging.CRITICAL])
+    @pytest.mark.parametrize(
+        "level", [logging.ERROR, logging.CRITICAL], ids=["error", "critical"]
+    )
     def test_error_levels_are_red(self, level: int) -> None:
         out = _render(level, "plain failure")
         assert out.startswith(ANSI_RED) and out.endswith(ANSI_RESET)
@@ -47,13 +49,16 @@ class TestColorFormatter:
     @pytest.mark.parametrize(
         "message",
         ["Error: boom", "3 errors found", "Traceback (most recent call last)"],
+        ids=["error_singular", "errors_plural", "traceback"],
     )
     def test_error_words_are_red_at_info_and_debug(self, message: str) -> None:
         assert _render(logging.INFO, message).startswith(ANSI_RED)
         assert _render(logging.DEBUG, message).startswith(ANSI_RED)
 
     @pytest.mark.parametrize(
-        "message", ["Warning: low memory", "DeprecationWarning: old api"]
+        "message",
+        ["Warning: low memory", "DeprecationWarning: old api"],
+        ids=["warning_word", "warning_class"],
     )
     def test_warning_text_is_yellow(self, message: str) -> None:
         assert _render(logging.INFO, message).startswith(ANSI_YELLOW)
