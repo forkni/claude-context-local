@@ -49,6 +49,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`codefuse-ai/F2LLM-v2-1.7B` registered as an opt-in embedder** (`MODEL_REGISTRY`, 2048-d,
+  `vram_tier "workstation"`, same instruction template as the 0.6B; select it with
+  `CLAUDE_EMBEDDING_MODEL`, it gets its own per-model index dir) — **not adopted** for the
+  workstation tier, the launcher menu or any docs table: the pre-registered A/B against the
+  deployed 0.6B (`evaluation/EMBEDDER_F2LLM_1P7B_AB_20261019.md`, one session, equal 3,289-chunk
+  substrates) failed four of six gates. MRR below control on every view (63q 0.8237 -> 0.8161,
+  133q 0.6747 -> 0.6649, F-via-similar 0.8735 -> 0.8304, the last with a CI excluding 0),
+  recall@20 CI negative on all three views, 133q `pool_hit_rate` 128 -> 126 of 133, and a cold
+  force reindex peaked at 16.37 GiB torch-reserved (the 16 GB fit line). Search-time peak 7.55 GiB,
+  63q r1 == r2 bit-identical, no pooling defect (batch-1 vs batch-16 cosine >= 0.995 for both
+  models). Canon unchanged.
+
 - **Opt-in SDPA backend for the Jina reranker** (`RerankerConfig.listwise_attention_backend`,
   env `CLAUDE_RERANKER_LISTWISE_ATTENTION_BACKEND`, landed opt-in with default `"default"`;
   flipped to `"cudnn"` the next day, see Changed) — `"cudnn"`,
