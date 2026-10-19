@@ -67,6 +67,18 @@ MODEL_REGISTRY = {
         # (see EmbeddingConfig.instructed_similar)
         "code2code_instruction": "Instruct: Retrieve similar code given the following code\nQuery: ",
     },
+    "codefuse-ai/F2LLM-v2-1.7B": {
+        "dimension": 2048,
+        "max_context": 40960,
+        "description": "Qwen3-1.7B-based F2LLM-v2 (28 layers, 2048d); workstation-class",
+        "vram_gb": "3.5GB",  # 3.44 GB bf16 weights; activations on top (see EMBEDDER_F2LLM_1P7B_AB)
+        "fallback_batch_size": 128,  # 2x the 0.6B hidden size -> half its fallback batch
+        "vram_tier": "workstation",  # 18 GB+ GPUs; A/B evaluation/EMBEDDER_F2LLM_1P7B_AB_20261019.md
+        "instruction_mode": "custom",  # same template as F2LLM-v2-0.6B
+        "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
+        "prompt_name": "query",
+        "code2code_instruction": "Instruct: Retrieve similar code given the following code\nQuery: ",
+    },
     "codefuse-ai/F2LLM-v2-330M": {
         "dimension": 896,
         "max_context": 40960,

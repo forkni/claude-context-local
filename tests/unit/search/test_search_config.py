@@ -1105,3 +1105,44 @@ def test_requires_rebuild_ignores_malformed_keys():
     this."""
     assert SearchConfig.requires_rebuild({"not_dotted": 1}) is False
     assert SearchConfig.requires_rebuild({"nonexistent_section.field": 1}) is False
+
+
+class TestF2LLM1p7BRegistryEntry:
+    """``codefuse-ai/F2LLM-v2-1.7B`` (2026-10-19): the first 2048-d entry.
+
+    The benchmark legs select the embedder with ``CLAUDE_EMBEDDING_MODEL``
+    alone, so everything downstream (dimension, per-model index dir, VRAM
+    estimate) must derive from the registry row.
+    """
+
+    NAME = "codefuse-ai/F2LLM-v2-1.7B"
+
+    def test_dimension_synced_from_registry_on_from_dict(self):
+        config = SearchConfig.from_dict(
+            {"embedding": {"model_name": self.NAME, "dimension": 1}}
+        )
+        assert config.embedding.dimension == 2048
+
+    def test_model_slug_and_index_dir_are_distinct_from_the_0p6b(self):
+        from search.config import get_model_slug
+        from search.storage_layout import build_model_dir_name
+
+        slug = get_model_slug(self.NAME)
+        assert slug == "f2llm-v2-1.7b"
+        dir_name = build_model_dir_name("proj", "deadbeef", slug, 2048)
+        assert dir_name == "proj_deadbeef_f2llm-v2-1.7b_2048d"
+        assert dir_name != build_model_dir_name(
+            "proj", "deadbeef", get_model_slug("codefuse-ai/F2LLM-v2-0.6B"), 1024
+        )
+
+    def test_vram_estimate_parses_to_a_positive_number(self):
+        from embeddings.embedder import parse_vram_gb_from_registry
+
+        assert parse_vram_gb_from_registry(self.NAME) == 3.5
+
+    def test_env_var_selects_the_model_and_its_dimension(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_EMBEDDING_MODEL", self.NAME)
+        manager = SearchConfigManager(str(tmp_path / "search_config.json"))
+        config = manager.load_config()
+        assert config.embedding.model_name == self.NAME
+        assert config.embedding.dimension == 2048

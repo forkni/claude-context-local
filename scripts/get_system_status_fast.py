@@ -23,6 +23,11 @@ MODEL_REGISTRY = {
         "vram": "2.2GB",
         "short": "f2llm-v2-0.6b",
     },
+    "codefuse-ai/F2LLM-v2-1.7B": {
+        "dim": 2048,
+        "vram": "3.5GB",
+        "short": "f2llm-v2-1.7b",
+    },
     "codefuse-ai/F2LLM-v2-330M": {
         "dim": 896,
         "vram": "~0.7GB",
