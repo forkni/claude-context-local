@@ -389,6 +389,7 @@ class TestJinaRerankerV3:
             ("/no/snapshot/segment/tokenizer_config.json", None),
             (None, None),
         ],
+        ids=["windows-path", "posix-path", "no-snapshot-segment", "not-cached"],
     )
     def test_tokenizer_snapshot_revision_parses_cache_path(self, cached, expected):
         """Reads the snapshots/<hash> segment on both path flavours; None otherwise."""
@@ -396,7 +397,7 @@ class TestJinaRerankerV3:
         with patch("huggingface_hub.try_to_load_from_cache", return_value=cached):
             assert reranker._tokenizer_snapshot_revision() == expected
 
-    @pytest.mark.parametrize("matches", [True, False])
+    @pytest.mark.parametrize("matches", [True, False], ids=["matching", "mismatch"])
     @patch("transformers.AutoModel.from_pretrained")
     @patch("transformers.AutoConfig.from_pretrained")
     def test_tokenizer_snapshot_mismatch_warns(
@@ -1289,6 +1290,7 @@ class TestAttentionBackend:
             ("efficient", ["EFFICIENT_ATTENTION", "MATH"]),
             ("math", ["MATH"]),
         ],
+        ids=["cudnn", "efficient", "math"],
     )
     def test_backend_mapping_keeps_math_fallback(self, backend, expected):
         reranker = JinaRerankerV3(attention_backend=backend)
