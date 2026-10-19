@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Opt-in SDPA backend for the Jina reranker** (`RerankerConfig.listwise_attention_backend`,
   env `CLAUDE_RERANKER_LISTWISE_ATTENTION_BACKEND`, default `"default"`) — `"cudnn"`,
   `"efficient"` or `"math"` wrap the listwise forward in `torch.nn.attention.sdpa_kernel`
-  with MATH kept as the in-list fallback; the loader logs the
+  (`set_priority=True`, so the requested kernel is tried first) with MATH kept as the
+  in-list fallback; the loader logs the
   `can_use_cudnn_attention` verdict for the Jina shape, warns when torch deterministic mode
   would refuse the cuDNN kernel, and retries one attempt on MATH if a non-default kernel
   returns a non-finite score. `"default"` is a `nullcontext` (bit-identical with every

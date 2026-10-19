@@ -1003,7 +1003,9 @@ class RerankerConfig:
         # Windows + transformers 5.x GQA (16 Q / 8 KV heads) that lands on the
         # math backend, which materializes the full L^2 score matrix (the
         # 7-11 GB peak in docs/PERF.md). "cudnn": [CUDNN_ATTENTION, MATH] --
-        # cuDNN fused attention (sm80+, cuDNN 9.x), MATH kept in the list so
+        # cuDNN fused attention (sm80+, cuDNN 9.x) tried first (sdpa_kernel
+        # set_priority=True; plain filtering leaves MATH ahead of cuDNN in
+        # torch's fixed order and the knob is inert), MATH kept in the list so
         # an ineligible shape falls back instead of raising. "efficient":
         # [EFFICIENT_ATTENTION, MATH]. "math": [MATH] (forces the canon
         # kernel even where torch would pick another). Every non-default

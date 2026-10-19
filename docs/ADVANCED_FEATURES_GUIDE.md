@@ -1008,7 +1008,8 @@ For Jina v3, the packed-window controls are construction-time settings in `searc
   global ranking.
 - `listwise_attention_backend` defaults to `"default"` (torch's own SDPA dispatch, the only
   value bit-identical with the published canons). `"cudnn"` pins the forward to cuDNN fused
-  attention with MATH as the in-list fallback (sm80+, cuDNN 9.x; refused under
+  attention, tried first (`sdpa_kernel(..., set_priority=True)`), with MATH as the in-list
+  fallback for ineligible shapes (sm80+, cuDNN 9.x; refused under
   `torch.use_deterministic_algorithms(True)`); `"efficient"` and `"math"` are the other
   opt-in arms. Any non-default value changes floating-point scores, so it is benchmark-locked
   pending the pre-registered A/B.

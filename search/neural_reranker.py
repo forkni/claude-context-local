@@ -1716,6 +1716,13 @@ class JinaRerankerV3(BaseReranker):
 
         ``nullcontext()`` for ``"default"`` so the canon path stays byte-for-
         byte the same code torch ran before the knob existed.
+
+        ``set_priority=True`` is load-bearing: ``sdpa_kernel(backends)`` alone
+        only *filters* torch's fixed priority order ``[flash, efficient, math,
+        cudnn]``, so ``[CUDNN_ATTENTION, MATH]`` would still run MATH (measured
+        2026-10-18: the knob was bit-identical with the control until this
+        flag). With it, the list order is the dispatch order, so the requested
+        kernel is tried first and MATH only catches an ineligible shape.
         """
         if backends is None:
             backends = self._sdpa_backends()
@@ -1723,7 +1730,7 @@ class JinaRerankerV3(BaseReranker):
             return contextlib.nullcontext()
         from torch.nn.attention import sdpa_kernel
 
-        return sdpa_kernel(backends)
+        return sdpa_kernel(backends, set_priority=True)
 
     def _log_attention_backend_verdict(self) -> None:
         """Once per load: say whether the requested kernel is actually usable.

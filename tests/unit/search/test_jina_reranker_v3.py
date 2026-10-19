@@ -1293,14 +1293,17 @@ class TestAttentionBackend:
 
         @contextlib.contextmanager
         def fake_sdpa_kernel(backends, set_priority=False):
-            seen.append([b.name for b in backends])
+            seen.append(([b.name for b in backends], set_priority))
             yield
 
         monkeypatch.setattr(tna, "sdpa_kernel", fake_sdpa_kernel)
         reranker = JinaRerankerV3(device="cpu", attention_backend="cudnn")
         reranker._model = _FakeV3Model()
         reranker.rerank("q", self._candidates(3), top_k=3)
-        assert seen == [["CUDNN_ATTENTION", "MATH"]]
+        # set_priority=True is what makes the list order the dispatch order;
+        # without it torch's fixed [flash, efficient, math, cudnn] priority
+        # keeps MATH ahead of cuDNN and the knob is inert.
+        assert seen == [(["CUDNN_ATTENTION", "MATH"], True)]
 
     def test_non_finite_scores_retry_once_on_math(self, monkeypatch, caplog):
         import torch.nn.attention as tna
