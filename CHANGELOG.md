@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Jina reranker revision pinned** (`search/neural_reranker.py`) — `JinaRerankerV3` passes
+  `revision=JinaRerankerV3.REVISION` (`d7d7e73b`, the Hub tip since 2026-08-10) to the `AutoConfig`
+  and `AutoModel` `trust_remote_code` loads, so a vendor republish can no longer silently change
+  the listwise scoring code under a published canon (closes ADR-0076's "Standing risk"). The
+  vendor tokenizer load has no revision hook; the loader now warns when its cached snapshot
+  differs from the pin. Bit-identical: the unpinned load already resolved `d7d7e73b`
+  (63q r1 == r2 vs a pre-pin run on the same SHA).
+
 ### Added
 
 - **F2LLM-v2-330M in the launcher's Quick Model Switch** (`start_mcp_server.cmd`) — option 2 in the 8GB

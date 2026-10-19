@@ -330,6 +330,98 @@ class TestJinaRerankerV3:
         assert not reranker.is_loaded()
         assert reranker._model is None
 
+    def test_revision_is_a_full_commit_hash(self):
+        """The pin must be an immutable commit hash, never a branch name."""
+        rev = JinaRerankerV3.REVISION
+        assert len(rev) == 40
+        assert all(c in "0123456789abcdef" for c in rev)
+
+    @patch("transformers.AutoModel.from_pretrained")
+    @patch("transformers.AutoConfig.from_pretrained")
+    def test_load_pins_revision_on_config_and_model(
+        self, mock_config_class, mock_model_class
+    ):
+        """Both from_pretrained calls carry revision=REVISION (ADR-0076 standing risk)."""
+        mock_config_class.return_value = MagicMock()
+        mock_model_class.return_value = MagicMock()
+
+        reranker = JinaRerankerV3()
+        _ = reranker.model
+
+        assert mock_config_class.call_args.kwargs["revision"] == JinaRerankerV3.REVISION
+        assert mock_model_class.call_args.kwargs["revision"] == JinaRerankerV3.REVISION
+
+    @patch("transformers.AutoModel.from_pretrained")
+    @patch("transformers.AutoConfig.from_pretrained")
+    def test_load_pins_revision_on_dtype_fallback(
+        self, mock_config_class, mock_model_class
+    ):
+        """The older-transformers retry (no dtype kwarg) keeps the pin too."""
+        mock_config_class.return_value = MagicMock()
+        mock_model_class.side_effect = [TypeError("dtype"), MagicMock()]
+
+        reranker = JinaRerankerV3()
+        _ = reranker.model
+
+        assert mock_model_class.call_count == 2
+        for call in mock_model_class.call_args_list:
+            assert call.kwargs["revision"] == JinaRerankerV3.REVISION
+        assert "dtype" not in mock_model_class.call_args_list[1].kwargs
+
+    @pytest.mark.parametrize(
+        ("cached", "expected"),
+        [
+            (
+                "C:\\hf\\hub\\models--jinaai--jina-reranker-v3\\snapshots\\"
+                + "a" * 40
+                + "\\tokenizer_config.json",
+                "a" * 40,
+            ),
+            (
+                "/hf/hub/models--jinaai--jina-reranker-v3/snapshots/"
+                + "b" * 40
+                + "/tokenizer_config.json",
+                "b" * 40,
+            ),
+            ("/no/snapshot/segment/tokenizer_config.json", None),
+            (None, None),
+        ],
+    )
+    def test_tokenizer_snapshot_revision_parses_cache_path(self, cached, expected):
+        """Reads the snapshots/<hash> segment on both path flavours; None otherwise."""
+        reranker = JinaRerankerV3()
+        with patch("huggingface_hub.try_to_load_from_cache", return_value=cached):
+            assert reranker._tokenizer_snapshot_revision() == expected
+
+    @pytest.mark.parametrize("matches", [True, False])
+    @patch("transformers.AutoModel.from_pretrained")
+    @patch("transformers.AutoConfig.from_pretrained")
+    def test_tokenizer_snapshot_mismatch_warns(
+        self, mock_config_class, mock_model_class, matches, caplog
+    ):
+        """The unpinnable vendor tokenizer load is checked against REVISION after
+        the pre-load: a different snapshot logs a WARNING, a matching one is silent."""
+        mock_config_class.return_value = MagicMock()
+        model = MagicMock()
+        model.to.return_value = model
+        mock_model_class.return_value = model
+        tok_rev = JinaRerankerV3.REVISION if matches else "f" * 40
+
+        reranker = JinaRerankerV3()
+        with (
+            patch.object(
+                JinaRerankerV3, "_tokenizer_snapshot_revision", return_value=tok_rev
+            ),
+            caplog.at_level("WARNING", logger="search.neural_reranker"),
+        ):
+            _ = reranker.model
+
+        model._ensure_tokenizer.assert_called_once()
+        warned = any(
+            "tokenizer resolved snapshot" in rec.getMessage() for rec in caplog.records
+        )
+        assert warned is (not matches)
+
     def test_device_auto_detection(self):
         """Device should be auto-detected when not specified."""
         reranker = JinaRerankerV3()
@@ -1053,14 +1145,15 @@ class TestListwiseWindowBounding:
         """Guard against a future jinaai/jina-reranker-v3 republish silently
         changing _compute_single_batch to truncate its packed prompt.
 
-        Today (cached revision 10fb694fc21f...) _compute_single_batch's
-        tokenizer call passes no truncation=True, which is what makes a
-        lowered model_max_length (see derive_listwise_model_max_length)
-        only widen block count -- never silently drop content. No upstream
-        revision is pinned anywhere in this repo (see the ADR's "Standing
-        risk" section), so this is a real, not hypothetical, risk. Reads
-        the cached trust_remote_code module straight off disk (no network
-        call); skips rather than fails when it isn't cached locally.
+        At the pinned revision (JinaRerankerV3.REVISION, d7d7e73b...)
+        _compute_single_batch's tokenizer call passes no truncation=True,
+        which is what makes a lowered model_max_length (see
+        derive_listwise_model_max_length) only widen block count -- never
+        silently drop content. The model/config loads are pinned since
+        2026-10-18, so this guard now fires only when the pin is bumped
+        (see the ADR's "Standing risk" section). Reads the cached
+        trust_remote_code module straight off disk (no network call); skips
+        rather than fails when it isn't cached locally.
         """
         import ast
         import glob

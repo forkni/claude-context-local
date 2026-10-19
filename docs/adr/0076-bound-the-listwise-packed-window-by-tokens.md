@@ -232,11 +232,16 @@ silent one:
   model's advertised window — applied to the listwise reranker instead of
   the embedder.
 
-## Standing risk — no upstream revision is pinned
+## Standing risk — upstream revision (pinned 2026-10-18)
 
-The fix depends on vendor internals (`trust_remote_code`) at the currently
-cached checkpoint revision (`10fb694fc21f…`); no revision is pinned anywhere
-in this repository. A future republish of `jinaai/jina-reranker-v3` could:
+The fix depends on vendor internals (`trust_remote_code`). When this ADR was
+written no revision was pinned anywhere in this repository; since 2026-10-18
+`JinaRerankerV3.REVISION` pins the config and model loads to the Hub commit
+`d7d7e73b` (the tip since 2026-08-10, the snapshot every canon from then on
+was measured on). The vendor tokenizer load has no revision hook, so it still
+follows `main` and the loader warns when its snapshot differs from the pin.
+Bumping the pin is a new canon check; at that point a republish of
+`jinaai/jina-reranker-v3` could:
 
 - Change the block-flush rule (`block_size`, the `length_capacity <=
   max_doc_length` condition, or the block-boundary accounting this ADR's

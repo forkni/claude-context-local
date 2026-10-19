@@ -1031,6 +1031,16 @@ class JinaRerankerV3(BaseReranker):
         "fp16": torch.float16,
     }
 
+    #: Pinned Hub revision for the ``trust_remote_code`` load (full commit
+    #: hash, never a branch). The checkpoint ships its own ``modeling.py``,
+    #: so an unpinned load would silently pick up a vendor republish and
+    #: invalidate every published canon. ``d7d7e73b`` is the Hub tip since
+    #: 2026-08-10 and the snapshot every canon from then on was measured on;
+    #: bumping it is a new canon check. Applied to the config and model
+    #: loads in ``_load_or_fetch``; the vendor tokenizer load has no revision
+    #: hook (see ``_tokenizer_snapshot_revision``).
+    REVISION = "d7d7e73b6ea138ced340b83865931b5dfb6c97aa"
+
     def __init__(
         self,
         model_name: str = "jinaai/jina-reranker-v3",
@@ -1214,6 +1224,7 @@ class JinaRerankerV3(BaseReranker):
             # _load_model()'s redirect_stdout below regardless of tying.
             return AutoConfig.from_pretrained(
                 self.model_name,
+                revision=self.REVISION,
                 trust_remote_code=True,
                 local_files_only=local_files_only,
             )
@@ -1238,6 +1249,7 @@ class JinaRerankerV3(BaseReranker):
                     return AutoModel.from_pretrained(
                         self.model_name,
                         config=cfg,
+                        revision=self.REVISION,
                         dtype=self.DTYPE_MAP[self.dtype],  # Jina's custom parameter
                         trust_remote_code=True,
                         local_files_only=local_files_only,
@@ -1253,6 +1265,7 @@ class JinaRerankerV3(BaseReranker):
                     return AutoModel.from_pretrained(
                         self.model_name,
                         config=cfg,
+                        revision=self.REVISION,
                         trust_remote_code=True,
                         local_files_only=local_files_only,
                     )
@@ -1300,11 +1313,48 @@ class JinaRerankerV3(BaseReranker):
                 self._logger.warning(
                     f"Tokenizer pre-load failed (will retry on first rerank): {e}"
                 )
+            else:
+                # The vendor _ensure_tokenizer loads from name_or_path with no
+                # revision argument, so it resolves the Hub's "main" ref, not
+                # REVISION. Warn (do not fail) when the two diverge: tokenizer
+                # files have been byte-identical across every published
+                # snapshot so far, but a future republish could change them.
+                tok_rev = self._tokenizer_snapshot_revision()
+                if tok_rev is not None and tok_rev != self.REVISION:
+                    self._logger.warning(
+                        "Jina tokenizer resolved snapshot %s but the model is "
+                        "pinned to %s (vendor tokenizer load is unpinnable); "
+                        "verify tokenizer files match before trusting scores.",
+                        tok_rev[:8],
+                        self.REVISION[:8],
+                    )
 
         self._logger.info(f"Jina reranker loaded on {self.device}")
         # Clean up offline env vars after load to avoid side effects on other code
         os.environ.pop("HF_HUB_OFFLINE", None)
         os.environ.pop("TRANSFORMERS_OFFLINE", None)
+
+    def _tokenizer_snapshot_revision(self) -> str | None:
+        """Return the cached snapshot hash the unpinned tokenizer load resolves to.
+
+        Mirrors what the vendor ``_ensure_tokenizer`` does (``main`` ref, no
+        revision) by asking the Hub cache where ``tokenizer_config.json``
+        lives for that ref and reading the ``snapshots/<hash>`` segment.
+        ``None`` when the file is not cached or the path has no snapshot
+        segment (nothing to compare against).
+        """
+        try:
+            from huggingface_hub import try_to_load_from_cache
+        except ImportError:
+            return None
+        cached = try_to_load_from_cache(self.model_name, "tokenizer_config.json")
+        if not isinstance(cached, str):
+            return None
+        parts = cached.replace("\\", "/").split("/")
+        try:
+            return parts[parts.index("snapshots") + 1]
+        except (ValueError, IndexError):
+            return None
 
     def _cleanup_extra(self) -> None:
         """Reset the memoized length-kwargs so a reload re-introspects."""
