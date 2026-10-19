@@ -1,6 +1,6 @@
 # A/B: cuDNN SDPA backend for the Jina listwise reranker (2026-10-18)
 
-## Status: MEASURED on `d293cb07`. NOT ADOPTED under the pre-registered rule (gate 3 misses by one query on 133q); knob stays opt-in. Override is the owner's call, see Decision
+## Status: MEASURED on `d293cb07` (10-18) and re-run on `3bb9d7ba` with corrected labels (10-19). ADOPTED: every gate passes on the corrected labels; default flipped to `"cudnn"` (ADR-0088), canon re-pinned in `evaluation/CANON_20261019_CUDNN_ATTN.md`. The 10-18 read (NOT ADOPTED on gate 3 by one mislabeled query) is kept below for the record
 
 Knob: `reranker.listwise_attention_backend` (commit `e98c9b12`, opt-in, default `"default"`).
 Control = `"default"` (torch's own SDPA dispatch, which lands on the **math** kernel for the
@@ -120,7 +120,7 @@ recall@5 down by one query on each view. No CI excludes 0 in either direction.
 |---|---|---|---|
 | 1 | drift, control vs 10-01 canon | **breached on 63q and F, recorded** | MRR: 63q 0.8173 vs 0.8415 (-0.0242), 133q 0.6523 vs 0.6637 (-0.0114), F 0.8656 vs 0.8915 (-0.0259). recall@20: +0.0136 / +0.0127 / +0.0159, all inside. Not a treatment verdict: the control runs the unchanged math kernel on the same index as the treatment. The substrate moved since the canon in two ways: content (3,114 -> 3,283 chunks) and about 30 search-path commits between 10-01 and `7c3725f6` (C-family chunking repairs, duplicate-chunk-id folding, the `case_gated` BM25 analyzer, `create_reranker(RerankerConfig)`), none of them re-pinned. The 09-20 and 10-01 pins recorded the same pattern; whichever kernel wins, the next canon re-pin absorbs this. |
 | 2 | adoption CIs (MRR / recall@10 / recall@20, 3 views) | **PASS** | no paired CI excludes 0 on the negative side (table above); 9 of 9 lower bounds >= -0.0177 |
-| 3 | `pool_hit_rate` non-decreasing, every view | **FAIL by one query (133q); that query is mislabeled, see the label audit** | 63q 1.0000 -> 1.0000, F 1.0000 -> 1.0000, 133q 0.9624 -> 0.9549 (128 -> 127 of 133). The lost query is H012 ("suppress a harmless ASGI error message the web server prints when stopped with Ctrl+C"): `pool_hit` True -> False, `gold_in_window` True in both legs, recall@10 0.5 -> 0.0, MRR 0.1667 -> 0.0, `file_recall@10` 1.0 in both. Under control the gold `app_lifespan` sat at rank 6 of the final list; under cuDNN the hop-1 window (30 entries, `gold_in_window` True in both legs) reranked it below the survivor cut, so it never entered the 30-candidate final pool and `JobRegistry.get` / `CleanupQueue.add` took ranks 3-4 instead. `file_recall@10` stays 1.0 (`_drop_benign_uvicorn_errors` in the same file is rank 1 in both). A deterministic reranker-numerics effect (T63 r1 == r2), not run noise. The label audit below finds that H012's gold set does not contain the actual answer. |
+| 3 | `pool_hit_rate` non-decreasing, every view | **10-18: FAIL by one query (133q), shown mislabeled by the audit; 10-19 re-run on corrected labels: PASS (127 -> 128 of 133; 63q/F 1.0 both kernels)** | 63q 1.0000 -> 1.0000, F 1.0000 -> 1.0000, 133q 0.9624 -> 0.9549 (128 -> 127 of 133). The lost query is H012 ("suppress a harmless ASGI error message the web server prints when stopped with Ctrl+C"): `pool_hit` True -> False, `gold_in_window` True in both legs, recall@10 0.5 -> 0.0, MRR 0.1667 -> 0.0, `file_recall@10` 1.0 in both. Under control the gold `app_lifespan` sat at rank 6 of the final list; under cuDNN the hop-1 window (30 entries, `gold_in_window` True in both legs) reranked it below the survivor cut, so it never entered the 30-candidate final pool and `JobRegistry.get` / `CleanupQueue.add` took ranks 3-4 instead. `file_recall@10` stays 1.0 (`_drop_benign_uvicorn_errors` in the same file is rank 1 in both). A deterministic reranker-numerics effect (T63 r1 == r2), not run noise. The label audit below finds that H012's gold set does not contain the actual answer; on the corrected labels the gate reads 127 -> 128 of 133 (re-grade section). |
 | 4 | determinism, T63 r1 == r2 | **PASS** | aggregates and every per-query row bit-identical (only `latency_ms` differs) |
 | 5 | finite scores | **PASS** | 0 `Non-finite reranker scores` lines across 8 treatment leg logs (the MATH retry never fired) |
 | 6 | 8 GB check | **PASS** | `--set performance.vram_limit_fraction=0.34` -> `[VRAM_LIMIT] Requested=34%, effective=27%` (~6.6 GB after the headroom formula, stricter than the 8 GB intended); 63/63 queries, no OOM retry, no window shrink, results bit-identical to the uncapped T63 |
@@ -153,20 +153,84 @@ corrections follow from the audit regardless of the kernel decision: H012 (add
 `_is_empty_file`). Editing the golden set is the owner's call; the 133q canon would need
 re-measuring on the corrected labels.
 
-### Decision (pre-registered rule applied)
+### Re-grade on the corrected labels (2026-10-19, HEAD `3bb9d7ba`)
 
-Rule: "all of 2-5 pass and 6 does not OOM -> flip the default". Gates 2, 4, 5 and 6 pass; gate 3
-misses by exactly one query on one view. **Under the rule as written the default is not flipped:
-`listwise_attention_backend` stays opt-in (`"cudnn"`), and this result is recorded as NOT ADOPTED
-on gate 3 here and in `docs/PERF.md`.**
+The owner's call on the audit above: correct the H012 and H004 labels and re-run the 133q legs.
+Label changes (`evaluation/golden_dataset_expanded.json`): H012 `expected` =
+[`_drop_benign_uvicorn_errors` (grade 3, primary), `app_lifespan` (2)], `_configure_logging`
+removed; H004 `expected` = [`ParallelChunker._is_empty_file` (3, primary), `chunk_files` (2),
+`_accumulate_chunk_stats` (2)]. `tests/unit/evaluation/test_golden_set_guard.py` 13 passed.
 
-What the rule does not weigh, recorded for the owner's call: the miss is a single query at the
-pool-hit boundary (H012 was already at MRR 0.1667 under control), every quality CI is neutral
-with positive point estimates on MRR and recall@10 on all three views, and the treatment is
-deterministic and finite. Against that, the knob removes ~91% of per-query reranker time and
-~68% of peak VRAM (next section), which is the whole motivation of this plan. Overriding gate 3
-would mean: flip the default, re-pin the canon on the treatment legs, and write an ADR that names
-H012 as the accepted cost. Not doing so keeps the canon and the math kernel, and 8 GB users opt in.
+Both 133q legs re-run back to back on one index (3,283 chunks, no reindex between them, every leg
+log free of `Non-finite` / `OOM` / `retrying`). Dumps: `evaluation/ab3_attn_{c133,t133}_20261019.json`.
+
+| leg (corrected labels) | MRR | recall@5 | recall@10 | recall@20 | pool_hit_rate | gold_in_window | avg latency / query |
+|---|---|---|---|---|---|---|---|
+| C133 | 0.6645 | 0.6420 | 0.7656 | 0.8481 | 0.9549 (127/133) | 0.962 | 4,549 ms |
+| T133 | 0.6750 | 0.6483 | 0.7727 | 0.8569 | **0.9624 (128/133)** | 0.962 | 1,233 ms |
+
+Paired deltas, treatment minus control (bootstrap 95% CI): MRR +0.0105 [+0.0006, +0.0231],
+recall@5 +0.0063 [0.0000, +0.0138], recall@10 +0.0071 [-0.0198, +0.0340], recall@20 +0.0088
+[-0.0075, +0.0288]; 17 MRR movers (10 up, 7 down; largest Q90 and H062 0.5 -> 1.0, Q119 0 -> 0.2,
+H022 0.33 -> 0.5, H009 0 -> 0.125; every negative mover is a one-place sibling swap, max -0.083).
+
+**Gate 3 re-graded: PASS.** `pool_hit` 127 -> 128 of 133: no query loses the pool, H009 regains
+it. H012 and H004 now rank their real answers first under both kernels (H012:
+`_drop_benign_uvicorn_errors` rank 1 both legs, `app_lifespan` rank 6 under control and outside
+the top-10 under cuDNN, which is the swap the audit described; H004: `_is_empty_file` rank 1 both
+legs). Gate 2 on 133q also strengthens: the MRR CI now excludes 0 on the positive side.
+
+**Substrate note, recorded honestly.** The corrected-label control differs from the 10-18 control
+on 59 of 133 queries by result set (33 more by order only), far beyond the two relabeled queries.
+Cause: the call graph was rebuilt between the two sessions (the MCP server reindexed when the
+golden file and this document changed; chunk count unchanged at 3,283, resolver edge counts
+`lsp 2099 -> 2209`, `libcst 733 -> 804`, `pyan 599 -> 615`). PageRank centrality reaches ranking
+through the BM25 adaptive boost and the ego-graph ordering, so a graph rebuild reorders heads
+(the 2026-09-20 canon documents the same mechanism). Both 10-19 legs share one graph
+(`config_metadata.substrate` identical), so the paired gate is clean; the 10-18 63q and
+F-via-similar treatment legs sit on the older graph, so all five 63q/F legs were re-run on the
+current index before pinning the canon (next subsection).
+
+### Same-substrate 63q and F-via-similar legs (2026-10-19)
+
+Five more legs on the same index and session as the corrected-label 133q pair, same env, no
+`--deterministic-gpu`: 63q control, 63q cuDNN r1 and r2, F-via-similar control and cuDNN. Dumps:
+`evaluation/ab3_attn_{c63,t63_r1,t63_r2,cf,tf}_20261019.json`; `config_metadata.substrate`
+identical across all seven 10-19 legs.
+
+| leg | MRR | recall@5 | recall@10 | recall@20 | pool_hit_rate | gold_in_window | avg latency / query |
+|---|---|---|---|---|---|---|---|
+| C63 (math) | 0.8173 | 0.6281 | 0.7644 | 0.8513 | 1.0000 (63/63) | 1.000 | 4,539 ms |
+| T63 (cuDNN) r1 | 0.8235 | 0.6321 | 0.7662 | 0.8566 | 1.0000 (63/63) | 1.000 | 1,238 ms |
+| CF (math) | 0.8656 | 0.6252 | 0.7737 | 0.8255 | 1.0000 | 1.000 | 3,962 ms |
+| TF (cuDNN) | 0.8735 | 0.6292 | 0.7755 | 0.8308 | 1.0000 | 1.000 | 1,260 ms |
+
+Paired deltas, treatment minus control (bootstrap 95% CI). 63q: MRR +0.0062 [-0.0040, +0.0234],
+recall@5 +0.0040 [0.0000, +0.0119], recall@10 +0.0019 [-0.0180, +0.0225], recall@20 +0.0053 [0.0000, +0.0159].
+F-via-similar: MRR +0.0079 [0.0000, +0.0238], recall@5 +0.0040 [0.0000, +0.0119], recall@10 +0.0019 [-0.0180, +0.0225],
+recall@20 +0.0053 [0.0000, +0.0159]. No CI excludes 0 on the negative side (gate 2 PASS on all three
+views). `pool_hit_rate` 1.0 under both kernels on both views (gate 3 PASS). T63 r1 == r2
+bit-identical, every per-query row (gate 4 PASS). No `Non-finite` line in any leg log (gate 5).
+Movers: 63q 3 MRR movers (1 up, 2 down): Q95 0.333 -> 0.250; Q70 0.125 -> 0.100; Q90 0.500 -> 1.000; F-via-similar 1 MRR movers (1 up, 0 down): Q90 0.500 -> 1.000.
+
+GPU memory as `nvidia-smi` reports it during the legs (the whole card, MCP server included):
+17,115 MiB during the math 63q control, 6,109 MiB during the cuDNN 63q r2 leg.
+
+### Decision (pre-registered rule applied, after the label fix)
+
+Rule: "all of 2-5 pass and 6 does not OOM -> flip the default". On the 10-18 legs gates 2, 4, 5 and
+6 passed and gate 3 missed by exactly one 133q query, so the first read was NOT ADOPTED under the
+rule as written. The label audit showed that query's gold set omits its real answer; the owner
+had H012 and H004 corrected and every leg re-run in one session on the current index. On the
+corrected labels gate 3 passes (127 -> 128 of 133, 63q/F 1.0 both kernels) and gates 2, 4 and 5
+hold on all three views, with the 133q MRR CI now excluding 0 on the positive side.
+
+**ADOPTED: `listwise_attention_backend` defaults to `"cudnn"` (ADR-0088); canon re-pinned on the
+10-19 treatment legs in `evaluation/CANON_20261019_CUDNN_ATTN.md` (63q 0.8235, 133q 0.6750,
+F-via-similar 0.8735); `"default"` stays selectable and reproduces the pre-10-19 kernel.** The
+cost side is unchanged from the 10-18 read: 63q moved by sibling swaps only, no relevant answer
+left the pool on any view, and the knob removes ~91% of per-query reranker time and ~68% of peak
+VRAM (next section).
 
 ### Latency and VRAM (reported, not gated)
 

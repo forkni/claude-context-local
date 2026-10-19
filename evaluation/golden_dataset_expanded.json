@@ -2694,16 +2694,17 @@
       "category": "H",
       "split": "train",
       "expected": [
-        "search/parallel_chunker.py:decorated_definition:ParallelChunker._accumulate_chunk_stats",
-        "search/parallel_chunker.py:method:ParallelChunker.chunk_files"
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._is_empty_file",
+        "search/parallel_chunker.py:method:ParallelChunker.chunk_files",
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._accumulate_chunk_stats"
       ],
       "expected_primary": [
-        "search/parallel_chunker.py:decorated_definition:ParallelChunker._accumulate_chunk_stats",
-        "search/parallel_chunker.py:method:ParallelChunker.chunk_files"
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._is_empty_file"
       ],
       "relevance_grades": {
-        "search/parallel_chunker.py:decorated_definition:ParallelChunker._accumulate_chunk_stats": 3,
-        "search/parallel_chunker.py:method:ParallelChunker.chunk_files": 3
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._is_empty_file": 3,
+        "search/parallel_chunker.py:method:ParallelChunker.chunk_files": 2,
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._accumulate_chunk_stats": 2
       }
     },
     {
@@ -2793,16 +2794,15 @@
       "category": "H",
       "split": "train",
       "expected": [
-        "mcp_server/server.py:function:_configure_logging",
+        "mcp_server/server.py:function:_drop_benign_uvicorn_errors",
         "mcp_server/server.py:decorated_definition:app_lifespan"
       ],
       "expected_primary": [
-        "mcp_server/server.py:function:_configure_logging",
-        "mcp_server/server.py:decorated_definition:app_lifespan"
+        "mcp_server/server.py:function:_drop_benign_uvicorn_errors"
       ],
       "relevance_grades": {
-        "mcp_server/server.py:function:_configure_logging": 3,
-        "mcp_server/server.py:decorated_definition:app_lifespan": 3
+        "mcp_server/server.py:function:_drop_benign_uvicorn_errors": 3,
+        "mcp_server/server.py:decorated_definition:app_lifespan": 2
       }
     },
     {
