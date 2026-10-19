@@ -120,10 +120,38 @@ recall@5 down by one query on each view. No CI excludes 0 in either direction.
 |---|---|---|---|
 | 1 | drift, control vs 10-01 canon | **breached on 63q and F, recorded** | MRR: 63q 0.8173 vs 0.8415 (-0.0242), 133q 0.6523 vs 0.6637 (-0.0114), F 0.8656 vs 0.8915 (-0.0259). recall@20: +0.0136 / +0.0127 / +0.0159, all inside. Not a treatment verdict: the control runs the unchanged math kernel on the same index as the treatment. The substrate moved since the canon in two ways: content (3,114 -> 3,283 chunks) and about 30 search-path commits between 10-01 and `7c3725f6` (C-family chunking repairs, duplicate-chunk-id folding, the `case_gated` BM25 analyzer, `create_reranker(RerankerConfig)`), none of them re-pinned. The 09-20 and 10-01 pins recorded the same pattern; whichever kernel wins, the next canon re-pin absorbs this. |
 | 2 | adoption CIs (MRR / recall@10 / recall@20, 3 views) | **PASS** | no paired CI excludes 0 on the negative side (table above); 9 of 9 lower bounds >= -0.0177 |
-| 3 | `pool_hit_rate` non-decreasing, every view | **FAIL by one query (133q)** | 63q 1.0000 -> 1.0000, F 1.0000 -> 1.0000, 133q 0.9624 -> 0.9549 (128 -> 127 of 133). The lost query is H012 ("suppress a harmless ASGI error message the web server prints when stopped with Ctrl+C"): `pool_hit` True -> False, `gold_in_window` True in both legs, recall@10 0.5 -> 0.0, MRR 0.1667 -> 0.0, `file_recall@10` 1.0 in both. Under control the gold `app_lifespan` sat at rank 6 of the final list; under cuDNN the hop-1 window (30 entries, `gold_in_window` True in both legs) reranked it below the survivor cut, so it never entered the 30-candidate final pool and `JobRegistry.get` / `CleanupQueue.add` took ranks 3-4 instead. `file_recall@10` stays 1.0 (`_drop_benign_uvicorn_errors` in the same file is rank 1 in both). A deterministic reranker-numerics effect (T63 r1 == r2), not run noise. |
+| 3 | `pool_hit_rate` non-decreasing, every view | **FAIL by one query (133q); that query is mislabeled, see the label audit** | 63q 1.0000 -> 1.0000, F 1.0000 -> 1.0000, 133q 0.9624 -> 0.9549 (128 -> 127 of 133). The lost query is H012 ("suppress a harmless ASGI error message the web server prints when stopped with Ctrl+C"): `pool_hit` True -> False, `gold_in_window` True in both legs, recall@10 0.5 -> 0.0, MRR 0.1667 -> 0.0, `file_recall@10` 1.0 in both. Under control the gold `app_lifespan` sat at rank 6 of the final list; under cuDNN the hop-1 window (30 entries, `gold_in_window` True in both legs) reranked it below the survivor cut, so it never entered the 30-candidate final pool and `JobRegistry.get` / `CleanupQueue.add` took ranks 3-4 instead. `file_recall@10` stays 1.0 (`_drop_benign_uvicorn_errors` in the same file is rank 1 in both). A deterministic reranker-numerics effect (T63 r1 == r2), not run noise. The label audit below finds that H012's gold set does not contain the actual answer. |
 | 4 | determinism, T63 r1 == r2 | **PASS** | aggregates and every per-query row bit-identical (only `latency_ms` differs) |
 | 5 | finite scores | **PASS** | 0 `Non-finite reranker scores` lines across 8 treatment leg logs (the MATH retry never fired) |
 | 6 | 8 GB check | **PASS** | `--set performance.vram_limit_fraction=0.34` -> `[VRAM_LIMIT] Requested=34%, effective=27%` (~6.6 GB after the headroom formula, stricter than the 8 GB intended); 63/63 queries, no OOM retry, no window shrink, results bit-identical to the uncapped T63 |
+
+### Label audit of the negative movers (2026-10-19)
+
+Before trusting gate 3, every query whose MRR or recall fell under cuDNN was checked against
+the code and the commit its labels came from (H-category golds were promoted from historical
+commits in `988f1f9e`; the gold is "the chunks the commit touched", which can go stale).
+
+| query | view | what moved | finding |
+|---|---|---|---|
+| H012 "suppress a harmless ASGI error message the web server prints when stopped with Ctrl+C" | 133q | gold `app_lifespan` rank 6 -> out of the 30-candidate pool; `pool_hit` True -> False | **mislabeled**. The originating commit `e0f72a39` added `_BENIGN_UVICORN_ERROR_SUBSTRINGS` and `_drop_benign_uvicorn_errors` at module level (hunk `@@ -199,6 +199,25 @@`, after the logging-level block, not inside `_configure_logging`) and one `addFilter(...)` line inside `app_lifespan`. `_configure_logging` (grade 3) was never touched and contains no uvicorn/ASGI code. `_drop_benign_uvicorn_errors`, the function that does the suppressing, is not in the gold set and is **rank 1 under both kernels** (and rank 1 in a live `search_code` run). `app_lifespan` is only the registration site. The pool-hit loss is a label artefact: the query's answer stays at rank 1. |
+| Q119 "keep the project's stored identity stable when the repository moves" | 133q | grade-3 primary `compute_drive_agnostic_hash` rank 5 -> >10 | real but fuzzy: the grade-2 golds `_update_stored_path_if_changed` and `find_project_at_different_drive` hold ranks 1 and 3 in both legs; `pool_hit` and `gold_in_window` True in both. The labels are sound; the view's "primary" pick is the one that moved. |
+| H045 "remove a duplicated block of execution-provider options, accept a numbered CUDA device string ..., correct a docstring" | 133q | single gold `_measure_activation_per_item` rank 9 -> >10 | label anchors deleted code: `e49bbabe` changed 4 lines of `model_loader.py` and 55 of `onnx_loader.py`, which `72b68815` deleted. Two of the three query clauses describe code that no longer exists; the surviving gold sits at the window tail in both legs (`window_size` 25). Not a kernel verdict. |
+| H004 "avoid logging a warning for files that are genuinely empty" | 133q | rank 18 -> 19 (MRR 0.056 -> 0.053) | **incomplete labels**: `dd76f350` added `ParallelChunker._is_empty_file`, which is rank 1 under both kernels and not in the gold set. Both legs miss the labeled golds in the top 10; the movement is beyond the result list. |
+| Q86, Q95, H049, Q122 | 63q / 133q | primary rank 3 -> 4, 3 -> 4, 3 -> 4, 4 -> 5 | one-place swaps with a sibling chunk (`_extract_call_relationships`, `ArmIndex`, `handle_get_memory_status`, `clear_embedders`); every labeled gold stays in the top 10, `pool_hit` True in both. |
+| Q44 "save and load FAISS vector index to disk" | 63q / F | grade-2 `FaissVectorIndex` class rank 5 -> 7 (recall@5 1.0 -> 0.75) | the three grade-3 golds hold ranks 1-3 in both legs; `CodeIndexManager.load`, an unlabeled but on-topic chunk, moved up past the class. |
+| H021 | 133q | rank 13 -> 14 | beyond the top 10 in both legs; noise. |
+
+Positive movers for symmetry: Q90 (primary rank 2 -> 1, 63q/133q/F), H062 (2 -> 1), H022 (4 -> 2).
+
+Reading: no negative mover is a relevant answer that cuDNN pushed out of reach. The single
+`pool_hit` loss rests on a gold set that omits the real answer and grades an untouched function
+3. On 63q, whose labels are the curated ones, `pool_hit_rate` is 1.0 under both kernels and the
+only movement is three one-place sibling swaps plus one grade-2 class moving 5 -> 7; 133q is the
+commit-derived set with fuzzier labels, so the 63q result is the stronger signal. Two golden-set
+corrections follow from the audit regardless of the kernel decision: H012 (add
+`_drop_benign_uvicorn_errors` grade 3, demote or drop `_configure_logging`) and H004 (add
+`_is_empty_file`). Editing the golden set is the owner's call; the 133q canon would need
+re-measuring on the corrected labels.
 
 ### Decision (pre-registered rule applied)
 
