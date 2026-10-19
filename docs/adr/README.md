@@ -93,6 +93,7 @@ for avoiding re-litigating settled questions.
 | [0085](0085-instructed-find-similar-flag-off.md) | Instructed find_similar ships flag-off; F2LLM query wording unchanged | accepted | 2026-10-08 |
 | [0086](0086-vram-budget-has-one-home.md) | VRAM budget has one home: `VramBudget` in `embeddings/vram_budget.py` | accepted | 2026-10-13 |
 | [0087](0087-recover-dropped-c-family-regions.md) | Recover dropped C-family regions: parse-only repairs, preamble descent, doc-comment adoption | accepted | 2026-10-14 |
+| [0088](0088-cudnn-attention-for-listwise-reranker.md) | Run the Jina listwise reranker on cuDNN fused attention by default | accepted | 2026-10-19 |
 
 ## Adding a new ADR
 

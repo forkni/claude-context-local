@@ -1253,7 +1253,11 @@ class TestCreateRerankerFactoryJina:
 
 
 class TestAttentionBackend:
-    """``listwise_attention_backend`` -> ``sdpa_kernel`` plumbing (opt-in, default inert)."""
+    """``listwise_attention_backend`` -> ``sdpa_kernel`` plumbing.
+
+    Default ``"cudnn"`` since ADR-0088 (2026-10-19); ``"default"`` is the inert
+    arm (no context manager, torch's own dispatch, the pre-10-19 canon kernel).
+    """
 
     @staticmethod
     def _candidates(n: int) -> list[SearchResult]:
@@ -1264,8 +1268,16 @@ class TestAttentionBackend:
             for i in range(n)
         ]
 
-    def test_default_is_inert(self):
+    def test_constructor_defaults_to_cudnn(self):
         reranker = JinaRerankerV3()
+        assert reranker.attention_backend == "cudnn"
+        assert [b.name for b in reranker._sdpa_backends()] == [
+            "CUDNN_ATTENTION",
+            "MATH",
+        ]
+
+    def test_default_arm_is_inert(self):
+        reranker = JinaRerankerV3(attention_backend="default")
         assert reranker.attention_backend == "default"
         assert reranker._sdpa_backends() is None
         assert isinstance(reranker._sdpa_context(), contextlib.nullcontext)
@@ -1338,7 +1350,7 @@ class TestAttentionBackend:
         assert "Non-finite reranker scores" in caplog.text
 
     def test_default_backend_never_retries_on_non_finite(self):
-        reranker = JinaRerankerV3(device="cpu")
+        reranker = JinaRerankerV3(device="cpu", attention_backend="default")
         model = _FakeV3Model()
         calls = {"n": 0}
         real = model.rerank
@@ -1362,7 +1374,7 @@ class TestAttentionBackend:
         assert "deterministic" in caplog.text
 
     def test_verdict_is_silent_for_default(self, caplog):
-        reranker = JinaRerankerV3(device="cpu")
+        reranker = JinaRerankerV3(device="cpu", attention_backend="default")
         with caplog.at_level(logging.DEBUG, logger="search.neural_reranker"):
             reranker._log_attention_backend_verdict()
         assert caplog.text == ""
@@ -1373,6 +1385,6 @@ class TestAttentionBackend:
         )
         assert reranker.attention_backend == "cudnn"
 
-    def test_attention_backend_defaults_to_default(self):
+    def test_attention_backend_defaults_to_cudnn(self):
         reranker = create_reranker(_cfg("jinaai/jina-reranker-v3"))
-        assert reranker.attention_backend == "default"
+        assert reranker.attention_backend == "cudnn"

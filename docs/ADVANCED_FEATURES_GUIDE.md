@@ -994,7 +994,7 @@ For Jina v3, the packed-window controls are construction-time settings in `searc
   "reranker": {
     "listwise_packed_token_budget": 8192,
     "listwise_window_fit": "truncate",
-    "listwise_attention_backend": "default"
+    "listwise_attention_backend": "cudnn"
   }
 }
 ```
@@ -1006,13 +1006,16 @@ For Jina v3, the packed-window controls are construction-time settings in `searc
   candidate count is preserved in one block. `"split"` is the escape hatch that allows Jina's
   multi-block path when needed; it is not the default because cross-block scoring can change the
   global ranking.
-- `listwise_attention_backend` defaults to `"default"` (torch's own SDPA dispatch, the only
-  value bit-identical with the published canons). `"cudnn"` pins the forward to cuDNN fused
-  attention, tried first (`sdpa_kernel(..., set_priority=True)`), with MATH as the in-list
-  fallback for ineligible shapes (sm80+, cuDNN 9.x; refused under
-  `torch.use_deterministic_algorithms(True)`); `"efficient"` and `"math"` are the other
-  opt-in arms. Any non-default value changes floating-point scores, so it is benchmark-locked
-  pending the pre-registered A/B.
+- `listwise_attention_backend` defaults to `"cudnn"` (since 2026-10-19, ADR-0088): the
+  listwise forward runs on cuDNN fused attention, tried first
+  (`sdpa_kernel(..., set_priority=True)`), with MATH as the in-list fallback for ineligible
+  shapes or machines without cuDNN attention (sm80+, cuDNN 9.x; refused under
+  `torch.use_deterministic_algorithms(True)`, where MATH runs and the loader warns). Measured
+  effect: a rerank call ~10x faster (1.3 s -> 0.13 s) and peak VRAM 8 -> 2.8 GB, quality gates
+  passed (`evaluation/ATTN_BACKEND_AB_20261018.md`). `"default"` (torch's own dispatch, the
+  math kernel on Windows GQA) reproduces every canon before 2026-10-19; `"efficient"` and
+  `"math"` are the other arms. Each value changes floating-point scores, so the field is
+  benchmark-locked.
 
 **VRAM Usage**: ~1.2GB
 

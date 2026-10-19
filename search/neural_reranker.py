@@ -1070,7 +1070,7 @@ class JinaRerankerV3(BaseReranker):
         doc_representation_mode: str = "full",
         listwise_packed_token_budget: int = 8192,
         listwise_window_fit: str = "truncate",
-        attention_backend: str = "default",
+        attention_backend: str = "cudnn",
     ):
         """Initialize JinaRerankerV3 with lazy loading.
 
@@ -1132,11 +1132,13 @@ class JinaRerankerV3(BaseReranker):
                 multi-block flush loop sub-divide the window instead. See
                 ``RerankerConfig.listwise_window_fit``.
             attention_backend: Which SDPA kernel the listwise forward runs
-                on -- "default" (no ``sdpa_kernel`` context, torch's own
-                dispatch; the only value bit-identical with the published
-                canons), "cudnn", "efficient" or "math" (see
-                ``SDPA_BACKENDS``; MATH stays in every list as the
-                fallback). See ``RerankerConfig.listwise_attention_backend``.
+                on -- "cudnn" (the default since 2026-10-19, ADR-0088; the
+                value bit-identical with the published canon), "default"
+                (no ``sdpa_kernel`` context, torch's own dispatch, which is
+                the math kernel every pre-10-19 canon ran on), "efficient"
+                or "math" (see ``SDPA_BACKENDS``; MATH stays in every list
+                as the fallback). See
+                ``RerankerConfig.listwise_attention_backend``.
         """
         if dtype not in self.DTYPE_MAP:
             raise ValueError(

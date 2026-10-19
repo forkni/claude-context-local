@@ -997,20 +997,22 @@ class RerankerConfig:
     )
 
     listwise_attention_backend: str = field(
-        default="default",  # Which SDPA kernel JinaRerankerV3 lets torch pick
-        # for the listwise forward pass. "default" (bit-identical with every
-        # canon so far): no sdpa_kernel context, torch's own dispatch -- on
+        default="cudnn",  # Which SDPA kernel JinaRerankerV3 lets torch pick
+        # for the listwise forward pass. "cudnn" (default since 2026-10-19,
+        # ADR-0088): [CUDNN_ATTENTION, MATH] -- cuDNN fused attention (sm80+,
+        # cuDNN 9.x) tried first (sdpa_kernel set_priority=True; plain
+        # filtering leaves MATH ahead of cuDNN in torch's fixed order and the
+        # knob is inert), MATH kept in the list so an ineligible shape or a
+        # machine without cuDNN attention falls back instead of raising.
+        # "default": no sdpa_kernel context, torch's own dispatch -- on
         # Windows + transformers 5.x GQA (16 Q / 8 KV heads) that lands on the
         # math backend, which materializes the full L^2 score matrix (the
-        # 7-11 GB peak in docs/PERF.md). "cudnn": [CUDNN_ATTENTION, MATH] --
-        # cuDNN fused attention (sm80+, cuDNN 9.x) tried first (sdpa_kernel
-        # set_priority=True; plain filtering leaves MATH ahead of cuDNN in
-        # torch's fixed order and the knob is inert), MATH kept in the list so
-        # an ineligible shape falls back instead of raising. "efficient":
-        # [EFFICIENT_ATTENTION, MATH]. "math": [MATH] (forces the canon
-        # kernel even where torch would pick another). Every non-default
-        # value changes floating-point output: pre-registered A/B before any
-        # default flip (evaluation/ATTN_BACKEND_AB_20261018.md).
+        # 7-11 GB peak in docs/PERF.md; every canon before 2026-10-19 ran on
+        # it). "efficient": [EFFICIENT_ATTENTION, MATH]. "math": [MATH]
+        # (forces the pre-10-19 canon kernel even where torch would pick
+        # another). Each value is a different floating-point substrate:
+        # pre-registered A/B before any default change
+        # (evaluation/ATTN_BACKEND_AB_20261018.md).
         # Construction-baked like listwise_dtype: _ensure_reranker() rebuilds
         # only on model_name change.
         metadata=spec(
@@ -1020,10 +1022,10 @@ class RerankerConfig:
             reader="search/neural_reranker.py",
             construction_baked=True,
             benchmark_locked=(
-                "[pending] SDPA backend changes floating-point reranker output; "
-                'only "default" is bit-identical with the 2026-10-01 canon. '
-                "Flip only via the pre-registered A/B in "
-                "evaluation/ATTN_BACKEND_AB_20261018.md"
+                "ADR-0088: SDPA backend changes floating-point reranker output; "
+                'only "cudnn" is bit-identical with the 2026-10-19 canon '
+                "(evaluation/CANON_20261019_CUDNN_ATTN.md). Change only via a "
+                "pre-registered A/B like evaluation/ATTN_BACKEND_AB_20261018.md"
             ),
         ),
     )

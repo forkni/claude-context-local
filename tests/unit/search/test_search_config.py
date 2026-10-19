@@ -571,15 +571,16 @@ def test_reranker_listwise_dtype_choices_validation():
 
 
 def test_reranker_listwise_attention_backend_default_and_flat_alias():
-    """Defaults to "default" (torch's own SDPA dispatch -- bit-identical with
-    the canon); flat key round-trips. Non-default values are opt-in A/B arms."""
-    assert RerankerConfig().listwise_attention_backend == "default"
+    """Defaults to "cudnn" (ADR-0088, the kernel the 2026-10-19 canon was
+    measured on); flat key round-trips. "default" (torch's own dispatch) is
+    the pre-10-19 canon kernel, kept selectable."""
+    assert RerankerConfig().listwise_attention_backend == "cudnn"
 
-    config = SearchConfig.from_dict({"reranker_listwise_attention_backend": "cudnn"})
-    assert config.reranker.listwise_attention_backend == "cudnn"
+    config = SearchConfig.from_dict({"reranker_listwise_attention_backend": "default"})
+    assert config.reranker.listwise_attention_backend == "default"
 
     restored = SearchConfig.from_dict(config.to_dict())
-    assert restored.reranker.listwise_attention_backend == "cudnn"
+    assert restored.reranker.listwise_attention_backend == "default"
 
 
 def test_reranker_listwise_attention_backend_choices_validation():

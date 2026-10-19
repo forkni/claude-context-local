@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Jina reranker runs on cuDNN fused attention by default**
+  (`RerankerConfig.listwise_attention_backend` `"default"` -> `"cudnn"`,
+  [ADR-0088](docs/adr/0088-cudnn-attention-for-listwise-reranker.md)) — the pre-registered A/B
+  (`evaluation/ATTN_BACKEND_AB_20261018.md`) passed every gate once two mislabeled 133q golds
+  were corrected: no paired CI negative on MRR / recall@10 / recall@20 on any view (133q MRR
+  +0.0105, CI excludes 0), `pool_hit_rate` 127 -> 128 of 133 and 1.0 on 63q / F-via-similar,
+  63q r1 == r2 bit-identical, no non-finite score, 8 GB cap clean. Rerank call 1.3 s -> 0.13 s
+  and peak VRAM 8.2 -> 2.8 GB on this repo. Canon re-pinned on the treatment legs
+  (`evaluation/CANON_20261019_CUDNN_ATTN.md`); `"default"` reproduces the pre-10-19 kernel.
+- **Golden labels H012 and H004 corrected** (`evaluation/golden_dataset_expanded.json`) — the
+  A/B's label audit found H012's grade-3 target (`_configure_logging`) untouched by its source
+  commit and the real answer (`_drop_benign_uvicorn_errors`) unlabeled; H004 lacked
+  `ParallelChunker._is_empty_file`. 133q numbers from this date on use the corrected set.
+
 ### Fixed
 
 - **Jina reranker revision pinned** (`search/neural_reranker.py`) — `JinaRerankerV3` passes
@@ -22,14 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Opt-in SDPA backend for the Jina reranker** (`RerankerConfig.listwise_attention_backend`,
-  env `CLAUDE_RERANKER_LISTWISE_ATTENTION_BACKEND`, default `"default"`) — `"cudnn"`,
+  env `CLAUDE_RERANKER_LISTWISE_ATTENTION_BACKEND`, landed opt-in with default `"default"`;
+  flipped to `"cudnn"` the next day, see Changed) — `"cudnn"`,
   `"efficient"` or `"math"` wrap the listwise forward in `torch.nn.attention.sdpa_kernel`
   (`set_priority=True`, so the requested kernel is tried first) with MATH kept as the
   in-list fallback; the loader logs the
   `can_use_cudnn_attention` verdict for the Jina shape, warns when torch deterministic mode
   would refuse the cuDNN kernel, and retries one attempt on MATH if a non-default kernel
   returns a non-finite score. `"default"` is a `nullcontext` (bit-identical with every
-  published canon); the field is benchmark-locked pending the pre-registered A/B
+  canon before 2026-10-19); the field is benchmark-locked
   (`evaluation/ATTN_BACKEND_AB_20261018.md`).
 
 - **F2LLM-v2-330M in the launcher's Quick Model Switch** (`start_mcp_server.cmd`) — option 2 in the 8GB

@@ -490,7 +490,21 @@ Relevance grades: 3 = primary target, 2 = expected, 1 = acceptable/hard-negative
 
 **Runner**: `scripts/benchmark/run_sscg_benchmark.py` (shell wrapper: `scripts/benchmark/run_benchmark.sh`)
 
-### Results (2026-10-01, hybrid-only, k=10, deterministic, `gar_interleave` window membership adoption — current canon-of-record)
+### Results (2026-10-19, hybrid-only, k=10, deterministic, cuDNN attention for the Jina listwise reranker — current canon-of-record)
+
+Provenance: `evaluation/CANON_20261019_CUDNN_ATTN.md` (protocol, gates, label audit and movers in `evaluation/ATTN_BACKEND_AB_20261018.md`, decision in ADR-0088), `scripts/benchmark/run_sscg_benchmark.py --project-path .`, `PYTHONHASHSEED=0`, `CLAUDE_AUTO_REINDEX=0`, HEAD `3bb9d7bad25d82233befb9f5143c4ff10d497e52` index of 3,283 chunks, Jina reranker pinned at `d7d7e73b`. Torch's SDPA dispatch ran the Jina listwise forward on the math kernel (flash absent on Windows, memory-efficient rejects the GQA call), which materialised the full L x L score matrix per layer: 95-99% of search time and a 7-11 GB peak. `reranker.listwise_attention_backend` now defaults to `"cudnn"` (`sdpa_kernel([CUDNN_ATTENTION, MATH], set_priority=True)`): rerank call 1.3 s -> 0.13 s, peak allocation 8.2 -> 2.8 GB. Pre-registered A/B against the math control on one index: adoption CIs **PASS** (no negative-excluding CI on MRR / recall@10 / recall@20 on any view; 133q MRR +0.0105 [+0.0006, +0.0231] excludes 0), `pool_hit_rate` non-decreasing after the H012/H004 label fix (133q 127 -> 128 of 133; 63q and F 1.0 both kernels), 63q r1/r2 bit-identical, no non-finite score, 8 GB cap clean.
+
+**Honest reading**: gate 3 first failed by one 133q query, H012, whose gold set turned out to omit its real answer (`_drop_benign_uvicorn_errors`, rank 1 under both kernels); the labels were corrected and the legs re-run. The control here is not the 10-18 control: the call graph was rebuilt between sessions (resolver edges moved, 59/133 result sets differ), so all seven legs were re-run in one session. 63q, the curated view, moves by sibling swaps only (3 MRR movers (1 up, 2 down): Q95 0.333 -> 0.250; Q70 0.125 -> 0.100; Q90 0.500 -> 1.000). The 10-01 -> 10-18 control drop (63q 0.8415 -> 0.8173) is substrate drift from 169 new chunks and ~30 un-pinned commits, not the kernel.
+
+| Dataset | Queries | MRR | Recall@5 | Recall@10 | Recall@20 | NDCG@5 | pool_hit_rate |
+|---|---|---|---|---|---|---|---|
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8235** | 0.6321 | 0.7662 | 0.8566 | — | 1.0000 |
+| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries, H012/H004 labels corrected) | 133 | **0.6750** | 0.6483 | 0.7727 | 0.8569 | — | 0.9624 |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.8735** | 0.6292 | 0.7755 | 0.8308 | — | 1.0000 |
+
+The two caveats from the 2026-09-20 section below still apply; a like-for-like replay against pre-10-19 pins needs `--set reranker.listwise_attention_backend=default`.
+
+### Results (2026-10-01, hybrid-only, k=10, deterministic, `gar_interleave` window membership adoption — superseded by the 10-19 pin above)
 
 Provenance: `evaluation/CANON_20261001_GAR_WINDOW.md` (protocol and movers in `evaluation/GAR_WINDOW_AB_20261001.md`, decision in ADR-0079), `scripts/benchmark/run_sscg_benchmark.py --project-path .`, `PYTHONHASHSEED=0`, `CLAUDE_AUTO_REINDEX=0`, HEAD index of 3,114 chunks. A 09-23 -> HEAD drop (63q MRR 0.8177 -> 0.7980 on the first run) traced to a latent defect in `_order_merged_pool("score")` + `_apply_hop1_reserve`: hop-1 jina scores, FAISS cosines and a literal 0.0 for graph expansions were sorted together, so hop-1 survivors (rank 1 included) fell to the window tail and the reserve then evicted them from the pool. Content drift changed how often it fires; the ranking code did not change. Replaced by `merged_pool_policy="gar_interleave"`: window membership by 1:1 alternation of hop-1 survivors and the anchor-ordered frontier, with backfill instead of dropping. Pre-registered A/B vs `"score"` on one index: all four gates **PASSED** (no negative-excluding CI; 133q recall@5/10/20 +0.061/+0.094/+0.091 with CIs excluding 0; graph_hop window occupancy median 10; 63q r1/r2 bit-identical).
 
