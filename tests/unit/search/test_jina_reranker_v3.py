@@ -1,5 +1,8 @@
 """Unit tests for JinaRerankerV3 and factory integration."""
 
+import contextlib
+import logging
+import math
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1247,3 +1250,126 @@ class TestCreateRerankerFactoryJina:
     def test_listwise_window_fit_defaults_to_truncate(self):
         reranker = create_reranker(_cfg("jinaai/jina-reranker-v3"))
         assert reranker.listwise_window_fit == "truncate"
+
+
+class TestAttentionBackend:
+    """``listwise_attention_backend`` -> ``sdpa_kernel`` plumbing (opt-in, default inert)."""
+
+    @staticmethod
+    def _candidates(n: int) -> list[SearchResult]:
+        return [
+            SearchResult(
+                chunk_id=f"c{i}", score=1.0, metadata={"content_preview": f"code {i}"}
+            )
+            for i in range(n)
+        ]
+
+    def test_default_is_inert(self):
+        reranker = JinaRerankerV3()
+        assert reranker.attention_backend == "default"
+        assert reranker._sdpa_backends() is None
+        assert isinstance(reranker._sdpa_context(), contextlib.nullcontext)
+
+    @pytest.mark.parametrize(
+        "backend, expected",
+        [
+            ("cudnn", ["CUDNN_ATTENTION", "MATH"]),
+            ("efficient", ["EFFICIENT_ATTENTION", "MATH"]),
+            ("math", ["MATH"]),
+        ],
+    )
+    def test_backend_mapping_keeps_math_fallback(self, backend, expected):
+        reranker = JinaRerankerV3(attention_backend=backend)
+        assert [b.name for b in reranker._sdpa_backends()] == expected
+
+    def test_unknown_backend_rejected(self):
+        with pytest.raises(ValueError, match="attention_backend"):
+            JinaRerankerV3(attention_backend="flash")
+
+    def test_non_default_backend_wraps_rerank_in_sdpa_kernel(self, monkeypatch):
+        import torch.nn.attention as tna
+
+        seen = []
+
+        @contextlib.contextmanager
+        def fake_sdpa_kernel(backends, set_priority=False):
+            seen.append([b.name for b in backends])
+            yield
+
+        monkeypatch.setattr(tna, "sdpa_kernel", fake_sdpa_kernel)
+        reranker = JinaRerankerV3(device="cpu", attention_backend="cudnn")
+        reranker._model = _FakeV3Model()
+        reranker.rerank("q", self._candidates(3), top_k=3)
+        assert seen == [["CUDNN_ATTENTION", "MATH"]]
+
+    def test_non_finite_scores_retry_once_on_math(self, monkeypatch, caplog):
+        import torch.nn.attention as tna
+
+        seen = []
+
+        @contextlib.contextmanager
+        def fake_sdpa_kernel(backends, set_priority=False):
+            seen.append([b.name for b in backends])
+            yield
+
+        monkeypatch.setattr(tna, "sdpa_kernel", fake_sdpa_kernel)
+        reranker = JinaRerankerV3(device="cpu", attention_backend="cudnn")
+        model = _FakeV3Model()
+        calls = {"n": 0}
+        real = model.rerank
+
+        def flaky(*a, **kw):
+            calls["n"] += 1
+            out = real(*a, **kw)
+            if calls["n"] == 1:
+                out[0]["relevance_score"] = float("nan")
+            return out
+
+        model.rerank = flaky
+        reranker._model = model
+        with caplog.at_level(logging.WARNING, logger="search.neural_reranker"):
+            results = reranker.rerank("q", self._candidates(3), top_k=3)
+        assert calls["n"] == 2
+        assert seen == [["CUDNN_ATTENTION", "MATH"], ["MATH"]]
+        assert all(math.isfinite(r.score) for r in results)
+        assert "Non-finite reranker scores" in caplog.text
+
+    def test_default_backend_never_retries_on_non_finite(self):
+        reranker = JinaRerankerV3(device="cpu")
+        model = _FakeV3Model()
+        calls = {"n": 0}
+        real = model.rerank
+
+        def nan_once(*a, **kw):
+            calls["n"] += 1
+            out = real(*a, **kw)
+            out[0]["relevance_score"] = float("nan")
+            return out
+
+        model.rerank = nan_once
+        reranker._model = model
+        reranker.rerank("q", self._candidates(3), top_k=3)
+        assert calls["n"] == 1
+
+    def test_deterministic_mode_warns_for_cudnn(self, monkeypatch, caplog):
+        monkeypatch.setattr(torch, "are_deterministic_algorithms_enabled", lambda: True)
+        reranker = JinaRerankerV3(device="cpu", attention_backend="cudnn")
+        with caplog.at_level(logging.WARNING, logger="search.neural_reranker"):
+            reranker._log_attention_backend_verdict()
+        assert "deterministic" in caplog.text
+
+    def test_verdict_is_silent_for_default(self, caplog):
+        reranker = JinaRerankerV3(device="cpu")
+        with caplog.at_level(logging.DEBUG, logger="search.neural_reranker"):
+            reranker._log_attention_backend_verdict()
+        assert caplog.text == ""
+
+    def test_attention_backend_passed_to_jina_reranker(self):
+        reranker = create_reranker(
+            _cfg("jinaai/jina-reranker-v3", listwise_attention_backend="cudnn")
+        )
+        assert reranker.attention_backend == "cudnn"
+
+    def test_attention_backend_defaults_to_default(self):
+        reranker = create_reranker(_cfg("jinaai/jina-reranker-v3"))
+        assert reranker.attention_backend == "default"

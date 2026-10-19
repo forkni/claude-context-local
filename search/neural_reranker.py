@@ -4,6 +4,7 @@ import abc
 import contextlib
 import inspect
 import logging
+import math
 import os
 import threading
 from typing import TYPE_CHECKING
@@ -305,6 +306,17 @@ def _resolve_single_token_id(tokenizer: "AutoModel", text: str) -> int:
 # a long module docstring from consuming the whole body budget.
 _SIGNATURE_HEAD_LINES = 12
 _SIGNATURE_HEAD_DOCSTRING_CAP = 300
+
+
+def _scores_finite(jina_results: list) -> bool:
+    """True when every ``relevance_score`` in a vendor result list is finite."""
+    for item in jina_results:
+        try:
+            if not math.isfinite(float(item["relevance_score"])):
+                return False
+        except (KeyError, TypeError, ValueError):
+            continue
+    return True
 
 
 def _build_rerank_document(candidate, max_chars: int, mode: str = "full") -> str:
@@ -1041,6 +1053,14 @@ class JinaRerankerV3(BaseReranker):
     #: hook (see ``_tokenizer_snapshot_revision``).
     REVISION = "d7d7e73b6ea138ced340b83865931b5dfb6c97aa"
 
+    #: attention_backend -> SDPBackend names handed to torch.nn.attention.sdpa_kernel.
+    #: "default" is absent on purpose: it means "no context manager at all".
+    SDPA_BACKENDS: dict[str, tuple[str, ...]] = {
+        "cudnn": ("CUDNN_ATTENTION", "MATH"),
+        "efficient": ("EFFICIENT_ATTENTION", "MATH"),
+        "math": ("MATH",),
+    }
+
     def __init__(
         self,
         model_name: str = "jinaai/jina-reranker-v3",
@@ -1050,6 +1070,7 @@ class JinaRerankerV3(BaseReranker):
         doc_representation_mode: str = "full",
         listwise_packed_token_budget: int = 8192,
         listwise_window_fit: str = "truncate",
+        attention_backend: str = "default",
     ):
         """Initialize JinaRerankerV3 with lazy loading.
 
@@ -1110,6 +1131,12 @@ class JinaRerankerV3(BaseReranker):
                 original mechanism, kept as an escape hatch): let v3's own
                 multi-block flush loop sub-divide the window instead. See
                 ``RerankerConfig.listwise_window_fit``.
+            attention_backend: Which SDPA kernel the listwise forward runs
+                on -- "default" (no ``sdpa_kernel`` context, torch's own
+                dispatch; the only value bit-identical with the published
+                canons), "cudnn", "efficient" or "math" (see
+                ``SDPA_BACKENDS``; MATH stays in every list as the
+                fallback). See ``RerankerConfig.listwise_attention_backend``.
         """
         if dtype not in self.DTYPE_MAP:
             raise ValueError(
@@ -1122,6 +1149,15 @@ class JinaRerankerV3(BaseReranker):
         self.doc_representation_mode = doc_representation_mode
         self.listwise_packed_token_budget = listwise_packed_token_budget
         self.listwise_window_fit = listwise_window_fit
+        if (
+            attention_backend != "default"
+            and attention_backend not in self.SDPA_BACKENDS
+        ):
+            raise ValueError(
+                f"Unsupported attention_backend {attention_backend!r}; "
+                f"expected 'default' or one of {sorted(self.SDPA_BACKENDS)}"
+            )
+        self.attention_backend = attention_backend
         self._model = None
         # Memoizes _resolve_length_kwargs(); reset by _cleanup_extra() so a
         # cleanup() -> reload cycle re-introspects (e.g. after a model_name swap).
@@ -1330,6 +1366,7 @@ class JinaRerankerV3(BaseReranker):
                     )
 
         self._logger.info(f"Jina reranker loaded on {self.device}")
+        self._log_attention_backend_verdict()
         # Clean up offline env vars after load to avoid side effects on other code
         os.environ.pop("HF_HUB_OFFLINE", None)
         os.environ.pop("TRANSFORMERS_OFFLINE", None)
@@ -1665,6 +1702,77 @@ class JinaRerankerV3(BaseReranker):
         )
         return truncated_documents, model_max_length, block_count
 
+    def _sdpa_backends(self) -> list | None:
+        """SDPBackend list for ``sdpa_kernel``, or None for ``"default"``."""
+        names = self.SDPA_BACKENDS.get(self.attention_backend)
+        if names is None:
+            return None
+        from torch.nn.attention import SDPBackend
+
+        return [getattr(SDPBackend, name) for name in names]
+
+    def _sdpa_context(self, backends: list | None = None):
+        """Context manager that pins the SDPA kernel for one ``model.rerank``.
+
+        ``nullcontext()`` for ``"default"`` so the canon path stays byte-for-
+        byte the same code torch ran before the knob existed.
+        """
+        if backends is None:
+            backends = self._sdpa_backends()
+        if backends is None:
+            return contextlib.nullcontext()
+        from torch.nn.attention import sdpa_kernel
+
+        return sdpa_kernel(backends)
+
+    def _log_attention_backend_verdict(self) -> None:
+        """Once per load: say whether the requested kernel is actually usable.
+
+        Probes ``torch.backends.cuda.can_use_cudnn_attention`` with a
+        Jina-shaped (16 Q / 8 KV heads, head_dim 128, bf16, causal) batch so
+        a silent MATH fallback is visible in the log, and warns when
+        ``torch.use_deterministic_algorithms(True)`` is on -- cuDNN SDPA is
+        refused under it ("No available kernel"), so with MATH in the list
+        the treatment would quietly become the control.
+        """
+        if self.attention_backend == "default":
+            return
+        if (
+            self.attention_backend == "cudnn"
+            and torch.are_deterministic_algorithms_enabled()
+        ):
+            self._logger.warning(
+                "listwise_attention_backend='cudnn' but torch deterministic "
+                "algorithms are enabled; the cuDNN SDPA kernel is refused in "
+                "that mode and MATH will run instead."
+            )
+        if self.attention_backend != "cudnn" or self.device != "cuda":
+            self._logger.info(
+                f"Jina listwise_attention_backend={self.attention_backend!r}"
+            )
+            return
+        try:
+            from torch.backends.cuda import SDPAParams, can_use_cudnn_attention
+
+            dtype = torch.bfloat16
+            q = torch.empty(1, 16, 64, 128, dtype=dtype, device="cuda")
+            kv = torch.empty(1, 8, 64, 128, dtype=dtype, device="cuda")
+            usable = can_use_cudnn_attention(
+                SDPAParams(q, kv, kv, None, 0.0, True, True), False
+            )
+        except (RuntimeError, ImportError, AttributeError, TypeError) as e:
+            # Diagnostic only, never load-bearing: an older torch without
+            # SDPAParams, or a CUDA context that is not up yet, just skips it.
+            self._logger.info(f"cuDNN attention probe skipped: {e}")
+            return
+        level = logging.INFO if usable else logging.WARNING
+        self._logger.log(
+            level,
+            f"cuDNN SDPA usable for the Jina shape: {usable} "
+            f"(cudnn={torch.backends.cudnn.version()}); "
+            + ("cudnn kernel active" if usable else "MATH fallback will run"),
+        )
+
     def _attempt_rerank(
         self,
         model: "AutoModel",
@@ -1749,13 +1857,35 @@ class JinaRerankerV3(BaseReranker):
                     )
                 tokenizer.model_max_length = model_max_length
 
-            with self._infer_lock, torch.no_grad():
+            with self._infer_lock, torch.no_grad(), self._sdpa_context():
                 jina_results = model.rerank(
                     query,
                     documents,
                     top_n=None,
                     **length_kwargs,
                 )
+            if self.attention_backend != "default" and not _scores_finite(jina_results):
+                # cuDNN 9.15-9.19 known issue: decode-shaped causal GQA can
+                # emit NaN. Never our shape (no decode), but guard anyway: one
+                # retry on the canon kernel, then let the result through.
+                self._logger.warning(
+                    f"Non-finite reranker scores under "
+                    f"listwise_attention_backend={self.attention_backend!r}; "
+                    "re-running this attempt on the MATH kernel."
+                )
+                from torch.nn.attention import SDPBackend
+
+                with (
+                    self._infer_lock,
+                    torch.no_grad(),
+                    self._sdpa_context([SDPBackend.MATH]),
+                ):
+                    jina_results = model.rerank(
+                        query,
+                        documents,
+                        top_n=None,
+                        **length_kwargs,
+                    )
             return jina_results, block_count
         finally:
             if original_model_max_length is not None:
@@ -1814,7 +1944,8 @@ def create_reranker(
       ``doc_max_chars`` on purpose; the listwise cost model is O(n^2) in the
       packed sequence, see docs/adr/0011-listwise-reranker-doc-cap.md),
       ``listwise_dtype``, ``doc_representation_mode``,
-      ``listwise_packed_token_budget``, ``listwise_window_fit``.
+      ``listwise_packed_token_budget``, ``listwise_window_fit``,
+      ``listwise_attention_backend``.
     - NeuralReranker: ``batch_size`` only; it builds pairs from
       ``content_preview`` and never calls the document builder.
 
@@ -1850,6 +1981,7 @@ def create_reranker(
             doc_representation_mode=config.doc_representation_mode,
             listwise_packed_token_budget=config.listwise_packed_token_budget,
             listwise_window_fit=config.listwise_window_fit,
+            attention_backend=config.listwise_attention_backend,
         )  # Listwise reranker
     if model_name.startswith("jinaai/"):
         # RerankerConfig.model_name has no `choices` constraint, and

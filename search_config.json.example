@@ -82,7 +82,8 @@
     "listwise_dtype": "auto",
     "doc_representation_mode": "full",
     "listwise_packed_token_budget": 8192,
-    "listwise_window_fit": "truncate"
+    "listwise_window_fit": "truncate",
+    "listwise_attention_backend": "default"
   },
   "query_expansion": {
     "enabled": false,

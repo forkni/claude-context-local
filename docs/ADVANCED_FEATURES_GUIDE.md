@@ -993,7 +993,8 @@ For Jina v3, the packed-window controls are construction-time settings in `searc
 {
   "reranker": {
     "listwise_packed_token_budget": 8192,
-    "listwise_window_fit": "truncate"
+    "listwise_window_fit": "truncate",
+    "listwise_attention_backend": "default"
   }
 }
 ```
@@ -1005,6 +1006,12 @@ For Jina v3, the packed-window controls are construction-time settings in `searc
   candidate count is preserved in one block. `"split"` is the escape hatch that allows Jina's
   multi-block path when needed; it is not the default because cross-block scoring can change the
   global ranking.
+- `listwise_attention_backend` defaults to `"default"` (torch's own SDPA dispatch, the only
+  value bit-identical with the published canons). `"cudnn"` pins the forward to cuDNN fused
+  attention with MATH as the in-list fallback (sm80+, cuDNN 9.x; refused under
+  `torch.use_deterministic_algorithms(True)`); `"efficient"` and `"math"` are the other
+  opt-in arms. Any non-default value changes floating-point scores, so it is benchmark-locked
+  pending the pre-registered A/B.
 
 **VRAM Usage**: ~1.2GB
 

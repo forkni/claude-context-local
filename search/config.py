@@ -778,7 +778,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (14 fields)."""
+    """Neural reranker settings (15 fields)."""
 
     enabled: bool = field(
         default=True,  # Enabled by default (Quality First)
@@ -992,6 +992,36 @@ class RerankerConfig:
                 "stale 09-08 canon; isolated via split-vs-truncate at budget=8192 on "
                 "identical substrate -- bit-identical (0 movers), proving the "
                 "regression is substrate drift, not this field"
+            ),
+        ),
+    )
+
+    listwise_attention_backend: str = field(
+        default="default",  # Which SDPA kernel JinaRerankerV3 lets torch pick
+        # for the listwise forward pass. "default" (bit-identical with every
+        # canon so far): no sdpa_kernel context, torch's own dispatch -- on
+        # Windows + transformers 5.x GQA (16 Q / 8 KV heads) that lands on the
+        # math backend, which materializes the full L^2 score matrix (the
+        # 7-11 GB peak in docs/PERF.md). "cudnn": [CUDNN_ATTENTION, MATH] --
+        # cuDNN fused attention (sm80+, cuDNN 9.x), MATH kept in the list so
+        # an ineligible shape falls back instead of raising. "efficient":
+        # [EFFICIENT_ATTENTION, MATH]. "math": [MATH] (forces the canon
+        # kernel even where torch would pick another). Every non-default
+        # value changes floating-point output: pre-registered A/B before any
+        # default flip (evaluation/ATTN_BACKEND_AB_20261018.md).
+        # Construction-baked like listwise_dtype: _ensure_reranker() rebuilds
+        # only on model_name change.
+        metadata=spec(
+            choices=("default", "cudnn", "efficient", "math"),
+            flat_alias="reranker_listwise_attention_backend",
+            env="CLAUDE_RERANKER_LISTWISE_ATTENTION_BACKEND",
+            reader="search/neural_reranker.py",
+            construction_baked=True,
+            benchmark_locked=(
+                "[pending] SDPA backend changes floating-point reranker output; "
+                'only "default" is bit-identical with the 2026-10-01 canon. '
+                "Flip only via the pre-registered A/B in "
+                "evaluation/ATTN_BACKEND_AB_20261018.md"
             ),
         ),
     )

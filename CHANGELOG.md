@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Opt-in SDPA backend for the Jina reranker** (`RerankerConfig.listwise_attention_backend`,
+  env `CLAUDE_RERANKER_LISTWISE_ATTENTION_BACKEND`, default `"default"`) — `"cudnn"`,
+  `"efficient"` or `"math"` wrap the listwise forward in `torch.nn.attention.sdpa_kernel`
+  with MATH kept as the in-list fallback; the loader logs the
+  `can_use_cudnn_attention` verdict for the Jina shape, warns when torch deterministic mode
+  would refuse the cuDNN kernel, and retries one attempt on MATH if a non-default kernel
+  returns a non-finite score. `"default"` is a `nullcontext` (bit-identical with every
+  published canon); the field is benchmark-locked pending the pre-registered A/B
+  (`evaluation/ATTN_BACKEND_AB_20261018.md`).
+
 - **F2LLM-v2-330M in the launcher's Quick Model Switch** (`start_mcp_server.cmd`) — option 2 in the 8GB
   block, marked recommended per [ADR-0084](docs/adr/0084-f2llm-330m-for-laptop-and-minimal-tiers.md);
   the other options shift to 3-5. `scripts/get_system_status_fast.py` now mirrors the 330M and 160M so the

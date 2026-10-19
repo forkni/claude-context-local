@@ -570,6 +570,31 @@ def test_reranker_listwise_dtype_choices_validation():
     assert error is not None and "listwise_dtype" in error
 
 
+def test_reranker_listwise_attention_backend_default_and_flat_alias():
+    """Defaults to "default" (torch's own SDPA dispatch -- bit-identical with
+    the canon); flat key round-trips. Non-default values are opt-in A/B arms."""
+    assert RerankerConfig().listwise_attention_backend == "default"
+
+    config = SearchConfig.from_dict({"reranker_listwise_attention_backend": "cudnn"})
+    assert config.reranker.listwise_attention_backend == "cudnn"
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.listwise_attention_backend == "cudnn"
+
+
+def test_reranker_listwise_attention_backend_choices_validation():
+    """Only the four SDPA arms are accepted; "flash" is not offered (absent on
+    Windows builds, and never part of the A/B)."""
+    from search.config import validate_field_value
+
+    assert (
+        validate_field_value(RerankerConfig, "listwise_attention_backend", "math")
+        is None
+    )
+    error = validate_field_value(RerankerConfig, "listwise_attention_backend", "flash")
+    assert error is not None and "listwise_attention_backend" in error
+
+
 def test_query_expansion_defaults():
     """QueryExpansionConfig defaults: opt-in, BM25-only, 2 concepts, 0.5 discount."""
     from search.config import QueryExpansionConfig

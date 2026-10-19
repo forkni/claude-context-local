@@ -99,6 +99,7 @@ class TestGuardrails:
             "reranker.single_pass",
             "reranker.doc_representation_mode",
             "reranker.listwise_window_fit",
+            "reranker.listwise_attention_backend",
             "query_expansion.enabled",
             "multi_hop.expansion",
             "multi_hop.multi_hop_mode",

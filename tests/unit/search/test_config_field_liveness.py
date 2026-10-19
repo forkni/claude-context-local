@@ -162,6 +162,10 @@ def test_construction_baked_fields_are_pinned():
             # JinaRerankerV3.__init__ call as listwise_packed_token_budget
             # above - an arm override needs a rebuild to take effect.
             ("reranker", "listwise_window_fit"),
+            # SDPA backend knob (2026-10-18): stored on JinaRerankerV3 at
+            # construction and read by _sdpa_context() on every attempt -
+            # an arm override needs a rebuild to take effect.
+            ("reranker", "listwise_attention_backend"),
         }
     )
     assert expected == SearchConfig._CONSTRUCTION_BAKED_FIELDS
