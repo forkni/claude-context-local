@@ -1135,7 +1135,7 @@ class TestF2LLM1p7BRegistryEntry:
             "proj", "deadbeef", get_model_slug("codefuse-ai/F2LLM-v2-0.6B"), 1024
         )
 
-    def test_vram_estimate_parses_to_a_positive_number(self):
+    def test_vram_estimate_parses_to_the_declared_3p5_gb(self):
         from embeddings.embedder import parse_vram_gb_from_registry
 
         assert parse_vram_gb_from_registry(self.NAME) == 3.5
