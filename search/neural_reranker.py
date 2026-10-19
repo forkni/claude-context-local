@@ -1381,19 +1381,17 @@ class JinaRerankerV3(BaseReranker):
                 # files have been byte-identical across every published
                 # snapshot so far, but a future republish could change them.
                 # An unpinned model has nothing to diverge from.
-                tok_rev = (
-                    self._tokenizer_snapshot_revision()
-                    if revision is not None
-                    else None
-                )
-                if tok_rev is not None and tok_rev != revision:
-                    self._logger.warning(
-                        "Jina tokenizer resolved snapshot %s but the model is "
-                        "pinned to %s (vendor tokenizer load is unpinnable); "
-                        "verify tokenizer files match before trusting scores.",
-                        tok_rev[:8],
-                        revision[:8],
-                    )
+                if revision is not None:
+                    tok_rev = self._tokenizer_snapshot_revision()
+                    if tok_rev is not None and tok_rev != revision:
+                        self._logger.warning(
+                            "Jina tokenizer resolved snapshot %s but the model "
+                            "is pinned to %s (vendor tokenizer load is "
+                            "unpinnable); verify tokenizer files match before "
+                            "trusting scores.",
+                            tok_rev[:8],
+                            revision[:8],
+                        )
 
         self._logger.info(f"Jina reranker loaded on {self.device}")
         self._log_attention_backend_verdict()
