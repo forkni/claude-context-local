@@ -1053,6 +1053,12 @@ class JinaRerankerV3(BaseReranker):
     #: hook (see ``_tokenizer_snapshot_revision``).
     REVISION = "d7d7e73b6ea138ced340b83865931b5dfb6c97aa"
 
+    #: model_name -> pinned revision. This class also serves
+    #: ``jinaai/jina-reranker-v3.5`` (``JINA_LISTWISE_RERANKERS``), whose repo
+    #: does not contain the v3 commit, so only v3 is pinned; a model absent
+    #: here loads the Hub ``main`` ref exactly as before the pin.
+    REVISIONS: dict[str, str] = {"jinaai/jina-reranker-v3": REVISION}
+
     #: attention_backend -> SDPBackend names handed to torch.nn.attention.sdpa_kernel.
     #: "default" is absent on purpose: it means "no context manager at all".
     SDPA_BACKENDS: dict[str, tuple[str, ...]] = {
@@ -1060,6 +1066,10 @@ class JinaRerankerV3(BaseReranker):
         "efficient": ("EFFICIENT_ATTENTION", "MATH"),
         "math": ("MATH",),
     }
+    #: Arms whose first-choice kernel exists only on CUDA. Off CUDA they leave
+    #: the sdpa_kernel context out entirely (torch's own dispatch, same as
+    #: "default") instead of pinning a list that would degrade to MATH.
+    CUDA_ONLY_BACKENDS: frozenset[str] = frozenset({"cudnn", "efficient"})
 
     def __init__(
         self,
@@ -1137,7 +1147,8 @@ class JinaRerankerV3(BaseReranker):
                 (no ``sdpa_kernel`` context, torch's own dispatch, which is
                 the math kernel every pre-10-19 canon ran on), "efficient"
                 or "math" (see ``SDPA_BACKENDS``; MATH stays in every list
-                as the fallback). See
+                as the fallback). "cudnn" and "efficient" are CUDA-only:
+                on any other device they behave as "default". See
                 ``RerankerConfig.listwise_attention_backend``.
         """
         if dtype not in self.DTYPE_MAP:
@@ -1202,6 +1213,10 @@ class JinaRerankerV3(BaseReranker):
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
             self.device = device
+        # Resolved once per instance: the SDPBackend list _sdpa_context() pins
+        # on every attempt, or None when torch's own dispatch runs ("default",
+        # or a CUDA-only arm on a non-CUDA device -- see _resolve_sdpa_backends).
+        self._sdpa_backend_list = self._resolve_sdpa_backends()
 
     @property
     def model(self) -> "AutoModel":
@@ -1235,9 +1250,17 @@ class JinaRerankerV3(BaseReranker):
 
         self._logger.info(f"Loading Jina reranker: {self.model_name}")
 
+        # Pinned for v3 (REVISIONS), None (Hub "main") for any other model
+        # this class serves. The same value goes to the cache probe and every
+        # from_pretrained call so the probe looks at the snapshot that is
+        # actually loaded, not at refs/main.
+        revision = self._revision()
+
         # Use local_files_only when model is cached to skip HuggingFace HEAD
         # requests (eliminates ~3-4s of network latency per from_pretrained call)
-        cached = try_to_load_from_cache(self.model_name, "config.json")
+        cached = try_to_load_from_cache(
+            self.model_name, "config.json", revision=revision
+        )
         local_only = isinstance(cached, str) and os.path.exists(cached)
 
         # Enable offline mode when cache is validated — prevents transformers from
@@ -1262,7 +1285,7 @@ class JinaRerankerV3(BaseReranker):
             # _load_model()'s redirect_stdout below regardless of tying.
             return AutoConfig.from_pretrained(
                 self.model_name,
-                revision=self.REVISION,
+                revision=revision,
                 trust_remote_code=True,
                 local_files_only=local_files_only,
             )
@@ -1287,7 +1310,7 @@ class JinaRerankerV3(BaseReranker):
                     return AutoModel.from_pretrained(
                         self.model_name,
                         config=cfg,
-                        revision=self.REVISION,
+                        revision=revision,
                         dtype=self.DTYPE_MAP[self.dtype],  # Jina's custom parameter
                         trust_remote_code=True,
                         local_files_only=local_files_only,
@@ -1303,7 +1326,7 @@ class JinaRerankerV3(BaseReranker):
                     return AutoModel.from_pretrained(
                         self.model_name,
                         config=cfg,
-                        revision=self.REVISION,
+                        revision=revision,
                         trust_remote_code=True,
                         local_files_only=local_files_only,
                     )
@@ -1354,17 +1377,22 @@ class JinaRerankerV3(BaseReranker):
             else:
                 # The vendor _ensure_tokenizer loads from name_or_path with no
                 # revision argument, so it resolves the Hub's "main" ref, not
-                # REVISION. Warn (do not fail) when the two diverge: tokenizer
+                # the pin. Warn (do not fail) when the two diverge: tokenizer
                 # files have been byte-identical across every published
                 # snapshot so far, but a future republish could change them.
-                tok_rev = self._tokenizer_snapshot_revision()
-                if tok_rev is not None and tok_rev != self.REVISION:
+                # An unpinned model has nothing to diverge from.
+                tok_rev = (
+                    self._tokenizer_snapshot_revision()
+                    if revision is not None
+                    else None
+                )
+                if tok_rev is not None and tok_rev != revision:
                     self._logger.warning(
                         "Jina tokenizer resolved snapshot %s but the model is "
                         "pinned to %s (vendor tokenizer load is unpinnable); "
                         "verify tokenizer files match before trusting scores.",
                         tok_rev[:8],
-                        self.REVISION[:8],
+                        revision[:8],
                     )
 
         self._logger.info(f"Jina reranker loaded on {self.device}")
@@ -1372,6 +1400,10 @@ class JinaRerankerV3(BaseReranker):
         # Clean up offline env vars after load to avoid side effects on other code
         os.environ.pop("HF_HUB_OFFLINE", None)
         os.environ.pop("TRANSFORMERS_OFFLINE", None)
+
+    def _revision(self) -> str | None:
+        """Pinned Hub revision for ``model_name``, or None to load ``main``."""
+        return self.REVISIONS.get(self.model_name)
 
     def _tokenizer_snapshot_revision(self) -> str | None:
         """Return the cached snapshot hash the unpinned tokenizer load resolves to.
@@ -1704,20 +1736,37 @@ class JinaRerankerV3(BaseReranker):
         )
         return truncated_documents, model_max_length, block_count
 
-    def _sdpa_backends(self) -> list | None:
-        """SDPBackend list for ``sdpa_kernel``, or None for ``"default"``."""
+    def _on_cuda(self) -> bool:
+        """True for ``"cuda"`` and any indexed ``"cuda:N"`` device string."""
+        return str(self.device).startswith("cuda")
+
+    def _resolve_sdpa_backends(self) -> list | None:
+        """Compute the SDPBackend list once (cached by ``__init__``).
+
+        None for ``"default"``, and for a ``CUDA_ONLY_BACKENDS`` arm on a
+        non-CUDA device: torch's CPU dispatch already picks its flash kernel
+        for the Jina GQA shape, and pinning ``[CUDNN_ATTENTION, MATH]`` there
+        would force MATH instead (measured on torch 2.11, 2026-10-19).
+        """
         names = self.SDPA_BACKENDS.get(self.attention_backend)
         if names is None:
+            return None
+        if self.attention_backend in self.CUDA_ONLY_BACKENDS and not self._on_cuda():
             return None
         from torch.nn.attention import SDPBackend
 
         return [getattr(SDPBackend, name) for name in names]
 
+    def _sdpa_backends(self) -> list | None:
+        """SDPBackend list for ``sdpa_kernel``, or None when torch dispatches."""
+        return self._sdpa_backend_list
+
     def _sdpa_context(self, backends: list | None = None):
         """Context manager that pins the SDPA kernel for one ``model.rerank``.
 
-        ``nullcontext()`` for ``"default"`` so the canon path stays byte-for-
-        byte the same code torch ran before the knob existed.
+        ``nullcontext()`` for ``"default"`` (and for a CUDA-only arm off CUDA)
+        so the canon path stays byte-for-byte the same code torch ran before
+        the knob existed.
 
         ``set_priority=True`` is load-bearing: ``sdpa_kernel(backends)`` alone
         only *filters* torch's fixed priority order ``[flash, efficient, math,
@@ -1734,17 +1783,36 @@ class JinaRerankerV3(BaseReranker):
 
         return sdpa_kernel(backends, set_priority=True)
 
+    def _probe_dtype(self) -> "torch.dtype":
+        """dtype the forward actually runs in: the configured one, else the
+        loaded model's, else bf16 (what the v3 checkpoint ships). cuDNN SDPA
+        rejects fp32, so a bf16 probe under ``listwise_dtype="fp32"`` would
+        report a kernel the forward never gets."""
+        configured = self.DTYPE_MAP[self.dtype]
+        if isinstance(configured, torch.dtype):
+            return configured
+        loaded = getattr(self._model, "dtype", None)
+        return loaded if isinstance(loaded, torch.dtype) else torch.bfloat16
+
     def _log_attention_backend_verdict(self) -> None:
         """Once per load: say whether the requested kernel is actually usable.
 
         Probes ``torch.backends.cuda.can_use_cudnn_attention`` with a
-        Jina-shaped (16 Q / 8 KV heads, head_dim 128, bf16, causal) batch so
-        a silent MATH fallback is visible in the log, and warns when
-        ``torch.use_deterministic_algorithms(True)`` is on -- cuDNN SDPA is
-        refused under it ("No available kernel"), so with MATH in the list
-        the treatment would quietly become the control.
+        Jina-shaped (16 Q / 8 KV heads, head_dim 128, causal) batch in the
+        model's dtype so a silent MATH fallback is visible in the log, and
+        warns when ``torch.use_deterministic_algorithms(True)`` is on --
+        cuDNN SDPA is refused under it ("No available kernel") whatever the
+        probe says, so with MATH in the list the treatment would quietly
+        become the control; the probe is skipped in that case.
         """
         if self.attention_backend == "default":
+            return
+        if self.attention_backend in self.CUDA_ONLY_BACKENDS and not self._on_cuda():
+            self._logger.info(
+                f"Jina listwise_attention_backend={self.attention_backend!r} is "
+                f"CUDA-only; device {self.device!r} keeps torch's default SDPA "
+                "dispatch."
+            )
             return
         if (
             self.attention_backend == "cudnn"
@@ -1755,7 +1823,8 @@ class JinaRerankerV3(BaseReranker):
                 "algorithms are enabled; the cuDNN SDPA kernel is refused in "
                 "that mode and MATH will run instead."
             )
-        if self.attention_backend != "cudnn" or self.device != "cuda":
+            return
+        if self.attention_backend != "cudnn":
             self._logger.info(
                 f"Jina listwise_attention_backend={self.attention_backend!r}"
             )
@@ -1763,9 +1832,9 @@ class JinaRerankerV3(BaseReranker):
         try:
             from torch.backends.cuda import SDPAParams, can_use_cudnn_attention
 
-            dtype = torch.bfloat16
-            q = torch.empty(1, 16, 64, 128, dtype=dtype, device="cuda")
-            kv = torch.empty(1, 8, 64, 128, dtype=dtype, device="cuda")
+            dtype = self._probe_dtype()
+            q = torch.empty(1, 16, 64, 128, dtype=dtype, device=self.device)
+            kv = torch.empty(1, 8, 64, 128, dtype=dtype, device=self.device)
             usable = can_use_cudnn_attention(
                 SDPAParams(q, kv, kv, None, 0.0, True, True), False
             )
@@ -1866,17 +1935,22 @@ class JinaRerankerV3(BaseReranker):
                     )
                 tokenizer.model_max_length = model_max_length
 
-            with self._infer_lock, torch.no_grad(), self._sdpa_context():
-                jina_results = model.rerank(
-                    query,
-                    documents,
-                    top_n=None,
-                    **length_kwargs,
-                )
-            if self.attention_backend != "default" and not _scores_finite(jina_results):
+            def run_forward(backends: list | None) -> list:
+                with self._infer_lock, torch.no_grad(), self._sdpa_context(backends):
+                    return model.rerank(query, documents, top_n=None, **length_kwargs)
+
+            backends = self._sdpa_backends()
+            jina_results = run_forward(backends)
+            if (
+                backends is not None
+                and self.attention_backend != "math"
+                and not _scores_finite(jina_results)
+            ):
                 # cuDNN 9.15-9.19 known issue: decode-shaped causal GQA can
                 # emit NaN. Never our shape (no decode), but guard anyway: one
                 # retry on the canon kernel, then let the result through.
+                # Skipped when the pinned kernel already is MATH (nothing to
+                # fall back to) and when torch dispatches on its own.
                 self._logger.warning(
                     f"Non-finite reranker scores under "
                     f"listwise_attention_backend={self.attention_backend!r}; "
@@ -1884,17 +1958,7 @@ class JinaRerankerV3(BaseReranker):
                 )
                 from torch.nn.attention import SDPBackend
 
-                with (
-                    self._infer_lock,
-                    torch.no_grad(),
-                    self._sdpa_context([SDPBackend.MATH]),
-                ):
-                    jina_results = model.rerank(
-                        query,
-                        documents,
-                        top_n=None,
-                        **length_kwargs,
-                    )
+                jina_results = run_forward([SDPBackend.MATH])
             return jina_results, block_count
         finally:
             if original_model_max_length is not None:

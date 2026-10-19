@@ -1014,8 +1014,9 @@ For Jina v3, the packed-window controls are construction-time settings in `searc
   effect: a rerank call ~10x faster (1.3 s -> 0.13 s) and peak VRAM 8 -> 2.8 GB, quality gates
   passed (`evaluation/ATTN_BACKEND_AB_20261018.md`). `"default"` (torch's own dispatch, the
   math kernel on Windows GQA) reproduces every canon before 2026-10-19; `"efficient"` and
-  `"math"` are the other arms. Each value changes floating-point scores, so the field is
-  benchmark-locked.
+  `"math"` are the other arms. `"cudnn"` and `"efficient"` are CUDA-only: on a CPU device they
+  behave as `"default"` (no kernel pin, torch keeps its own CPU dispatch) and the loader says so.
+  Each value changes floating-point scores, so the field is benchmark-locked.
 
 **VRAM Usage**: ~1.2GB
 

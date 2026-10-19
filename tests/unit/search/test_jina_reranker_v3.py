@@ -371,6 +371,51 @@ class TestJinaRerankerV3:
             assert call.kwargs["revision"] == JinaRerankerV3.REVISION
         assert "dtype" not in mock_model_class.call_args_list[1].kwargs
 
+    @patch("transformers.AutoModel.from_pretrained")
+    @patch("transformers.AutoConfig.from_pretrained")
+    def test_v35_loads_unpinned(self, mock_config_class, mock_model_class, caplog):
+        """The v3 commit does not exist in the v3.5 repo: v3.5 (served by this
+        class too) loads the Hub main ref, and the tokenizer-pin check is off."""
+        mock_config_class.return_value = MagicMock()
+        model = MagicMock()
+        model.to.return_value = model
+        mock_model_class.return_value = model
+
+        reranker = JinaRerankerV3(model_name="jinaai/jina-reranker-v3.5")
+        assert reranker._revision() is None
+        with (
+            patch.object(
+                JinaRerankerV3, "_tokenizer_snapshot_revision", return_value="f" * 40
+            ) as snapshot,
+            caplog.at_level("WARNING", logger="search.neural_reranker"),
+        ):
+            _ = reranker.model
+
+        assert mock_config_class.call_args.kwargs["revision"] is None
+        assert mock_model_class.call_args.kwargs["revision"] is None
+        snapshot.assert_not_called()
+        assert "tokenizer resolved snapshot" not in caplog.text
+
+    @patch("transformers.AutoModel.from_pretrained")
+    @patch("transformers.AutoConfig.from_pretrained")
+    def test_cache_probe_looks_at_the_pinned_snapshot(
+        self, mock_config_class, mock_model_class
+    ):
+        """The offline decision is made on the snapshot the loads actually use,
+        not on refs/main (which can point elsewhere once the Hub moves)."""
+        mock_config_class.return_value = MagicMock()
+        mock_model_class.return_value = MagicMock()
+
+        reranker = JinaRerankerV3()
+        with patch(
+            "huggingface_hub.try_to_load_from_cache", return_value=None
+        ) as probe:
+            _ = reranker.model
+
+        config_probes = [c for c in probe.call_args_list if c.args[1] == "config.json"]
+        assert len(config_probes) == 1
+        assert config_probes[0].kwargs["revision"] == JinaRerankerV3.REVISION
+
     @pytest.mark.parametrize(
         ("cached", "expected"),
         [
@@ -1270,7 +1315,7 @@ class TestAttentionBackend:
         ]
 
     def test_constructor_defaults_to_cudnn(self):
-        reranker = JinaRerankerV3()
+        reranker = JinaRerankerV3(device="cuda")
         assert reranker.attention_backend == "cudnn"
         assert [b.name for b in reranker._sdpa_backends()] == [
             "CUDNN_ATTENTION",
@@ -1293,8 +1338,51 @@ class TestAttentionBackend:
         ids=["cudnn", "efficient", "math"],
     )
     def test_backend_mapping_keeps_math_fallback(self, backend, expected):
-        reranker = JinaRerankerV3(attention_backend=backend)
+        reranker = JinaRerankerV3(device="cuda", attention_backend=backend)
         assert [b.name for b in reranker._sdpa_backends()] == expected
+
+    def test_backend_list_is_resolved_once(self):
+        reranker = JinaRerankerV3(device="cuda:1", attention_backend="cudnn")
+        assert reranker._sdpa_backends() is reranker._sdpa_backends()
+        assert [b.name for b in reranker._sdpa_backends()] == [
+            "CUDNN_ATTENTION",
+            "MATH",
+        ]
+
+    @pytest.mark.parametrize(
+        "backend", ["cudnn", "efficient"], ids=["cudnn", "efficient"]
+    )
+    def test_cuda_only_arm_is_inert_off_cuda(self, backend, monkeypatch, caplog):
+        """Off CUDA, pinning [CUDNN|EFFICIENT, MATH] would force MATH over
+        torch's own CPU flash pick, so the arm must leave the context out."""
+        import torch.nn.attention as tna
+
+        def fail_sdpa_kernel(*args, **kwargs):  # pragma: no cover - guard
+            raise AssertionError("sdpa_kernel must not be entered off CUDA")
+
+        monkeypatch.setattr(tna, "sdpa_kernel", fail_sdpa_kernel)
+        reranker = JinaRerankerV3(device="cpu", attention_backend=backend)
+        assert reranker._sdpa_backends() is None
+        assert isinstance(reranker._sdpa_context(), contextlib.nullcontext)
+        model = _FakeV3Model()
+        calls = {"n": 0}
+        real = model.rerank
+
+        def nan_once(*a, **kw):
+            calls["n"] += 1
+            out = real(*a, **kw)
+            out[0]["relevance_score"] = float("nan")
+            return out
+
+        model.rerank = nan_once
+        reranker._model = model
+        reranker.rerank("q", self._candidates(3), top_k=3)
+        # No kernel was pinned, so there is nothing to fall back from either.
+        assert calls["n"] == 1
+        with caplog.at_level(logging.INFO, logger="search.neural_reranker"):
+            reranker._log_attention_backend_verdict()
+        assert "CUDA-only" in caplog.text
+        assert "'cpu'" in caplog.text
 
     def test_unknown_backend_rejected(self):
         with pytest.raises(ValueError, match="attention_backend"):
@@ -1311,7 +1399,7 @@ class TestAttentionBackend:
             yield
 
         monkeypatch.setattr(tna, "sdpa_kernel", fake_sdpa_kernel)
-        reranker = JinaRerankerV3(device="cpu", attention_backend="cudnn")
+        reranker = JinaRerankerV3(device="cuda", attention_backend="cudnn")
         reranker._model = _FakeV3Model()
         reranker.rerank("q", self._candidates(3), top_k=3)
         # set_priority=True is what makes the list order the dispatch order;
@@ -1330,7 +1418,7 @@ class TestAttentionBackend:
             yield
 
         monkeypatch.setattr(tna, "sdpa_kernel", fake_sdpa_kernel)
-        reranker = JinaRerankerV3(device="cpu", attention_backend="cudnn")
+        reranker = JinaRerankerV3(device="cuda", attention_backend="cudnn")
         model = _FakeV3Model()
         calls = {"n": 0}
         real = model.rerank
@@ -1368,12 +1456,110 @@ class TestAttentionBackend:
         reranker.rerank("q", self._candidates(3), top_k=3)
         assert calls["n"] == 1
 
-    def test_deterministic_mode_warns_for_cudnn(self, monkeypatch, caplog):
-        monkeypatch.setattr(torch, "are_deterministic_algorithms_enabled", lambda: True)
-        reranker = JinaRerankerV3(device="cpu", attention_backend="cudnn")
+    def test_math_backend_never_retries_on_non_finite(self, monkeypatch, caplog):
+        """A MATH-only pin has nothing to fall back to: one forward, no retry."""
+        import torch.nn.attention as tna
+
+        seen = []
+
+        @contextlib.contextmanager
+        def fake_sdpa_kernel(backends, set_priority=False):
+            seen.append([b.name for b in backends])
+            yield
+
+        monkeypatch.setattr(tna, "sdpa_kernel", fake_sdpa_kernel)
+        reranker = JinaRerankerV3(device="cuda", attention_backend="math")
+        model = _FakeV3Model()
+        calls = {"n": 0}
+        real = model.rerank
+
+        def nan_once(*a, **kw):
+            calls["n"] += 1
+            out = real(*a, **kw)
+            out[0]["relevance_score"] = float("nan")
+            return out
+
+        model.rerank = nan_once
+        reranker._model = model
         with caplog.at_level(logging.WARNING, logger="search.neural_reranker"):
+            reranker.rerank("q", self._candidates(3), top_k=3)
+        assert calls["n"] == 1
+        assert seen == [["MATH"]]
+        assert "Non-finite reranker scores" not in caplog.text
+
+    def test_deterministic_mode_warns_for_cudnn_and_skips_the_probe(
+        self, monkeypatch, caplog
+    ):
+        """can_use_cudnn_attention cannot see the deterministic flag, so a probe
+        after the warning would log "cudnn kernel active" right under it."""
+        import torch.backends.cuda as tbc
+
+        monkeypatch.setattr(torch, "are_deterministic_algorithms_enabled", lambda: True)
+        monkeypatch.setattr(tbc, "can_use_cudnn_attention", lambda *a, **kw: True)
+        reranker = JinaRerankerV3(device="cuda", attention_backend="cudnn")
+        with caplog.at_level(logging.INFO, logger="search.neural_reranker"):
             reranker._log_attention_backend_verdict()
         assert "deterministic" in caplog.text
+        assert "cuDNN SDPA usable" not in caplog.text
+
+    @pytest.mark.parametrize(
+        ("dtype", "expected"),
+        [
+            ("auto", torch.bfloat16),
+            ("bf16", torch.bfloat16),
+            ("fp32", torch.float32),
+        ],
+        ids=["auto-defaults-to-bf16", "bf16", "fp32"],
+    )
+    def test_verdict_probe_uses_the_configured_dtype(
+        self, dtype, expected, monkeypatch, caplog
+    ):
+        """cuDNN SDPA rejects fp32: a bf16 probe under listwise_dtype="fp32"
+        reported a kernel the forward never got."""
+        import torch.backends.cuda as tbc
+
+        dtypes = []
+        real_empty = torch.empty
+
+        def recording_empty(*shape, dtype=None, device=None):
+            dtypes.append(dtype)
+            return real_empty(*shape, dtype=dtype)
+
+        monkeypatch.setattr(torch, "empty", recording_empty)
+        monkeypatch.setattr(tbc, "can_use_cudnn_attention", lambda *a, **kw: True)
+        reranker = JinaRerankerV3(device="cuda", dtype=dtype, attention_backend="cudnn")
+        with caplog.at_level(logging.INFO, logger="search.neural_reranker"):
+            reranker._log_attention_backend_verdict()
+        assert dtypes == [expected, expected]
+        assert "cuDNN SDPA usable for the Jina shape: True" in caplog.text
+
+    def test_verdict_probe_follows_the_loaded_dtype_under_auto(self):
+        """ "auto" means "whatever the checkpoint carries": once a model is
+        loaded, the probe asks it rather than assuming bf16."""
+        reranker = JinaRerankerV3(
+            device="cuda", dtype="auto", attention_backend="cudnn"
+        )
+        reranker._model = MagicMock(dtype=torch.float16)
+        assert reranker._probe_dtype() is torch.float16
+
+    def test_verdict_probe_runs_on_the_configured_device(self, monkeypatch, caplog):
+        """An indexed device ("cuda:1") gets a verdict, probed on that device."""
+        import torch.backends.cuda as tbc
+
+        devices = []
+        real_empty = torch.empty
+
+        def recording_empty(*shape, dtype=None, device=None):
+            devices.append(device)
+            return real_empty(*shape, dtype=dtype)
+
+        monkeypatch.setattr(torch, "empty", recording_empty)
+        monkeypatch.setattr(tbc, "can_use_cudnn_attention", lambda *a, **kw: True)
+        reranker = JinaRerankerV3(device="cuda:1", attention_backend="cudnn")
+        with caplog.at_level(logging.INFO, logger="search.neural_reranker"):
+            reranker._log_attention_backend_verdict()
+        assert devices == ["cuda:1", "cuda:1"]
+        assert "cuDNN SDPA usable for the Jina shape: True" in caplog.text
 
     def test_verdict_is_silent_for_default(self, caplog):
         reranker = JinaRerankerV3(device="cpu", attention_backend="default")

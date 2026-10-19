@@ -1010,7 +1010,10 @@ class RerankerConfig:
         # 7-11 GB peak in docs/PERF.md; every canon before 2026-10-19 ran on
         # it). "efficient": [EFFICIENT_ATTENTION, MATH]. "math": [MATH]
         # (forces the pre-10-19 canon kernel even where torch would pick
-        # another). Each value is a different floating-point substrate:
+        # another). "cudnn" and "efficient" are CUDA-only: on any other
+        # device they behave as "default" (torch's own CPU dispatch; pinning
+        # the list there would push CPU onto the math kernel too).
+        # Each value is a different floating-point substrate:
         # pre-registered A/B before any default change
         # (evaluation/ATTN_BACKEND_AB_20261018.md).
         # Construction-baked like listwise_dtype: _ensure_reranker() rebuilds

@@ -34,6 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vendor tokenizer load has no revision hook; the loader now warns when its cached snapshot
   differs from the pin. Bit-identical: the unpinned load already resolved `d7d7e73b`
   (63q r1 == r2 vs a pre-pin run on the same SHA).
+- **Review fixes on the cuDNN default and the revision pin** (`search/neural_reranker.py`) —
+  `"cudnn"` and `"efficient"` are CUDA-only: on a CPU device they now leave the kernel list
+  unpinned instead of pushing CPU onto the math kernel (inside `[CUDNN_ATTENTION, MATH]`
+  torch's CPU dispatch lands on MATH, not on its own flash pick), and the loader says so. The
+  `SDPBackend` list is resolved once at construction; `"math"` no longer re-runs itself after a
+  non-finite score; the load-time cuDNN verdict probes on the configured device in the model's
+  dtype (a bf16 probe under `listwise_dtype="fp32"` reported a kernel the forward never got) and
+  is skipped under torch deterministic mode instead of logging "cudnn kernel active" right under
+  the warning that MATH will run. The pin is now per model (`JinaRerankerV3.REVISIONS`):
+  `jinaai/jina-reranker-v3.5`, served by the same class, loads the Hub `main` ref again instead
+  of failing on the v3 commit, and the cache probe asks for the pinned snapshot rather than
+  `refs/main`.
 
 ### Added
 
