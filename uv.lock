@@ -631,7 +631,7 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=1.26.1" },
     { name = "idna", specifier = ">=3.18" },
     { name = "libcst", marker = "extra == 'callgraph'", specifier = ">=1.8.6" },
-    { name = "mcp", specifier = ">=2,<3" },
+    { name = "mcp", specifier = ">=2.2.0,<3" },
     { name = "msgpack", specifier = ">=1.2.1" },
     { name = "mutmut", marker = "extra == 'dev'", specifier = ">=3.7.0" },
     { name = "networkx", specifier = ">=3.0" },
