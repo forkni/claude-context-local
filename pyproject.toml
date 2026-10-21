@@ -28,7 +28,7 @@ keywords = [
     "python",
 ]
 dependencies = [
-    "aiohttp>=3.14.3",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1); CVE-2026-59881 (3.14.2); CVE-2026-69243 (3.14.2); CVE-2026-69244 (3.14.3)
+    "aiohttp>=3.14.4",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1); CVE-2026-59881 (3.14.2); CVE-2026-69243 (3.14.2); CVE-2026-69244 (3.14.3); CVE-2026-111063..111066, CVE-2026-111748..111750, GHSA-2g87-pp6c-29x5 (3.14.4)
     "cryptography>=50.0.0",  # Security: PYSEC-2026-35/36 (DNS name-constraint bypass, buffer overflow); CVE-2026-69247 (50.0.0). Defer GHSA-537c (OpenSSL wheel, needs 48.x major bump).
     "faiss-cpu>=1.15.1",
     "filelock>=3.32,<4",  # Inter-process index write lock (search/index_write_lock.py). Already locked transitively at 3.32.5; <4 cap per virtualenv's own constraint (see audit comment below).
@@ -492,6 +492,20 @@ evaluation = ["*.json", "*.md"]
 #   from official HuggingFace repos over HTTPS as safetensors (embeddings/model_loader.py), never
 #   as untrusted .pth/pickle checkpoints. Reopening condition: re-check each cycle whether the
 #   pinned cu128 index has started publishing >=2.13.0.
+#
+# Resolved 2026-10-20: aiohttp 3.14.3 -> 3.14.5 via aiohttp>=3.14.4 (dependabot #86 asked for
+#   3.14.4; `uv lock --upgrade-package aiohttp` resolved 3.14.5, OSV-clean). Clears 8 advisories
+#   on 3.14.3: GHSA-2g87-pp6c-29x5, -494j-36c9-5pxp, -5wr8-9hf6-m99w, -6cjc-f2wr-6w57,
+#   -9xw5-ppcw-9vgp, -f9xw-m39j-p6vh, -gx76-xrq8-3ff7, -pqxq-w44r-73xw (request smuggling).
+#   dependabot #87 (multidict 6.7.1 -> 6.9.1) was already satisfied: uv.lock has pinned multidict
+#   6.9.1 since the 2026-09-23 audit (954e5e16). Both PRs closed as superseded; main receives the
+#   fix at the next development -> main promotion. pip-audit before/after in audit_reports/
+#   (gitignored): 8 IDs gone, 0 new; the 5 pre-existing findings (certifi, nltk, setuptools,
+#   sqlitedict no-fix, uv) are untouched -- one package per change. Tests on 3.14.5: unit 5,420
+#   passed / 2 skipped; full non-slow suite in CI mode (xdist loadfile, seed 3094274774) 5,548
+#   passed / 2 skipped. PR #86's CI test job hung (gw1 killed by pytest-timeout 300 s inside
+#   test_prune_guard_declines_when_faiss_side_also_broken, a 0.01 s test; xdist never replaced
+#   the worker, job idled to the 20-min cap) -- not reproducible locally, unrelated to aiohttp.
 #
 # Resolved 2026-08-04: aiohttp CVE-2026-59881/69243 (3.14.2), CVE-2026-69244 (3.14.3) via
 #   aiohttp>=3.14.3. cryptography CVE-2026-69247 via cryptography>=50.0.0 (confirmed >=3.9

@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit and the real answer (`_drop_benign_uvicorn_errors`) unlabeled; H004 lacked
   `ParallelChunker._is_empty_file`. 133q numbers from this date on use the corrected set.
 
+### Security
+
+- **aiohttp floor raised `>=3.14.3` -> `>=3.14.4`**, `uv.lock` relocked to 3.14.5 — clears the
+  eight advisories pip-audit reported against 3.14.3 (CVE-2026-111063..111066,
+  CVE-2026-111748..111750, GHSA-2g87-pp6c-29x5; pure-Python-parser request smuggling and
+  related). Before/after `pip-audit` runs recorded in `audit_reports/` (gitignored); supersedes
+  dependabot #86 (aiohttp) and #87 (multidict, already at 6.9.1 on `development`).
+
 ### Fixed
 
 - **Jina reranker revision pinned** (`search/neural_reranker.py`) — `JinaRerankerV3` passes
