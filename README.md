@@ -585,6 +585,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 Licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
 
+**AI-assisted authorship.** Parts of this project's code and documentation were drafted
+with the help of Claude Code, an AI coding assistant. The author reviewed, edited,
+tested, selected and arranged that material and is responsible for it. No copyright is
+claimed over raw, unedited AI output.
+
+**Trademarks.** Claude and Claude Code are trademarks of Anthropic, PBC. NVIDIA and CUDA
+are trademarks or registered trademarks of NVIDIA Corporation. Windows is a trademark of
+Microsoft Corporation. These names are used only to identify the software
+claude-context-local works with. claude-context-local is an independent project and is not
+affiliated with, sponsored by or endorsed by Anthropic, NVIDIA or Microsoft.
+
 ## Research References
 
 This project's architecture is informed by the following research:
