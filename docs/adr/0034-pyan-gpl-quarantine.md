@@ -1,7 +1,12 @@
 # GPL-2.0-or-later quarantine for the pyan call-graph tier
 
-Status: accepted
+Status: superseded
 Date: 2026-08-07
+
+**Superseded 2026-10-22** by [ADR-0089](0089-relicense-gpl-3-0-only.md): the project is now
+GPL-3.0-only, so the statement below that every other file "remains Apache-2.0" no longer holds.
+The pyan3 analysis and the `Apache-2.0 OR GPL-2.0-or-later` header on
+`chunking/relationships/external_call_graph.py` still stand.
 
 ## Context
 

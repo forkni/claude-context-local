@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **License is now GPL-3.0-only** (`LICENSE`, `NOTICE`, `pyproject.toml`, README,
+  `CONTRIBUTING.md`) — this project is a modified version of
+  [FarhanAliRaza/claude-context-local](https://github.com/FarhanAliRaza/claude-context-local),
+  which is GPL-3.0. Releases up to v0.26.0 were labelled Apache-2.0 in error; the parts derived
+  from FarhanAliRaza/claude-context-local were always GPL-3.0. See
+  [ADR-0089](docs/adr/0089-relicense-gpl-3-0-only.md).
+
 - **Jina reranker runs on cuDNN fused attention by default**
   (`RerankerConfig.listwise_attention_backend` `"default"` -> `"cudnn"`,
   [ADR-0088](docs/adr/0088-cudnn-attention-for-listwise-reranker.md)) — the pre-registered A/B

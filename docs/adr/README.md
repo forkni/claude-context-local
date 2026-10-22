@@ -39,7 +39,7 @@ for avoiding re-litigating settled questions.
 | [0031](0031-delete-intent-policy-tables.md) | Delete the two intent policy tables (QW5 + A1) | accepted | 2026-08-05 |
 | [0032](0032-config-liveness-audit.md) | Config liveness audit: 124/124 fields live, five defects fixed | accepted | 2026-08-06 |
 | [0033](0033-lift-torch-ceiling.md) | Lift the torch `<2.9.0` ceiling, bump the ML stack | accepted | 2026-08-06 |
-| [0034](0034-pyan-gpl-quarantine.md) | GPL-2.0-or-later quarantine for the pyan call-graph tier | accepted | 2026-08-07 |
+| [0034](0034-pyan-gpl-quarantine.md) | GPL-2.0-or-later quarantine for the pyan call-graph tier | superseded (ADR-0089) | 2026-08-07 |
 | [0035](0035-cpp-call-edge-tier-scope.md) | C/C++ call-edge strategy: tree-sitter tier only, sequenced behind chunking parity | accepted | 2026-08-07 |
 | [0036](0036-include-dirs-additive-for-dependency-trees.md) | Make `include_dirs` additive for dependency trees, narrowing for source | accepted | 2026-08-07 |
 | [0037](0037-decline-index-version-bump-for-cpp-parity.md) | Decline an `INDEX_VERSION` bump for C++ chunking parity | accepted | 2026-08-12 |
@@ -94,6 +94,7 @@ for avoiding re-litigating settled questions.
 | [0086](0086-vram-budget-has-one-home.md) | VRAM budget has one home: `VramBudget` in `embeddings/vram_budget.py` | accepted | 2026-10-13 |
 | [0087](0087-recover-dropped-c-family-regions.md) | Recover dropped C-family regions: parse-only repairs, preamble descent, doc-comment adoption | accepted | 2026-10-14 |
 | [0088](0088-cudnn-attention-for-listwise-reranker.md) | Run the Jina listwise reranker on cuDNN fused attention by default | accepted | 2026-10-19 |
+| [0089](0089-relicense-gpl-3-0-only.md) | Relicense the project as GPL-3.0-only | accepted | 2026-10-22 |
 
 ## Adding a new ADR
 
