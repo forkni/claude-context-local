@@ -158,4 +158,5 @@ These are protected by pre-commit hooks.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the Apache License 2.0.
+By contributing, you agree that your contributions will be licensed under the GNU General
+Public License, version 3 only (GPL-3.0-only), the license of this project.

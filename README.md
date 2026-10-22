@@ -22,7 +22,7 @@
 
 **Local-first semantic code search for Claude Code.** Hybrid search combining semantic understanding with text matching, running 100% locally. No API keys, no costs, your code never leaves your machine.
 
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![License: GPL-3.0-only](https://img.shields.io/badge/License-GPL--3.0--only-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-blue.svg)](https://www.microsoft.com/windows)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![codecov](https://codecov.io/gh/forkni/claude-context-local/branch/development/graph/badge.svg)](https://codecov.io/gh/forkni/claude-context-local)
@@ -33,7 +33,7 @@
 - **Neural Reranking**: Cross-encoder models (default: `Alibaba-NLP/gte-reranker-modernbert-base`; alternatives: jinaai/jina-reranker-v3, Qwen3-Reranker-0.6B) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **SSCG Integration**: Structural-Semantic Code Graph — 21 relationship types, PageRank centrality reranking; see [benchmarks](docs/BENCHMARKS.md) for mode-comparison history
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
-- **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98 (`lsp_enabled` defaults to `true`, no-ops without the extra). Install `pip install -e ".[callgraph]"` for pyan3 + LibCST, and `pip install -e ".[lsp]"` for basedpyright LSP resolution; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
+- **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98 (`lsp_enabled` defaults to `true`, no-ops without the extra). Install `pip install -e ".[callgraph]"` for pyan3 + LibCST, and `pip install -e ".[lsp]"` for basedpyright LSP resolution; the core install is pyan-free — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **Persistent Chunk Embedding Cache**: content-hash-keyed cache of chunk embedding vectors cuts a full reindex's embedding phase from ~34s to well under 1s once the codebase is unchanged; invalidates automatically on model or precision/backend changes - [configuration](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md#chunk-embedding-cache-configuration)
 - **29 File Extensions**: Python, JS, TS, Go, Rust, C/C++ (incl. CUDA `.cu`/`.cuh`), C#, GLSL with AST/tree-sitter chunking
@@ -583,7 +583,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ## License
 
-Licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
+Licensed under the GNU General Public License, version 3 only (GPL-3.0-only). See the
+[LICENSE](LICENSE) file for details. This is a modified version of
+[claude-context-local](https://github.com/FarhanAliRaza/claude-context-local) by Farhan
+Ali Raza, which is licensed under GPL-3.0; see [NOTICE](NOTICE). Releases up to v0.26.0
+were labelled Apache-2.0 in error.
 
 **AI-assisted authorship.** Parts of this project's code and documentation were drafted
 with the help of Claude Code, an AI coding assistant. The author reviewed, edited,

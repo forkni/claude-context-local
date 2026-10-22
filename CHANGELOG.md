@@ -9,6 +9,781 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **License is now GPL-3.0-only** (`LICENSE`, `NOTICE`, `pyproject.toml`, README,
+  `CONTRIBUTING.md`) — this project is a modified version of
+  [FarhanAliRaza/claude-context-local](https://github.com/FarhanAliRaza/claude-context-local),
+  which is GPL-3.0. Releases up to v0.26.0 were labelled Apache-2.0 in error; the parts derived
+  from FarhanAliRaza/claude-context-local were always GPL-3.0. See
+  [ADR-0089](docs/adr/0089-relicense-gpl-3-0-only.md).
+
+- **Jina reranker runs on cuDNN fused attention by default**
+  (`RerankerConfig.listwise_attention_backend` `"default"` -> `"cudnn"`,
+  [ADR-0088](docs/adr/0088-cudnn-attention-for-listwise-reranker.md)) — the pre-registered A/B
+  (`evaluation/ATTN_BACKEND_AB_20261018.md`) passed every gate once two mislabeled 133q golds
+  were corrected: no paired CI negative on MRR / recall@10 / recall@20 on any view (133q MRR
+  +0.0105, CI excludes 0), `pool_hit_rate` 127 -> 128 of 133 and 1.0 on 63q / F-via-similar,
+  63q r1 == r2 bit-identical, no non-finite score, 8 GB cap clean. Rerank call 1.3 s -> 0.13 s
+  and peak VRAM 8.2 -> 2.8 GB on this repo. Canon re-pinned on the treatment legs
+  (`evaluation/CANON_20261019_CUDNN_ATTN.md`); `"default"` reproduces the pre-10-19 kernel.
+- **Golden labels H012 and H004 corrected** (`evaluation/golden_dataset_expanded.json`) — the
+  A/B's label audit found H012's grade-3 target (`_configure_logging`) untouched by its source
+  commit and the real answer (`_drop_benign_uvicorn_errors`) unlabeled; H004 lacked
+  `ParallelChunker._is_empty_file`. 133q numbers from this date on use the corrected set.
+
+### Security
+
+- **aiohttp floor raised `>=3.14.3` -> `>=3.14.4`**, `uv.lock` relocked to 3.14.5 — clears the
+  eight advisories pip-audit reported against 3.14.3 (CVE-2026-111063..111066,
+  CVE-2026-111748..111750, GHSA-2g87-pp6c-29x5; pure-Python-parser request smuggling and
+  related). Before/after `pip-audit` runs recorded in `audit_reports/` (gitignored); supersedes
+  dependabot #86 (aiohttp) and #87 (multidict, already at 6.9.1 on `development`).
+
+### Fixed
+
+- **Jina reranker revision pinned** (`search/neural_reranker.py`) — `JinaRerankerV3` passes
+  `revision=JinaRerankerV3.REVISION` (`d7d7e73b`, the Hub tip since 2026-08-10) to the `AutoConfig`
+  and `AutoModel` `trust_remote_code` loads, so a vendor republish can no longer silently change
+  the listwise scoring code under a published canon (closes ADR-0076's "Standing risk"). The
+  vendor tokenizer load has no revision hook; the loader now warns when its cached snapshot
+  differs from the pin. Bit-identical: the unpinned load already resolved `d7d7e73b`
+  (63q r1 == r2 vs a pre-pin run on the same SHA).
+- **Review fixes on the cuDNN default and the revision pin** (`search/neural_reranker.py`) —
+  `"cudnn"` and `"efficient"` are CUDA-only: on a CPU device they now leave the kernel list
+  unpinned instead of pushing CPU onto the math kernel (inside `[CUDNN_ATTENTION, MATH]`
+  torch's CPU dispatch lands on MATH, not on its own flash pick), and the loader says so. The
+  `SDPBackend` list is resolved once at construction; `"math"` no longer re-runs itself after a
+  non-finite score; the load-time cuDNN verdict probes on the configured device in the model's
+  dtype (a bf16 probe under `listwise_dtype="fp32"` reported a kernel the forward never got) and
+  is skipped under torch deterministic mode instead of logging "cudnn kernel active" right under
+  the warning that MATH will run. The pin is now per model (`JinaRerankerV3.REVISIONS`):
+  `jinaai/jina-reranker-v3.5`, served by the same class, loads the Hub `main` ref again instead
+  of failing on the v3 commit, and the cache probe asks for the pinned snapshot rather than
+  `refs/main`.
+
+### Added
+
+- **`codefuse-ai/F2LLM-v2-1.7B` registered as an opt-in embedder** (`MODEL_REGISTRY`, 2048-d,
+  `vram_tier "workstation"`, same instruction template as the 0.6B; select it with
+  `CLAUDE_EMBEDDING_MODEL`, it gets its own per-model index dir) — **not adopted** for the
+  workstation tier, the launcher menu or any docs table: the pre-registered A/B against the
+  deployed 0.6B (`evaluation/EMBEDDER_F2LLM_1P7B_AB_20261019.md`, one session, equal 3,289-chunk
+  substrates) failed four of six gates. MRR below control on every view (63q 0.8237 -> 0.8161,
+  133q 0.6747 -> 0.6649, F-via-similar 0.8735 -> 0.8304, the last with a CI excluding 0),
+  recall@20 CI negative on all three views, 133q `pool_hit_rate` 128 -> 126 of 133, and a cold
+  force reindex peaked at 16.37 GiB torch-reserved (the 16 GB fit line). Search-time peak 7.55 GiB,
+  63q r1 == r2 bit-identical, no pooling defect (batch-1 vs batch-16 cosine >= 0.995 for both
+  models). Canon unchanged.
+
+- **Opt-in SDPA backend for the Jina reranker** (`RerankerConfig.listwise_attention_backend`,
+  env `CLAUDE_RERANKER_LISTWISE_ATTENTION_BACKEND`, landed opt-in with default `"default"`;
+  flipped to `"cudnn"` the next day, see Changed) — `"cudnn"`,
+  `"efficient"` or `"math"` wrap the listwise forward in `torch.nn.attention.sdpa_kernel`
+  (`set_priority=True`, so the requested kernel is tried first) with MATH kept as the
+  in-list fallback; the loader logs the
+  `can_use_cudnn_attention` verdict for the Jina shape, warns when torch deterministic mode
+  would refuse the cuDNN kernel, and retries one attempt on MATH if a non-default kernel
+  returns a non-finite score. `"default"` is a `nullcontext` (bit-identical with every
+  canon before 2026-10-19); the field is benchmark-locked
+  (`evaluation/ATTN_BACKEND_AB_20261018.md`).
+
+- **F2LLM-v2-330M in the launcher's Quick Model Switch** (`start_mcp_server.cmd`) — option 2 in the 8GB
+  block, marked recommended per [ADR-0084](docs/adr/0084-f2llm-330m-for-laptop-and-minimal-tiers.md);
+  the other options shift to 3-5. `scripts/get_system_status_fast.py` now mirrors the 330M and 160M so the
+  status panel no longer shows `(?d, ?)`, and a parity test keeps the copy in sync with `MODEL_REGISTRY`.
+
+- **Instructed `find_similar_code` probe, off by default** (`EmbeddingConfig.instructed_similar`, env
+  `CLAUDE_INSTRUCTED_SIMILAR`, [ADR-0085](docs/adr/0085-instructed-find-similar-flag-off.md)) —
+  `CodeEmbedder.embed_code_query` embeds the anchor's composed document with the F2LLM-v2
+  `code2code_instruction` as a query, and `CodeIndexManager.get_similar_chunks(query_embedding=)`
+  searches with it instead of the stored vector. A/B on the 330M failed the gate (fsim MRR -0.026), so the
+  default is unchanged; the NL query wording was also A/B'd against the paper's and kept. Report:
+  `evaluation/F2LLM_SETTINGS_AUDIT_20261008.md`.
+
+- **F2LLM-v2-330M embedder** (`search/config.py`, [ADR-0084](docs/adr/0084-f2llm-330m-for-laptop-and-minimal-tiers.md)) — registry entry for `codefuse-ai/F2LLM-v2-330M` (dim 896, 0.67 GB bf16, MTEB-Code 75.74), now the `recommended_model` for the laptop and minimal VRAM tiers (`search/vram_manager.py`) instead of `BAAI/bge-m3`. Laptop 2x2 A/B with and without gte: at least as good as bge-m3 + gte on MRR and R@20 on 63q, 133q and F-via-similar, peak VRAM 4.24 GB, gte still adds +0.15-0.20 R@20. Existing bge-m3 indexes need a reindex; `search_config.json.example` stays on bge-m3. Report: `evaluation/EMBEDDER_LAPTOP_AB_20261008.md`.
+
+- **FAISS index parameter probe** (`scripts/benchmark/probe_faiss_index_params.py`,
+  [ADR-0083](docs/adr/0083-faiss-index-parameter-policy.md)) — read-only harness that pulls every
+  vector out of an on-disk index, builds exact ground truth at the leg-depth ceiling (420) and
+  sweeps inner-product `IndexIVFFlat` over `nlist` x `nprobe` x `parallel_mode` with
+  `knn_intersection_measure` recall, `-1` padding rate, imbalance factor and p50/p95 latency; also
+  times flat search by OpenMP thread count and synthetic corpora at any size. Report:
+  `evaluation/FAISS_INDEX_PARAMS_20261005.md`; summary in `docs/BENCHMARKS.md`.
+
+- **`FaissVectorIndex.position_of()` / `reconstruct_batch()`** — cached chunk-id -> position
+  lookup (invalidated on create/clear/load/add/remove) and a bulk reconstruct (mmap fast path, else
+  FAISS `reconstruct_batch`), replacing the per-call `{chunk_id: position}` dict rebuild and
+  per-row `reconstruct()` loop in `CodeIndexManager.reconstruct_embeddings`.
+
+- **Legacy SSE transport served alongside StreamableHTTP** (`mcp_server/server.py`) — the
+  `--transport http` server now also exposes `GET /sse` + `POST /messages/` (via
+  `SseServerTransport`) next to `/mcp`, so SSE-only clients such as Antigravity IDE
+  (`"serverUrl": "http://localhost:8765/sse"`) can connect again. Previously `/sse` returned 404
+  and those clients failed with `session not found` on `initialize`. Both transports share one
+  process, so the embedding model and index state load once.
+
+- **`MCP_TOOL_ALLOWLIST` narrows `list_tools` advertisement to a named subset**, independent of
+  and composable with the existing `MCP_EXPOSE_ADVANCED_TOOLS` tier gate. Set it to a
+  comma-separated list of tool names (unknown names are ignored, not an error) to restrict what a
+  server instance advertises — e.g. a dedicated instance serving only
+  `get_procedural_guidance` to a benchmark arm that must not see the rest of this server's tools
+  (or their prompt-size cost). Like the advanced-tier gate, this only affects `list_tools`
+  advertisement; `TOOL_DISPATCH` still dispatches every tool by name regardless. Implemented as
+  `_tool_allowlist()` / a new `allowlist` parameter on `build_tool_list()` in `mcp_server/tool_specs.py`.
+- **Single-block listwise reranking is now an invariant, not a preference** (ADR-0077) — a 3-leg
+  gate on ADR-0076's multi-block splitting fix found it was not safe: forcing a split moved
+  133q recall@5/NDCG@5 (the *head* of the ranking) by more than the pre-registered ±0.02
+  tolerance, refuting ADR-0076's "block 1 is near-invariant" argument (vendor `modeling.py`
+  discards per-block scores and computes one global sort over a cross-block-averaged query
+  vector — there is no un-degraded slice). `JinaRerankerV3._fit_single_block` now adaptively
+  truncates document bodies to a uniform per-document token cap
+  (`derive_listwise_doc_budget`, pure binary search) so a rerank window always packs into one
+  listwise block — `top_k_candidates` is never reduced, only document text is trimmed. Below a
+  150-token-per-document floor, the request's documents are rebuilt as lighter
+  `signature_head` renderings instead of truncating full text further; if even that starves,
+  the request degrades to ADR-0076's original splitting machinery, now demoted to a backstop.
+  New `RerankerConfig.listwise_window_fit` field (`"truncate"` default, `"split"` escape hatch
+  for rollback, now `benchmark_locked`). `scripts/benchmark/probe_rerank_window.py` gained an
+  offline single-block invariant tally (`summarize_listwise_invariant`) so "did every query
+  stay at one block?" is answerable without a GPU benchmark leg. Gate closed 2026-09-20: the
+  decisive split-vs-truncate A/B (budget forced to 7000, TD's production two-block regime) was
+  neutral on both golden sets (all CIs include 0, no guard-rail breach) — ships on correctness
+  grounds, recorded honestly rather than as a win. The gate's inertness leg initially looked
+  like a regression against the stale canon; isolating `split` vs `truncate` at the same budget
+  on the same substrate came back bit-identical, proving that was substrate drift, not this
+  change — see `docs/adr/0077-single-block-listwise-invariant.md`'s Gate results.
+- **Reranker listwise window is bounded by tokens, fixing a CUDA OOM on token-dense corpora**
+  (ADR-0076) — `JinaRerankerV3.rerank()` packed the entire rerank window into one flat prompt with
+  nothing bounding total token mass, so a token-dense corpus (TD operator chunks) could raise
+  `torch.cuda.OutOfMemoryError`; `RerankingEngine` already caught that and fell back to unreranked
+  results, but silently disabled neural reranking for the rest of the session
+  (`_session_oom_detected`). A new `RerankerConfig.listwise_packed_token_budget` field (default
+  8192) is used to derive a bound on the tokenizer's `model_max_length` via greedy-fill simulation
+  of Jina's own block-flush loop, engaging its existing multi-block regime instead of hand-building
+  a smaller prompt; a floor keeps at least one document per block, and a soft invariant keeps the
+  first block at or above `top_k_candidates` where the budget allows. One halved-budget retry is
+  attempted on OOM before falling back, preserving the existing `RuntimeError` message verbatim so
+  `_run_rerank`'s OOM string-match detection keeps working. Both outcomes — a split window and the
+  unreranked fallback — are now recorded on `RerankingEngine` (`last_block_count`,
+  `last_rerank_skipped`) and surfaced to MCP callers as a `system_message` via a new
+  `SearcherView.reranking_engine` accessor, instead of degrading silently.
+- **TD network `expressions:` content** (ADR-0062, 2026-09-10) — `TDNetworkChunker` renders
+  `par_modes` `mode == "expression"` entries as an `expressions: name=expr, ...` content line
+  (before `params:`, capped at 900 chars), making TD expression source text (e.g.
+  `me.par.Width`) searchable for the first time. `evaluation/td_golden.json` grew from 19 to 21
+  queries to cover the clone (see `RelationshipType.CLONES` below) and expression additions;
+  `evaluation/td_caller_golden.json` needed no change.
+- **Procedural Graph store and two advanced tools** (ADR-0074) — a new file-backed
+  `ProceduralGraphStore` (`graph/procedural_graph.py`) holds producer-authored procedural graphs
+  (arXiv 2609.09153: action nodes, text-attributed transitions) outside `CodeGraphStorage`, under
+  `<storage_dir>/procedural_graphs/`. Two new `advanced=True` MCP tools serve them:
+  `get_procedural_guidance` locates an agent's last action and extracts its h-hop out-neighbourhood
+  as Φ guidance text (`condition`/`guidance`/`pitfalls`), and `edit_procedural_graph` applies a
+  typed, validated edit with a `dry_run` safety gate. Neither makes an LLM call or a network call —
+  guidance text is returned verbatim for the calling agent to reason over. Bundled with a
+  `network_layout` seed fixture and `scripts/import_procedural_graph.py`, an operator-only import
+  entry point that deliberately avoids the ~10.4s PyTorch import cost of
+  `mcp_server.storage_manager`. Tool count: 18 → 20 (10 core + 10 advanced).
+- **TD network edges carry only honest provenance** (ADR-0073) — `TDNetworkChunker` stamped a
+  fabricated `confidence=0.98` on every edge it emits, borrowed from the LSP call-resolver's own
+  confidence tier and justified by a comment describing a two-tier resolution scheme that does not
+  exist for TD edges; edges are now stamped `confidence=1.0` (the honest value — there is no
+  resolution step to grade), while `resolver_source: td_live` and every other metadata stamp are
+  unchanged. The network chunk's summary line reported the exporter's own `stats.node_count`/
+  `edge_count` as if they were the chunker's own — they diverge by a wide margin (40 reported vs.
+  70 actually emitted for the fixture, from five separate causes including `shared_tag`'s
+  intentional double-emission) — and now reads `"N operators, M relationships reported by
+  exporter"`. A null-`dst` `script_ref` (contract-conformant, already counted on the network
+  chunk) now logs at `logger.debug` instead of `logger.warning`; a new check instead warns when
+  any edge's non-null `dst` names no node in the snapshot at all, before `chunk_id_for()` would
+  otherwise synthesize a phantom node for it silently.
+- **`RelationshipType.CLONES` + TD edge-vocabulary drift detection** (ADR-0072) —
+  `TDNetworkChunker` silently dropped the producer's `clone` edge (clone COMP → its Clone
+  Master) at DEBUG level; it is now `RelationshipType.CLONES` (`"clones"`/`"cloned_by"`,
+  weight 0.8 — same tier as `docked_to`/`scripted_by`), reachable via
+  `find_connections(relationship_types=["clones"])` like every other TD type. The producer's
+  13-entry edge vocabulary (`tdgraph_contract.GRAPH_EDGE_TYPES` in `TD_Glossary_tox`) is now
+  declared here too — `TD_GRAPH_EDGE_TYPES` / `TD_GRAPH_EDGE_TYPE_SET` in
+  `td_network_chunker.py` — with a CI test asserting the handled set (derived from
+  `_SIMPLE_EDGE_MAP` and the explicit dispatch branches, not a hand-written second list)
+  matches it exactly, mirroring the drift guard the producer already ships
+  (`test_tdgraph_edge_types_contract.py`) and had been waiting on. The unrecognized-edge-type
+  fallback is now `logger.warning` instead of `logger.debug` — the log level that let `clone`
+  sit unhandled for a full release. `tests/fixtures/td_network/Test_network.tdgraph.json`'s
+  `edge_types` histogram is rebuilt to the full, faithful 13-entry shape (zeros included,
+  matching what a real export always writes) and gained two `clone` edges, one to an in-scope
+  master and one to a new stub node (the built-in `annotateCOMP` utility-node case). Also
+  closes three small silent-ingestion gaps found while auditing the path: a null-`dst` on any
+  edge type other than `script_ref` is now skipped with a warning instead of propagating an
+  `AttributeError` that a broad `except Exception` upstream would otherwise turn into a
+  silently-dropped file; `schema_version` mismatches against the producer's contract now log a
+  warning instead of being ignored; and `script.file_matches_dat` (Sync Manifest join) and a
+  non-zero `unresolved_script_refs` count are now read/logged instead of being invisible
+  outside the network chunk's own body text.
+- **Cross-file `SCRIPTED_BY` join for synced TouchDesigner DATs** (ADR-0062 C6) —
+  `TDNetworkChunker` now reads the exporter's `script.file` / `script.synced` fields and emits
+  a `scripted_by` edge (`via: file`, confidence 1.0, `resolver_source: td_live`) from each
+  scripted DAT operator chunk to the synced `.py`/`.glsl` file's module id. Paths are
+  normalised, re-rooted against the snapshot's grandparent when that file exists, and rejected
+  (DEBUG log) when absolute or escaping the index root. A storage-wide, idempotent post-pass
+  (`GraphIntegration.retarget_scripted_by_edges()`, run by
+  `IndexWriteStage.retarget_td_script_edges()` after every full and incremental index pass
+  and by `_two_pass_build` when the batch carried such an edge) moves the edge off its
+  phantom module node onto the file's lowest-start-line real chunk (`retargeted: true`,
+  `original_target`; `scripted_by_retargeted` build stat), so `find_connections` on a
+  `*__td.py` function lists the operator and `find_path` can walk operator → function.
+  `CodeGraphStorage.remove_edge(source, target, key)` added; `remove_file_nodes` parks a
+  retargeted in-edge back on its module phantom so an incremental re-index of the script
+  keeps the join.
+- **Class → method `contains` edges** — every `method`/`function` chunk nested in a class
+  already carried the enclosing class's `parent_chunk_id` (chunker → embedding metadata), but
+  the graph never consumed it, so the Python graph had no class→member containment edge:
+  `find_path` from a class chunk to one of its own methods reported no path, and an
+  operator → `scripted_by` → class join could only reach the script's methods by detouring
+  through `shares_tag`/`calls`. `GraphIntegration` now emits one `contains` edge
+  (confidence 1.0, `via: parent_chunk_id`, `resolver_source: chunker`) from the class chunk
+  to each such member on both write paths (`add_chunk` and `_two_pass_build`; new
+  `containment_edges` counter in the `_two_pass_build` stats dict, surfaced at INFO in the
+  `Populated graph from embeddings:` log line that every reindex prints —
+  `[GRAPH_ADD_CHUNK]`'s own `containment_edges=%d` field is DEBUG-only and not visible by default).
+  `CodeGraphStorage.add_relationship_edge` now creates the same `symbol_name` placeholder for
+  an absent *source* node as it already did for targets, so a method landing before its
+  class yields a recognisable phantom that `add_node` promotes rather than an attribute-less
+  node. `contains` is therefore no longer a TD-only relationship type (`DEFAULT_EDGE_WEIGHTS`
+  0.9 unchanged). The new edges do **not** reach ego-graph or multi-hop expansion
+  (`DEFAULT_RELATION_TYPES=("calls","called_by")` is an allow-list neither traversal overrides),
+  but they do enter unfiltered graph reads — `find_path`, `find_connections`, the SSCG subgraph,
+  and PageRank centrality (`_simple_digraph_view` applies no relation-type filter) — so the
+  retrieval canons were re-run on the next full reindex regardless; see the 2026-09-05 re-pin
+  below. Requires a reindex to populate on an existing index.
+- **`graph_enhanced.centrality_exclude_containment`** (default `false`, benchmark-locked) —
+  opt-in knob that drops every class → method `contains` edge from centrality computation
+  (all four methods, via the new read-only `GraphQueryEngine._scoring_graph_view`), so
+  PageRank scores the call/type/import topology alone. Built to isolate the `contains`
+  centrality channel from the +74-chunk pool-composition channel the 2026-09-05b re-pin left
+  entangled: `contains` never reaches ego/multi-hop traversal, but PageRank reaches ranking
+  through two channels — the BM25-adaptive centrality boost and the ego-graph neighbour ordering
+  (`EgoGraphRetriever.set_centrality_scores`), the second one previously undocumented. Offline
+  probe (`scripts/benchmark/probe_contains_centrality.py`, 2026-09-06): 7 of 2,651 real chunks
+  change boost, 6 golden-relevant, all by ≤ 0.0032 `blended_score`. Cache key gains a
+  `:no_contains` suffix alongside `:no_phantoms`; traversal (`find_connections`/`find_path`) is
+  untouched. **Paired A/B on the identical index (2026-09-06,
+  `evaluation/CONTAINS_CENTRALITY_ISOLATION_20260906.md`): MRR −0.0004 on both 63q and 133q,
+  63q recall@10/@20 +0.0019/+0.0032, 133q recall@10/@20 −0.0048/+0.0015, no paired CI excludes
+  0 — the `contains` centrality channel is measurably inert; REJECTED for default-on**, so the
+  whole 09-05→09-05b canon delta is attributed to pool composition (+74 new chunks). Key locked
+  in `FORBIDDEN_AUTO_TUNE_KEYS`.
+- **`CodeGraphStorage.get_nodes_by_name(name, exclude_languages=None)`** and
+  **`get_node_language(chunk_id)`** — language-aware name lookup used by the resolver fence
+  below; default behaviour unchanged.
+- **TD network retrieval benchmark** (ADR-0062 Part D2) — `evaluation/td_golden.json` (19
+  retrieval queries, categories `TA`/`TB`/`TC`/`TD`) and `evaluation/td_caller_golden.json` (8
+  typed edge-recall targets covering every directed TD relationship type) over the committed
+  `tests/fixtures/td_network/` fixture, guarded by `test_golden_set_guard.py` (now chunks
+  `.tdgraph.json` sources through `TDNetworkChunker` directly) and the new
+  `test_td_golden_schema.py`. Baselines and the `pool_hit_rate >= 0.9` gate are documented in
+  `docs/BENCHMARKS.md` ("TD Network Retrieval Benchmark").
+- **`TDNetworkChunker` operator chunks render reverse and script edges** — `scripted by: <dat>
+  (<via>)` / `scripts: <host> (<via>)` for both sides of `scripted_by`, and `referenced by:
+  <src>, ...` for incoming `par_ref`/`bind`/`export`/`script_ref`/`shortcut_ref`. An operator that
+  is only the *target* of edges (a pixel-shader DAT, a bind master, a callbacks DAT) previously
+  had no text linking it to its users; on the TD golden this took hit_rate@5 from 0.947 to 1.0
+  and MRR from 0.709 to 0.785 (ADR-0062 Part D2).
+- **`run_caller_recall.py --relationship-types TYPE [TYPE ...]`** — scores typed 1-hop edges from
+  `report.relationships` (per-query `edge_fields`) instead of the `calls`-only `direct_callers`
+  list, so non-`calls` relationship types (TD edges, `inherits`, `uses_type`) can be benchmarked;
+  stub/unindexed targets are scored on their graph node id. Default off; existing runs unchanged.
+- **Edge weights for the 8 TD relationship types** in `graph/graph_storage.py`
+  `DEFAULT_EDGE_WEIGHTS` (`wires_to`/`contains` 0.9, `docked_to`/`scripted_by` 0.8,
+  `references_op`/`binds_to`/`exports_to` 0.7, `shares_tag` 0.3) so centrality and ego-graph
+  ranking on TD projects is deliberate rather than the fallback weight; `test_schema.py` now
+  asserts every `RelationshipType` has a weight.
+- **`.tdgraph.json` TouchDesigner network indexing** (ADR-0062, opt-in) — a new pseudo-language
+  chunker (`chunking/td_network_chunker.py`, `TDNetworkChunker`) builds `operator`/`class`/`network`
+  chunks directly from a TD network JSON snapshot (no tree-sitter grammar involved), so
+  `search_code`, `find_connections`, and `find_path` work over TD operators, their scripts, and the
+  `td` class hierarchy the same way they work over Python symbols. 8 new `RelationshipType` members
+  (`wires_to`, `docked_to`, `contains`, `references_op`, `binds_to`, `exports_to`, `scripted_by`,
+  `shares_tag`). Gated
+  behind `ChunkingConfig.enable_td_network_indexing` (`search_config.json`, default `False`) —
+  inert on every existing indexed project, including this repo's own self-index, until a project
+  opts in.
+- **C/C++ call-edge tier** (ADR-0060) — C and C++ chunks now emit `calls`/`imports`/
+  `instantiates`/`inherits` edges the same way Python chunks do, closing a gap where every C/C++
+  chunk was graph-isolated (`find_connections`/`find_path` returned nothing for them). Tree-sitter
+  name matching only (confidence 0.6, no type resolution — `v.size()` and `myObj.size()` are
+  indistinguishable); libclang/clangd tiers remain deferred per ADR-0035's unmet reopening
+  condition (no `compile_commands.json`/clangd/libclang available in this environment). New
+  `CallGraphConfig.ambiguous_fanout_cap` (default `3`) caps per-symbol candidate fan-out for
+  C-family languages only — Python resolution is unaffected by construction (language-gated) and
+  by measurement (63q/133q golden-set canons flat, see
+  `evaluation/CANON_GATE_FANOUT_CAP_20260903.md`).
+
+### Fixed
+
+- **`get_index_status` counts drop after a file is deleted** (`search/indexer.py`). A reindex that
+  only removed files left `stats.json` stale, so `total_chunks`, `files_indexed` and the folder and
+  chunk-type counts kept the deleted file's chunks until the next add. `save_index()` now rewrites
+  the stats; hybrid saves reach the dense index only through it.
+
+- **C-family chunking keeps code and comments it used to drop** (`chunking/languages/_c_family.py`,
+  `chunking/languages/base.py`, `c.py`, `cpp.py`, [ADR-0087](docs/adr/0087-recover-dropped-c-family-regions.md)).
+  `[PARSE_WARN]` counted only ERROR lines that no chunk covered. On the TouchDesigner 2025 headers
+  (opencv, CPython `Include/`) a whole-file audit found much larger loss: on the indexed set, 5,300
+  dropped code lines and 9,595 dropped comment lines. That is now 297 and 334, and chunks grow 7.8%.
+  - **Parse-only repairs.** CUDA specifiers are blanked for every C-family file. A new bare-macro
+    repair keeps a round only if ERROR lines strictly fall. The macro-wrapped repair now triggers more
+    widely. A `/* */` that splits a `#define` body is blanked for the parser. Together these cut ERROR
+    lines from 23,560 to 7,956.
+  - **Preamble runs inside nodes that hold a chunk.** Prototypes and `#define`s inside `extern "C"`,
+    namespaces and ERROR nodes are now collected.
+  - **Multi-line `#define`s become named `macro` chunks.**
+  - **Doc comments.** C/C++ chunks adopt the comment run above them as `docstring`, and comment-only
+    runs of 3 or more lines survive.
+  - **Chunk ends.** Chunks end on their last content line, not the phantom newline row of a
+    preprocessor node.
+  - **PARSE_WARN.** `lines_lost` skips blank lines.
+  - **Harness.** `scripts/benchmark/measure_parse_recall.py` (run with `-m`) reports dropped lines per
+    file, with `--compare` and `--index-filter`.
+
+- **A full reindex no longer fails on duplicate chunk ids** (`chunking/languages/_c_family.py`,
+  `chunking/languages/base.py`, `search/index_write_stage.py`,
+  [ADR-0087 addendum](docs/adr/0087-recover-dropped-c-family-regions.md#addendum-2026-10-14-unique-preamble-ids)).
+  A chunk id is `path:start-end:type[:name]`. After the change above, a TouchDesigner reindex stopped
+  with `[SYNC_CHECK] Duplicate chunk_ids` and `unicodeobject.h:780-780:module_preamble has index_id
+  23675 but is at position 23674`: two unnamed preambles shared line 780.
+  - **Bodyless specifiers are not chunks.** `class Foo;` and `enum K k` in a parameter define nothing.
+  - **Preambles never share a line**, in any language. A run that starts where the previous one ends
+    folds into it.
+  - **Chunks with the same span, type, name and parent fold into one**, in any language, so same-name
+    overloads on one line (`A() {} A(const A&) {}`) keep both texts under one id.
+  - **Write-boundary backstop.** `IndexWriteStage.add_to_index` keeps the first result per chunk id and
+    logs one WARNING, so a future collision costs one chunk, not the reindex.
+  - **Harness.** `measure_parse_recall` reports `duplicate_ids` and chunks per node type; `--compare`
+    flags any file with a duplicate.
+
+- **USD `codegenTemplates` directories are skipped by default** (`chunking/language_registry.py`). These
+  directories hold Jinja templates saved as `.cpp`/`.h`, which never parse as C++. `include_dirs` can
+  re-admit them.
+
+- **`code2code_instruction` is the xCodeEval similar-code string** (`search/config.py`, all three F2LLM
+  entries) — it was the CodeSearchNet-CCR prefix-to-continuation string, which ranked callers over
+  structural siblings. The instructed `find_similar` probe now also skips a truncated preview-only
+  `bm25_text` and falls back to the stored vector on an embedder error, and no longer skips chunks of 200
+  characters or fewer (their preview is the full text). Re-test on the 330M (E2b): null result, flag stays
+  off ([ADR-0085](docs/adr/0085-instructed-find-similar-flag-off.md)).
+
+- **IVF indexes were built with `METRIC_L2` and returned squared distances as "similarities"**
+  (`search/faiss_index.py`, [ADR-0083](docs/adr/0083-faiss-index-parameter-policy.md)) —
+  `faiss.IndexIVFFlat` defaults to L2 when the metric is omitted, so every project above the IVF
+  threshold scored 0.0 for an exact match and larger-is-worse, while ranking boosts, TM2C2 dense
+  normalisation and the descending sort all assume inner products. `create()` now passes
+  `METRIC_INNER_PRODUCT`; an on-disk legacy L2 index is detected on `load()` (one WARNING,
+  `describe()["metric"] == "l2_legacy"`) and its scores converted with `ip = 1 - d^2/2` until it is
+  reindexed. `get_similar_chunks_batched` now goes through the wrapper so the shim applies there too.
+
+- **`remove_positions` could silently desync FAISS from metadata** — the per-position
+  `reconstruct()` loop skipped failures with a warning while `BatchOperations.remove_files`
+  renumbered survivors assuming none were skipped. Kept vectors are now pulled with a single
+  `reconstruct_n` + boolean mask and a reconstruct failure raises.
+
+- **Metadata-filtered dense search could starve** — `CodeIndexManager.search` fetched `k*3`
+  candidates and post-filtered in Python with no widening, so a selective filter returned fewer
+  than `k` hits even when matches existed. It now widens x4 up to `FILTERED_SEARCH_CAP = 4096` (or
+  `ntotal`) until `k` survivors, mirroring the ADR-0067 loop in `get_similar_chunks`.
+
+- **Cross-process reindex race deleted every metadata row while FAISS/BM25 saved on top of the
+  empty store** (2026-09-25 twozero-dev incident, H1) — a CLI force-full reindex held
+  `metadata.db` open while the MCP server's own auto-reindex raced it on the same storage
+  directory; `CodeIndexManager.preflight_clear()`'s pre-probe `MetadataStore.clear()` (added by
+  the 2026-08-31 ADR-0025 amendment) committed a `DELETE FROM` on all 31,332 rows *before* the
+  rename probe ran, so when the probe then failed with `WinError 32` (the CLI still held the
+  handle), the server aborted the clear as designed but the rows were already gone — the CLI
+  finished its run and saved FAISS/BM25/graph on top of the now-empty metadata store, only
+  catching it at its own post-index consistency check (`Metadata database size (0) !=
+  chunk_ids length (31332)`). Fixed on two levels: (1) `preflight_clear()` reordered to probe
+  before any destructive step — the pre-probe `clear()` is dropped entirely, and deletion now
+  happens only via the rename + `clear_index()`'s existing unlink, so a failed probe is a true
+  no-op again (Windows-only fix — POSIX renames succeed silently under an open handle); (2) a new
+  cross-process `search/index_write_lock.py` (`filelock.FileLock`, OS-level, `timeout=0`,
+  auto-released if the holder dies) wraps `IncrementalIndexer.incremental_index()` — the single
+  chokepoint shared by CLI force-full reindex, MCP `index_directory`, and auto-reindex — so a
+  second writer now fails fast with `IndexWriteLockHeld` instead of racing the first at all, on
+  any platform. A cheap `is_index_write_locked()` pre-gate in
+  `SearchOrchestrator._maybe_reindex` skips building a `HybridSearcher` (which maps
+  `code_vectors.mmap`) once the lock is already known to be held. New direct dependency
+  `filelock>=3.32,<4` (already locked transitively). See the 2026-09-25 amendment to
+  `docs/adr/0025-clear-index-directory-in-place.md`.
+- **pyan tier silently zeroed on every index since 2026-09-02** — `f5acd585` migrated
+  `chunking/relationships/external_call_graph.py`'s `_TrackedVisitor.postprocess()` to pyan3
+  2.8's postprocessor pipeline (`cull_inherited` dropped, `cull_subsumed` added), but the venv
+  was never re-synced to `uv.lock` and stayed on pyan3 2.6.2. The `cull_subsumed` import lived
+  *inside* `postprocess()` (a method body), not at module scope, so the module-level
+  `try/except ImportError` guard around `pyan.analyzer.CallGraphVisitor` still succeeded and
+  `pyan_available()` kept reporting the tier as usable; the real `ImportError` only fired deep
+  inside a resolver subprocess the first time `postprocess()` actually ran
+  (`chunking/relationships/call_edge_resolver.py:_resolve_in_subprocess`), where it was
+  swallowed as "non-fatal" — every index silently lost the pyan cross-module edge tier (libcst
+  only) for 12 days / 94 commits / six canon re-baselines (09-03 → 09-08), none of which
+  detected it because the venv drift had also broken `pytest-timeout` and made the local test
+  suite uncollectable since 2026-08-20. Fixed on two levels: (1) `uv sync --extra callgraph
+  --extra test --extra otel` to bring the venv back to `uv.lock` (pyan3 2.8.1); (2) the
+  `pyan.postprocessor` import moved to module scope so a *future* API mismatch (any pyan3
+  version whose postprocessor doesn't match what this module needs) flips `pyan_available()` to
+  False at import time with an actionable `pyan_unavailable_reason()` message (names the
+  installed version, the required floor, and the `uv sync` fix) instead of failing lazily and
+  silently inside a subprocess. `pyproject.toml`'s `pyan3` floor raised `>=2.6.0` → `>=2.8.0`
+  to match. A same-model (bge-m3) Leg A (pyan off) / Leg B (pyan on) A/B on this fix showed
+  +0.006 MRR, no regression — see `evaluation/CANON_20260914_REBASELINE.md`, which also
+  documents an unrelated finding surfaced during the same investigation: the prior canon
+  lineage back to 2026-07-26 was measured on `codefuse-ai/F2LLM-v2-0.6B`, not the `BAAI/bge-m3`
+  this (VRAM-constrained) machine runs, making the two canon lineages non-comparable.
+- **Stage-3 LSP resolver tier brought online (install + verify).** Every index had been logging
+  `[RESOLVERS] lsp resolver unavailable (optional dep missing)` — the `[lsp]` extra
+  (`basedpyright>=1.21`) was never installed on this machine, so the highest-confidence resolver
+  tier (`ResolverConfidence.LSP = 0.98`, above libcst 0.90 and pyan 0.75) never dispatched.
+  `uv sync --extra callgraph --extra test --extra otel --extra lsp` installed
+  `basedpyright==1.39.10` (2 packages, `uv.lock` unchanged — already pinned). `lsp_enabled` was
+  already `true` in `search_config.json`; Stage 3 is gated solely on that flag, not on the
+  `resolvers` list (ADR-0032 §D3), so no config edit was needed. A force reindex confirmed
+  `Dispatching 3 resolver(s)`, `[RESOLVERS] lsp: 1960 edges → added=113, upgraded=1847`, no
+  silent-zero-edge path (the `[LSP] No edges produced` warning stayed absent) and no budget
+  truncation (51.5s resolve vs the 180s floor). Resulting `resolver_source` mix: lsp 1960 @0.98,
+  libcst 759 @0.90, pyan 556 @0.75 — libcst/pyan counts fell as expected, since LSP merges last
+  and upgrades edges the lower tiers already found rather than losing coverage. Scoped to install
+  - verify only; the retrieval A/B gate and canon re-pin on this three-tier substrate are
+  deferred — see the note appended to `evaluation/CANON_20260914_REBASELINE.md`.
+- **Methods of a decorated class were never chunked at all** (ADR-0063). `decorated_definition`
+  was splittable but not a container (`chunking/languages/base.py`), so `@dataclass class Foo: def
+  bar(self): ...` chunked the whole decorated class as one opaque blob — `bar` never surfaced as
+  its own chunk, was not retrievable by `search_code`, and had nothing for the `parent_chunk_id`
+  fix above to attach to. New overridable `_container_traversal_root(node)` seam returns the node
+  whose children are container members (default: `node` itself, iff `_CONTAINER_NODE_TYPES`);
+  `PythonChunker` overrides it to return the **inner** `class_definition` for a
+  `decorated_definition` wrapping a class, so the wrapper is still chunked once (its `chunk_id`
+  stays load-bearing) while traversal descends straight into the class body instead of re-chunking
+  either node — the naive fix (widening `_CONTAINER_NODE_TYPES` directly) was verified in-memory
+  to produce a duplicate, self-parented class chunk. `multi_language_chunker.py`'s parent-
+  registration gate widened to also admit `chunk_type == "decorated_definition"`, mirroring
+  ADR-0038's `struct_specifier` fix. Measured on this repo: **34 decorated classes with ≥1 method,
+  72 methods** across **31 files** — no existing `chunk_id` moves, but those 31 files' synthetic
+  `module`-summary chunks change *content* (not id) because `file_summarizer.py` folds method
+  names into the summary text; zero golds in either golden dataset reference a `:module:` chunk,
+  so exposure is nil. Corrected golden-dataset `:decorated_definition:` counts while auditing this:
+  24 in `golden_dataset.json` (7 classes), 36 in `golden_dataset_expanded.json` (10 classes). No
+  reindex, benchmark run, or canon re-pin was performed for this change at the time it landed
+  (scope decision) — both this change and the `parent_chunk_id` fix below were later measured
+  together in the 2026-09-05b re-pin (`evaluation/CANON_20260905B_ADR0063_REBASELINE.md`), which
+  discharges the "stale twice over" note this bullet originally carried. See
+  `docs/adr/0063-python-decorated-class-container-traversal.md`.
+- **Decorated methods never got a `parent_chunk_id`.** The class→method `contains` edge (added
+  above) is driven by `parent_chunk_id`, but `multi_language_chunker.py`'s assignment gate only
+  admitted `chunk_type in ("method", "function")` — a decorated member (`@property`,
+  `@staticmethod`, `@cached_property`, …) keeps its tree-sitter wrapper type,
+  `"decorated_definition"`, as its `chunk_type` (deliberately: `chunk_type` is baked into
+  `chunk_id`, so remapping it to `"method"` would move every decorated chunk's id and break
+  golden-dataset references), so it fell through the gate and stayed unparented even though its
+  undecorated siblings did not. Measured: **128 decorated methods** on the indexed corpus
+  (557 repo-wide) were invisible to class→method containment — `find_path` from a class to one
+  of its own decorated methods reported no path. Gate widened to also admit
+  `"decorated_definition"`; `split_block` fragments of a large decorated method remain
+  unparented by design (out of scope — see the follow-up ADR-0038 note), and a nested
+  *decorated* class now gets an edge while a nested *plain* class still does not (accepted
+  asymmetry, 0 instances in this repo, pinned with a characterization test). Adds ~128 new
+  `contains` edges on a full reindex of this repo — deliberately deferred to a dedicated session
+  per this change's scope decision; measured together with the chunk-shape fix above in the
+  2026-09-05b re-pin (`evaluation/CANON_20260905B_ADR0063_REBASELINE.md`). The chunk-shape half of this gap
+  (methods of a `@dataclass`-decorated class never becoming chunks at all) is a separate,
+  deferred change — see `docs/adr/0038-cpp-only-container-traversal-seam.md`.
+- **TD `scripted_by` / `via: file` edges dead-ended on phantom module nodes** (ADR-0062 C6).
+  On a full reindex of a real project all 214 such edges targeted
+  `Scripts/<x>.py:0-0:module:<stem>` phantoms, 0 carried `retargeted`, and `find_path` from a
+  DAT's host operator to a function in its synced script reported no path. Two joint causes:
+  the per-chunk `CodeIndexManager.add_embeddings` → `GraphIntegration.add_chunk` path wrote
+  the edge verbatim first (creating the phantom), and the batch-only retarget in
+  `_two_pass_build` then skipped it because its guard tested node *existence* rather than
+  phantom-ness — it also could never see a `.py` that landed in a later batch. Replaced by
+  the storage-wide phantom-keyed post-pass described under Added; regression tests run the
+  production `add_chunk`-then-`populate_from_embeddings` order on a real `CodeGraphStorage`.
+- **Pseudo-language operator names no longer resolve Python call targets** (ADR-0062
+  "name-resolution fence"). PASS 1 of the two-pass graph build indexed every chunk's name, so a
+  Python call to `view` could bind to a TD operator named `view` (17 spurious
+  python→td_network `calls` edges on a real project). Chunks in `PSEUDO_LANGUAGES` are still
+  graph nodes but never call-target candidates; the strict symbol resolver in
+  `RelationshipAnalyzer` excludes them, and the lenient `find_path`/`find_connections` symbol
+  lookup keeps them reachable but orders real-language matches first.
+- **`find_connections`: `direct_callers`/`indirect_callers` are now `calls`-edge lists only.**
+  `RelationshipAnalyzer.analyze_impact` fed every inbound edge type into the caller lists (and
+  into `caller_confidence`/`total_impacted`), so on a TouchDesigner operator chunk its `contains`/
+  `docked_to`/`shares_tag`/`instantiates` neighbours all appeared as "callers" tagged
+  `confidence: "exact"` — eleven phantom callers on `Logger/Logger` in the first real export.
+  Python chunks were affected the same way whenever `inherits`/`imports`/`uses_type` edges pointed
+  at them; it only looked like a call graph because those are rare. The caller traversal now
+  passes `relation_types=["calls"]` (mirroring the existing outbound-callee filter) and the typed
+  `relationships` sections get their own one-hop all-types inbound query, so `contained_by`,
+  `docked_by`, `shares_tag_with`, etc. are unchanged. Legacy untyped edges still normalise to
+  `calls` in `CodeGraphStorage.get_edge_data`, so old-format call edges are not dropped.
+  `GraphQueryEngine._traverse_inbound`/`_traverse_outbound` now also *expand* only through
+  edges that match the requested `relation_types`, so a depth-N `indirect_caller` sits at the end
+  of N real `calls` edges — previously the BFS walked through a `contains`/`docked_to` hop and
+  then picked up `calls` edges into the neighbour (four Python "indirect callers" on the same TD
+  operator). Unfiltered queries (`relation_types=None`) are unchanged. Finally,
+  `GraphQueryEngine._node_variants` no longer adds symbol-name/bare-name lookup variants for
+  `td_network` chunks (`operator`/`network` kinds): TD edges already target full chunk ids, and the
+  bare name collided with any same-named Python symbol node — a TD operator called `Logger`
+  inherited every caller of the Python `Logger` class. Python chunks keep their variants
+  byte-identically.
+- **`find_connections`: symmetric relationships listed each peer twice.** The `.tdgraph.json`
+  chunker stores `shares_tag` as one edge per direction (so a spoke sees its peers directly, not
+  only via the exporter's per-tag hub), and `_build_graph_relationships` reported the outbound and
+  inbound copy separately — `shares_tag_with` on `Logger/Logger` showed 18 entries for 9 peers.
+  Types whose forward and reverse fields coincide are now deduplicated by peer chunk id; every
+  asymmetric section is untouched.
+- **`.tdgraph.json` chunker: `scripted_by` edges were silently dropped.** The real exporter emits
+  them (`{type: scripted_by, src: <host op>, dst: <DAT>, par, via}` — 110 in the first export)
+  but `_SIMPLE_EDGE_MAP` had no row, so each hit the "Unrecognized edge type" debug branch.
+  Added `"scripted_by" → RelationshipType.SCRIPTED_BY` with `par`/`via` metadata, exporter-native
+  direction. Index-time change: re-chunk the graph file (re-export in TD, or force reindex) to see
+  the edges. Fixture gains one `scripted_by` edge (`edge_count` 38).
+- **`.tdgraph.json` chunker: real line spans and no nameless root id** (ADR-0062 follow-up, found
+  on the first real TouchDesigner export). Operator/class/network spans are now derived from the
+  JSON file's own element positions (`TDNetworkChunker._json_element_spans`) instead of the
+  exporter's `node_line_spans`, which holds Python-DAT script line counts, not file positions —
+  previously ~75% of operator chunks carried a `0-0` span and the rest meaningless values; class
+  and network chunks were hard-coded `0-0`. The exported target COMP (a depth-0 node) no longer
+  becomes an operator chunk with an empty name (`<file>:0-0:operator`); it is folded into the
+  `network` chunk and every edge touching it (`contains`/`wire`/`dock`/`shared_tag`) attaches
+  there. A `_drop_nameless` guard rejects any chunk whose id fails `ChunkId.parse`. Operator chunk
+  ids change (`...:330-358:operator:Logger/Logger`) — any existing index built with the gate on
+  needs one full reindex of that project. Fixture gains a root node + root-hosted `dock`/`shared_tag`
+  edges; 12 new/rewritten unit tests derive expected spans from the fixture text.
+
+### Changed
+
+- **Internal: `create_reranker` takes the `RerankerConfig`**
+  ([ADR-0032 addendum](docs/adr/0032-config-liveness-audit.md#addendum-2026-10-14-create_reranker-takes-the-rerankerconfig)).
+  There is no behaviour change; a 63-query SSCG run on the laptop configuration matches the
+  2026-10-08 B1 leg on recall and is within gate on MRR.
+  - `create_reranker(config, device=None)` reads the per-branch fields itself; the nine per-field
+    kwargs and their duplicated defaults are gone, and `RerankerConfig` is the only default.
+  - Both `RerankingEngine._ensure_reranker` branches pass `config.reranker` through.
+  - Five config-liveness `reader=` tags moved to `search/neural_reranker.py`; `construction_baked`
+    and `requires_rebuild()` are unchanged.
+
+- **Internal: tighter search/mcp_server layering**
+  ([ADR-0051](docs/adr/0051-delete-graph-scoring-stage-upward-import.md#addendum-2026-10-14-the-deferred-fallback-is-closed),
+  [ADR-0053](docs/adr/0053-resource-refresher-protocol-seam.md#addendum-2026-10-14-one-construction-site-public-is_shutdown)).
+  There is no behaviour change.
+  - `search_factory.build_incremental_indexer` is the single place that builds an `IncrementalIndexer`.
+  - Storage-root resolution moved to `search/storage_layout.py`, so neither `search/` nor `merkle/`
+    imports `mcp_server/` at runtime.
+  - `HybridSearcher.is_shutdown` is now public.
+
+- **C++ classes with export macros in their head now parse** (`chunking/languages/_c_family.py`,
+  `cpp.py`, [ADR-0087 addendum](docs/adr/0087-recover-dropped-c-family-regions.md#addendum-2026-10-14-export-macros-in-class-heads)).
+  tree-sitter-cpp read `class CV_EXPORTS Foo : public Bar {` as a class named `CV_EXPORTS`, so the class
+  became ERROR or a bogus `function_definition`. A parse-only repair blanks the all-caps macros between
+  `class`/`struct`/`union` and the name, and keeps the rewrite when the whole repair pipeline gives no
+  more ERROR lines. A class defined as `Outer::Inner` is named in full. On the TouchDesigner 2025
+  headers, ERROR lines fall by 1,566 in 177 files, with none worse. Chunks grow by 6,434 (+21% on the
+  indexed set), mostly members now chunked one by one: `field_declaration` +4,406, `class_specifier`
+  +749. Member annotation macros (`CV_WRAP`) still break 5 classes in `rgbd/depth.hpp`.
+
+- **VRAM budget has one home** ([ADR-0086](docs/adr/0086-vram-budget-has-one-home.md)) — the
+  per-process VRAM cap and the GPU batch sizer moved out of `embeddings/embedder.py` into
+  `embeddings/vram_budget.py` behind one object, `VramBudget` (`from_config` / `default`, then
+  `apply_cap`, `batch_size`, `reapply_cap`). The embedder and the three rerankers hold a budget
+  instead of reading `vram_limit_fraction` / `dynamic_batch_*` themselves; the rerankers' three
+  copy-pasted re-apply blocks are one call. `search/vram_manager.py` is now the tier table only:
+  `VRAMTier` rows carry the per-tier batch numbers and `tier_for` is the one 6/10/18 GB band lookup
+  (`index_probe` and the batch sizer read it; the sizer's `<=` edge became the table's half-open
+  band). `VRAMTierManager` (no production callers) is deleted. Golden set: Q116/H034 follow
+  `calculate_optimal_batch_size` to its new file, H039 drops the deleted class.
+- **Flat/IVF policy is measured, not guessed** ([ADR-0083](docs/adr/0083-faiss-index-parameter-policy.md)) —
+  `IVF_MIN_VECTORS` 10,000 -> 50,000 (exact flat search is ~5 ms/query at 50K x 1024-d; IVF at equal
+  recall was no faster than flat at 17K). Above it, `nlist = round(4 sqrt N)` capped at `N // 39`
+  (`ivf_nlist_for`) replaces the fixed 100, and `nprobe = max(ceil(nlist/2), ceil(420 nlist/N))`
+  (`ivf_nprobe_for`) replaces the fixed 16, which scored recall@210 = 0.94 against exact search on
+  a 17K real corpus (real code embeddings need ~half the lists probed; synthetic data needs 3%).
+  `nprobe` is re-derived from `ntotal` on every `load()`. **API:** `FaissVectorIndex.create(...,
+  "ivf")` and `CodeIndexManager.create_index(..., "ivf")` now require `expected_count`
+  (`ValueError` otherwise). Existing IVF indexes keep working via the legacy shim; reindexing makes
+  them flat.
+
+- **`ultra` output format: insertion-order headers, nested field groups, configurable sparse
+  threshold** (2026-09-21) — **wire-format change for every existing `ultra` consumer.** Field
+  order in `{fields}` headers is now the response's own insertion order instead of alphabetically
+  `sorted()`; a column that is a dict on every row (uniform key set) now nests inside the header
+  instead of staying a raw JSON cell — e.g. `find_path`'s `path[N]{node{chunk_id,name,type,file},
+  edge_to_next{relationship_type,line}}`, with a missing final-hop edge `null`-filled rather than
+  falling back to an unnested header for the whole array. `OutputConfig.sparse_threshold` (default
+  `0.25`) is now a documented config field (`search_config.json`'s `output.sparse_threshold`)
+  controlling the existing sparse-column split (`results_sparse`) instead of a hardcoded constant.
+  See `docs/MCP_TOOLS_REFERENCE.md`'s "Nested Field Groups" section.
+- **Real TOON v4.1 text output (`toon`/`toon-tab` formats) removed** (`docs/adr/0078-reject-real-toon-text-output.md`)
+  — an uncommitted prior session built a real TOON v4.1 text encoder
+  (`mcp_server/toon_encoder.py`) and its pre-registered promotion gate (`toon` ≤ `ultra` in
+  tiktoken count on both `search_code` and `find_connections`) failed: `toon` beat `ultra` on
+  `find_connections` (−0.94% tokens) but lost on `search_code` (+0.31%), the more-called tool.
+  Since nothing had shipped, it was deleted outright rather than kept opt-in — the encoder's one
+  genuine dependent, `ultra`'s tabular-eligibility detector, was extracted into
+  `output_formatter.py` as private helpers first, so the `ultra` improvements above are
+  unaffected. `output_format` now accepts only `verbose` / `compact` / `ultra`.
+- **Retrieval canon re-pinned 2026-09-20** (`evaluation/CANON_20260920_REBASELINE.md`) after
+  discovering the 2026-09-08 pin below (and 09-03→09-08, six re-baselines) was measured on a
+  **pyan-dark substrate**: the venv had silently drifted 34 packages behind `uv.lock` since
+  `f5acd585` (2026-09-02), so `pyan_available()` reported the pyan cross-module call-edge tier
+  usable while its real `ImportError` fired inside a resolver subprocess and was swallowed as
+  non-fatal (`ee63b8ef`, 2026-09-14). Restoring the venv on this F2LLM machine brings the tier
+  back: call graph 7,050 nodes / 31,567 edges (+195/+957 vs 09-08), resolver mix `lsp 2029 /
+  chunker 1132 / libcst 775 / pyan 573`, on 238 files / 3,061 chunks. 63q determinism reconfirmed
+  bit-identical across two independent rounds at clean HEAD (`624fef0c`). 63q MRR **0.8330**,
+  133q **0.6514**, F-via-similar **0.8876** — deltas vs 09-08 (+0.0089/+0.0045/+0.0205 MRR,
+  −0.0201/−0.0214/−0.0174 recall@20) **marginally breach** the pre-registered ±0.02 band on all
+  three views, by 0.0001–0.0014, attributed to the restored pyan tier's centrality-mediated
+  reordering (PageRank reaches ranking through the BM25 adaptive boost and
+  `EgoGraphRetriever.set_centrality_scores`) rather than a code regression — gold-set and
+  BM25-corpus-statistics alternatives were checked and ruled out. `pool_hit_rate` unchanged or
+  improved on every view; adopted as canon-of-record anyway per the canon doc's Part 1 section.
+  Also recorded: every canon in this lineage, including this one, is measured with the intent
+  layer pinned off (`pin_intent_off=True`), not the live serving config
+  (`search_config.json`'s `default_intent: "HYBRID"`), so `GraphScoringStage._reorder_synthetic`'s
+  module-chunk demotion is inert in the benchmark but active on the running MCP server — a
+  harness-measurement gap, not a user-visible one. Non-comparable to the separate `BAAI/bge-m3`
+  notebook lineage (09-14/09-14B, different machine). See `docs/BENCHMARKS.md`.
+- **`chunking.max_file_size_bytes` default 5 MB → 24 MiB (25165824)**, 2026-09-19
+  (`docs/adr/0075-td-graph-doc-budget-is-pinned-to-the-producer-contract.md`) — raised jointly
+  with TD_Glossary_tox's producer-side budget raise (TD_Glossary_tox ADR 0014): a zero-data-loss
+  `*.tdgraph.json` export of a POPX-scale foreign network measured at 18,491,105 B, over the old
+  5 MB gate by a wide margin, and `chunking/multi_language_chunker.py`'s size check gates *before*
+  TD-network dispatch (`:342` vs `:349`), so any TD export over the old cap was silently dropped
+  with only an invisible-by-default `logger.info`, never reaching the chunker at all. 24 MiB is
+  the same 24 MiB constant on both sides — this repo's own declared validation range
+  (1024–104,857,600) is separate and unchanged, and neither repo imports the other, so the two
+  copies are kept honest by a new literal-vs-literal drift test,
+  `tests/unit/chunking/test_td_graph_doc_budget.py`, pinned against
+  `tdgraph_contract.CHUNKER_MAX_DOC_BYTES`. This also raises `repo_profiler.MAX_FILE_SIZE_BYTES`
+  (import-time-seeded from this same field, see `search/config.py`). The listwise reranker's VRAM
+  profile (bounded by `top_k_candidates` × `listwise_doc_max_chars`, independent of index size) is
+  unaffected by this raise in that sense — but that same character-vs-token mismatch caused a live
+  CUDA OOM the same day when admitting more TD `operator` chunks shifted the candidate pool's
+  content mix; see `evaluation/RERANKER_TD_TOKEN_DENSITY_20260919.md`. Historical note: the
+  `chunking.max_file_size_bytes` entry below (v0.26.0, 2026-09-02) accurately describes the
+  field's original 5 MB default at introduction and is left unchanged.
+- **Retrieval canon re-pinned 2026-09-05** (`evaluation/CANON_20260905_REBASELINE.md`) after the
+  16-commit `contains`-edge search-path burst (`5d50708`…`abeef6f`): full force reindex (234
+  files / 2,871 chunks, 29,664 edges incl. 894 new `contains`), 63q determinism reconfirmed
+  bit-identical. 63q MRR **0.8234**, 133q **0.6223**, F-via-similar **0.8697** — deltas vs the
+  2026-09-03 pin (−0.0195/−0.0109/−0.0159) inside the pre-registered ±0.02 drift band on both
+  MRR and recall@20; gate PASSED, read as substrate drift across the whole burst, not an
+  isolated `contains` effect (traversal never reaches `contains`; the one live path is PageRank
+  centrality feeding the BM25 adaptive boost — see the canon doc's Scope note). Supersedes an
+  undocumented 2026-09-03 re-pin (`evaluation/CANON_20260903_REBASELINE.md`: 63q 0.8429, 133q
+  0.6332, F-via-similar 0.8856) that was never picked up in `docs/BENCHMARKS.md`/`CLAUDE.md`
+  until now. See `docs/BENCHMARKS.md` for the full table.
+- **Retrieval canon re-pinned 2026-09-05b** (`evaluation/CANON_20260905B_ADR0063_REBASELINE.md`)
+  after `721ccde` + `135007c`/ADR-0063 (decorated Python classes become container nodes, so their
+  methods are chunked and gain `parent_chunk_id`/`contains` edges): full force reindex (234 files
+  / 2,945 chunks, +74; 30,286 edges incl. 1,095 `contains`, +201), 63q determinism reconfirmed
+  bit-identical. 63q MRR **0.8164**, 133q **0.6286**, F-via-similar **0.8671** — deltas vs the
+  2026-09-05 pin (−0.0070/+0.0063/−0.0026) inside the ±0.02 drift band on both MRR and recall@20;
+  gate PASSED, read as noise around a flat baseline — the new chunks and `contains` edges moved no
+  metric near a threshold crossing. This is the first empirical measurement of ADR-0063 on the
+  real corpus, and the first to attribute the `contains`-edge delta correctly between the two
+  commits (+51 from the 23 newly-chunked decorated classes, +150 from `721ccde` retroactively
+  parenting decorated methods in already-chunked classes) rather than leaving it as an unquantified
+  IOU. Superseded by the 2026-09-06 re-pin below.
+- **Retrieval canon re-pinned 2026-09-06** (`evaluation/CANON_20260906_REBASELINE.md`, base arms of
+  `evaluation/CONTAINS_CENTRALITY_ISOLATION_20260906.md`) after `8e3522d` (opt-in
+  `centrality_exclude_containment` knob touches indexed `graph/`/`search/` files): full force
+  reindex (235 files / 2,956 chunks; 30,449 edges incl. 1,095 `contains`), every leg with
+  `CLAUDE_AUTO_REINDEX=0`, 63q determinism reconfirmed bit-identical twice. 63q MRR **0.8151**,
+  133q **0.6324**, F-via-similar **0.8657** — deltas vs the 2026-09-05b pin
+  (−0.0013/+0.0038/−0.0014) inside the ±0.02 drift band on both MRR and recall@20; gate PASSED.
+  This pin also settles what the two 09-05 pins left entangled: the paired A/B on the identical
+  index shows the `contains` PageRank channel moves MRR by −0.0004 on both sets, so the
+  09-05→09-05b movement is pool composition (+74 chunks), not graph topology. See
+  `docs/BENCHMARKS.md` for the full table.
+- **Ranking policy keys TD chunks explicitly** (ADR-0062 Part D2) — `search/ranking_policy.py`
+  boosts the `operator` kind like `function` (1.2 / 1.15 / 1.2) and remaps the TD chunker's
+  per-op-type `class` chunks to `td_class`, which carries the `module` (summary) multiplier
+  (0.82 / 0.85 / 0.90) instead of the x1.35 Python-class boost. `effective_chunk_kind()` keys the
+  remap off the `td_class` tag *or* a `.tdgraph.json` chunk-id file part, because the formatted
+  result rows the centrality ranker sees carry no `tags`. TD golden MRR 0.785 -> 0.886 (TA
+  0.600 -> 0.900); Python kinds and the 63q canon are unaffected. The golden's `mrr` threshold
+  is lowered from 0.9 to 0.85 so the remaining anchor-first / class-hub misses, which are not
+  tuned on a 22-chunk corpus, do not keep the gate red.
+
+- **`CallGraphConfig.resolvers` and `CallGraphConfig.ambiguous_fanout_cap` are now
+  `benchmark_locked`** (22 → 24 `FORBIDDEN_AUTO_TUNE_KEYS`) — `resolvers` cites
+  `RESOLVER_TIER_CALIBRATION_20260902` §11/§12 (B4 decided pyan stays: post-gate
+  `prec_lb_cov` 0.2510→0.6032, `recall_marginal` flat); `ambiguous_fanout_cap` cites ADR-0060
+  and `evaluation/CANON_GATE_FANOUT_CAP_20260903.md` (cap holds voro-engine ambiguous-edge growth
+  to +90% vs +190% uncapped, Python retrieval canons flat). Neither changes behavior — the lock
+  only blocks `search/index_probe.py`'s automated probe from rewriting the field; both remain
+  legitimate manual config edits. Introduces a citation-genre-prefix convention
+  (`[retrieval]`/`[latency]`/`[graph]`/`[precision]`/`[pending]`/`[decision]`) on all
+  `benchmark_locked` strings so a reader can tell a measured-and-pinned retrieval result apart
+  from a settled human decision without a second metadata key.
+- **`CallGraphConfig.inject_on_incremental` is now `benchmark_locked`** (24 → 25
+  `FORBIDDEN_AUTO_TUNE_KEYS`), citation genre `[latency]` — ADR-0044 measured +1.58s on a 4-file
+  fixture and left the default (`False`) unquantified for larger projects;
+  `evaluation/INJECT_ON_INCREMENTAL_COST_20260903.md` closes that gap on this 233-file repo:
+  +36-38s per incremental pass (~10-19x the opt-out baseline), flat in K because the resolver
+  pass rescans the whole indexed set regardless of change size. ADR-0044's own reopening
+  condition (a changed-file-scoped injection variant landing) is unmet, so the default stays
+  `False`. `search/call_edge_injection.py` also gained a permanent inline
+  `resolve=%.1fs total=%.1fs` timer on its `[CALL_EDGES] Injected...` log line (plain
+  `time.perf_counter()`, not `utils.timing.timed()` — decorating either injection entry point
+  flips that chunk's kind to `decorated_definition:` and breaks five golden dataset entries).
+
+### Migration
+
+- **Existing C/C++/CUDA indexes need one `incremental=False` reindex** to pick up the recovered regions
+  and the repaired class heads ([ADR-0087](docs/adr/0087-recover-dropped-c-family-regions.md)). File content is unchanged, so an
+  incremental pass skips every already-indexed `.c`/`.h`/`.cpp`/`.hpp`/`.cu`/`.cuh` file and keeps
+  the old chunks. Run `index_directory(<project>, incremental=False)` (or
+  `tools/batch_index.py --mode force`) once per C-family project. ADR-0037 declined an automatic
+  version bump.
+
+- **Full reindex required, not just recommended, to see methods of decorated classes** (ADR-0063).
+  No `.py` file's content changed, only the chunker's traversal logic — `merkle/merkle_dag.py`
+  content-hashes file bytes, so `index_directory(..., incremental=True)` (the default) will see
+  every affected file's hash unchanged and silently skip re-chunking it, leaving the old coarse
+  `decorated_definition` blob in place with **no error or warning**. This is the third instance of
+  the "chunker changed, files didn't" gap ADR-0037 declined to solve with an automatic
+  `INDEX_VERSION`/`chunker_version` bump; `incremental=False` is mandatory here, not advisory.
+- **Reindex required to see `parent_chunk_id` on decorated methods.** File content is unchanged
+  by this fix, so `index_directory(..., incremental=True)` (the default) will not re-chunk
+  already-indexed Python files and previously-emitted decorated-method chunks will keep
+  `parent_chunk_id: null`. Run a full (non-incremental) reindex to populate the new values and
+  their `contains` edges; `INDEX_VERSION` is not bumped (ADR-0037 precedent — this changes
+  neither the BM25 document format nor the metadata schema).
+- **Opting in to `.tdgraph.json` indexing.** Set `"chunking": {"enable_td_network_indexing": true}`
+  in a project's `search_config.json`, then run a non-incremental reindex
+  (`index_directory(..., incremental=False)`) — a new extension means new files, not a format
+  change to existing ones, so `INDEX_VERSION` is not bumped (ADR-0037 precedent). The Merkle
+  hashing scheme (`merkle/merkle_dag.py`) will also compute a real content hash instead of a
+  `size=0` stat hash for `.tdgraph.json` files once the flag is on, producing a one-time "modified"
+  flip on those files and their ancestor directory nodes.
+- **Reindex required to see C/C++ call edges.** File content is unchanged by this change, so
+  `index_directory(..., incremental=True)` (the default) will not re-chunk already-indexed C/C++
+  files and the old zero-edge chunks will persist. Run
+  `index_directory(<project>, incremental=False)` (or `tools/batch_index.py --mode force`) once
+  per C/C++ project to pick up the new edges.
+
+### Security
+
+- **nltk CVE-2026-81726 / GHSA-8mgp-746c-j5xp** (pathsec bypass in model-artifact APIs,
+  affects every release through 3.10.3, no fixed release yet) assessed **not applicable**: the
+  affected tagger/parser/maxent persistence APIs are unused and `pathsec` is never enabled; the
+  only nltk surface is stopwords/stemmer/tokenize with hardcoded data paths
+  (`search/bm25_index.py`). Deferred in the `pyproject.toml` CVE ledger with a reopening
+  condition (raise the floor once nltk publishes >3.10.3); Dependabot alert #33 dismissed
+  `not_used`. The predecessor deferral for CVE-2026-12243 no longer flags on 3.10.3 and was
+  folded into the same ledger entry.
+
 ### Fixed
 
 - **Flaky HF Hub model-existence check** (`embeddings/model_loader.py`) — `ModelLoader.load()`
