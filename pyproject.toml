@@ -8,7 +8,7 @@ version = "0.26.0"
 description = "Local semantic code search for Claude Code (MCP) using FAISS, hybrid BM25+semantic search, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "Apache-2.0"
+license = "GPL-3.0-only"
 license-files = ["LICENSE"]
 authors = [
     { name = "forkni", email = "forkni@gmail.com" }
@@ -80,10 +80,10 @@ classifiers = [
 [project.optional-dependencies]
 callgraph = [
     # pyan3: GPL-2.0-or-later (Technologicat fork, verified via wheel METADATA —
-    # NOT GPL-2.0-only, which matters: Apache-2.0 is one-way compatible with
-    # GPLv3 but not GPLv2-only). Kept as an optional extra so the Apache-2.0
-    # core distribution remains licence-clean; we ship none of its code, users
-    # install it themselves. See ADR-0034 and
+    # NOT GPL-2.0-only, which matters: the "or-later" grant is what lets it
+    # combine with this GPL-3.0-only project). Kept as an optional extra so the
+    # core install stays pyan-free; we ship none of its code, users install it
+    # themselves. See ADR-0034, ADR-0089 and
     # chunking/relationships/external_call_graph.py's own dual-license header.
     # Provides whole-project cross-module call edges (recall booster on top of
     # the in-house AST extractor).
