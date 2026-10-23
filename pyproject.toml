@@ -116,7 +116,7 @@ dev = [
     "pyrefly==1.3.2",  # Core Rule 7: exact pin; pyrefly does not follow semver
     "mutmut>=3.7.0",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
     "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
-    "gitpython>=3.2.0",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
+    "gitpython>=3.2.1",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55); CVE-2026-114145 (3.2.1)
     "deptry>=0.25.1",  # /deps-audit Phase 1.7: dependency-usage hygiene check; declared to match what summarize_audit.py installs into this venv
     "radon>=6.0.1",  # Phase 14.2: cyclomatic complexity / maintainability-index reporting (harden-test-suite skill Phase 3.5)
     "crap4py>=0.1.1",  # Phase 14.2: coverage x complexity (CRAP) stop-condition metric; consumes coverage.py's lcov output (0.1.1 is the latest PyPI release as of 2026-08-20, not the plan's assumed >=1.0.0)
@@ -129,7 +129,7 @@ gpu = [
     "nvidia-ml-py>=12.535.77",
 ]
 otel = [
-    "opentelemetry-api>=1.20.0",
+    "opentelemetry-api>=1.45.1",  # Security: CVE-2026-114603 (1.45.1)
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp-proto-http>=1.20.0",
 ]
@@ -506,6 +506,15 @@ evaluation = ["*.json", "*.md"]
 #   passed / 2 skipped. PR #86's CI test job hung (gw1 killed by pytest-timeout 300 s inside
 #   test_prune_guard_declines_when_faiss_side_also_broken, a 0.01 s test; xdist never replaced
 #   the worker, job idled to the 20-min cap) -- not reproducible locally, unrelated to aiohttp.
+#
+# Resolved 2026-10-23: gitpython 3.2.0 -> 3.2.1 (CVE-2026-114145; floor raised to >=3.2.1),
+#   opentelemetry-api 1.44.0 -> 1.45.1 (CVE-2026-114603; floor raised to >=1.45.1) and virtualenv
+#   21.11.1 -> 21.14.13 (CVE-2026-113722/113725/113726/113732/113776; transitive, no floor to
+#   raise, the lock carries it). `uv lock --upgrade-package` on gitpython, virtualenv and the
+#   opentelemetry api/sdk/exporter trio together (the SDK pins the exact API version, so the
+#   api-only bump in dependabot #90 would have left them mismatched). Supersedes dependabot
+#   #90 (opentelemetry-api), #91 (gitpython) and #92 (virtualenv); main receives the fix at the
+#   next development -> main promotion.
 #
 # Resolved 2026-08-04: aiohttp CVE-2026-59881/69243 (3.14.2), CVE-2026-69244 (3.14.3) via
 #   aiohttp>=3.14.3. cryptography CVE-2026-69247 via cryptography>=50.0.0 (confirmed >=3.9

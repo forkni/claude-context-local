@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CVE-2026-111748..111750, GHSA-2g87-pp6c-29x5; pure-Python-parser request smuggling and
   related). Before/after `pip-audit` runs recorded in `audit_reports/` (gitignored); supersedes
   dependabot #86 (aiohttp) and #87 (multidict, already at 6.9.1 on `development`).
+- **gitpython floor raised `>=3.2.0` -> `>=3.2.1`, opentelemetry-api `>=1.20.0` -> `>=1.45.1`**,
+  `uv.lock` relocked to gitpython 3.2.1, opentelemetry 1.45.1 (api/sdk/exporter together) and
+  virtualenv 21.14.13 (transitive) — clears CVE-2026-114145 (gitpython), CVE-2026-114603
+  (opentelemetry-api) and five virtualenv advisories (CVE-2026-113722/113725/113726/113732/113776).
+  Supersedes dependabot #90, #91 and #92.
 
 ### Fixed
 
