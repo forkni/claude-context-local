@@ -2218,7 +2218,7 @@ v0.14.0 introduced a pluggable `CallEdgeResolver` protocol with confidence-prece
 
 **Top-level breakdowns**: `caller_confidence` and `callee_confidence` objects with `{exact, recovered, ambiguous}` integer counts.
 
-**Apache-2.0-clean core**: Without the optional extras, only in-house AST edges are produced. Cross-module recall is lower but no crash occurs and no GPL code is included in the install.
+**pyan-free core**: Without the optional extras, only in-house AST edges are produced. Cross-module recall is lower but no crash occurs and no pyan3 code is included in the install.
 
 **Accuracy Progression**:
 
