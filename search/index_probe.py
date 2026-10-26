@@ -522,15 +522,19 @@ def _measure_gpu() -> tuple[float | None, float | None, bool | None]:
 
 
 def language_histogram(supported_files: list[str]) -> dict[str, int]:
-    """Count supported files by lowercased extension.
+    """Count supported files by lowercased extension key (compound-aware).
 
     Public since Workstream C3 (per-extension skip diagnostics) reuses this
     exact bucketing shape for the *unsupported*-file histogram in
     ``incremental_indexer.py`` rather than duplicating it.
     """
+    # Local import: chunking.language_registry lazy-imports search.config, so a
+    # module-level import here risks a chunking <-> search cycle.
+    from chunking.language_registry import extension_key
+
     histogram: dict[str, int] = {}
     for file_path in supported_files:
-        ext = Path(file_path).suffix.lower()
+        ext = extension_key(file_path)
         if ext:
             histogram[ext] = histogram.get(ext, 0) + 1
     return histogram

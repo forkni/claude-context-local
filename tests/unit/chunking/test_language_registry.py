@@ -37,6 +37,58 @@ class TestExtensionKey:
         assert extension_key("Makefile") == ""
 
 
+class TestTdPythonMirror:
+    """`*__td.txt` TouchDesigner DAT mirrors are indexed as Python, always on
+    (not behind the ADR-0062 enable_td_network_indexing gate)."""
+
+    MIRROR = "td/src/hubApi__Text__HubApi__td.txt"
+
+    def test_extension_key_resolves_compound_suffix(self) -> None:
+        from chunking.language_registry import extension_key
+
+        assert extension_key(self.MIRROR) == "__td.txt"
+        assert extension_key(self.MIRROR.upper()) == "__td.txt"
+
+    def test_plain_txt_stays_unsupported(self) -> None:
+        from chunking.language_registry import extension_key
+        from chunking.multi_language_chunker import MultiLanguageChunker
+
+        assert extension_key("notes.txt") == ".txt"
+        assert MultiLanguageChunker().is_supported("notes.txt") is False
+
+    def test_supported_with_td_gate_off(self) -> None:
+        from chunking.multi_language_chunker import MultiLanguageChunker
+
+        with patch("search.config.get_chunking_config", return_value=None):
+            assert MultiLanguageChunker().is_supported(self.MIRROR) is True
+
+    def test_in_supported_extensions_regardless_of_gate(self) -> None:
+        from chunking.tree_sitter import TreeSitterChunker
+
+        for gate in (False, True):
+            with patch(
+                "chunking.tree_sitter.td_network_indexing_enabled", return_value=gate
+            ):
+                assert "__td.txt" in TreeSitterChunker.get_supported_extensions()
+
+    def test_routes_to_python_chunker(self) -> None:
+        from chunking.languages.python import PythonChunker
+        from chunking.tree_sitter import TreeSitterChunker
+
+        chunker = TreeSitterChunker().get_chunker(self.MIRROR)
+        assert isinstance(chunker, PythonChunker)
+
+    def test_chunks_file_as_python(self, tmp_path) -> None:
+        from chunking.multi_language_chunker import MultiLanguageChunker
+
+        mirror = tmp_path / "foo__Text__Foo__td.txt"
+        mirror.write_text("def f():\n    return 1\n", encoding="utf-8")
+        chunks = MultiLanguageChunker(str(tmp_path)).chunk_file(str(mirror))
+        functions = [c for c in chunks if c.chunk_type == "function"]
+        assert len(functions) == 1
+        assert functions[0].language == "python"
+
+
 class TestIsTdNetworkFile:
     def test_matches_compound_extension(self) -> None:
         from chunking.language_registry import is_td_network_file

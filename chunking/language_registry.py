@@ -58,6 +58,10 @@ EXT_TO_LANGUAGE: dict[str, str] = {
     # A compound (multi-dot) key: Path(...).suffix alone can't see it, hence
     # extension_key() below.
     ".tdgraph.json": "td_network",
+    # TouchDesigner Python DAT mirror (e.g. "hubApi__Text__HubApi__td.txt"):
+    # plain Python saved with a .txt suffix. Compound key, resolved by
+    # extension_key() below; always on, not behind the ADR-0062 gate.
+    "__td.txt": "python",
 }
 
 # Supported file extensions for code chunking — derived from EXT_TO_LANGUAGE.
@@ -68,9 +72,11 @@ SUPPORTED_EXTENSIONS: set[str] = set(EXT_TO_LANGUAGE.keys())
 # ".tdgraph.json". extension_key() is the single place that checks for these
 # before falling back to Path.suffix, so every .suffix-based call site in
 # the codebase can be pointed at one function instead of reimplementing the
-# compound-suffix check itself. Keys are lowercase and include every dot.
+# compound-suffix check itself. Keys are lowercase filename suffixes matched
+# with endswith (the longest match wins); a key need not start with a dot.
 COMPOUND_EXTENSIONS: dict[str, str] = {
     ".tdgraph.json": "td_network",
+    "__td.txt": "python",
 }
 
 # Languages registered in EXT_TO_LANGUAGE that have no tree-sitter grammar

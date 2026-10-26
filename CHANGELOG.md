@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **TouchDesigner Python DAT mirrors (`*__td.txt`) are indexed as Python** — `extension_key()`
+  resolved them to `.txt`, so they were skipped. `__td.txt` is now a compound extension
+  (`EXT_TO_LANGUAGE`, `COMPOUND_EXTENSIONS`, `TreeSitterChunker.LANGUAGE_MAP`), always on (not
+  behind `enable_td_network_indexing`), and `language_histogram` buckets by `extension_key`.
+  Existing projects need a reindex to pick the files up. Mirrors get AST-tier call edges only:
+  the pyan/libcst/LSP resolvers gather `*.py` files.
+
 ### Changed
 
 - **License is now GPL-3.0-only** (`LICENSE`, `NOTICE`, `pyproject.toml`, README,

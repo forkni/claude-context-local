@@ -331,6 +331,8 @@ class TreeSitterChunker:
         ".tesc": (EXT_TO_LANGUAGE[".tesc"], lambda lang: GLSLChunker(lang)),
         ".tese": (EXT_TO_LANGUAGE[".tese"], lambda lang: GLSLChunker(lang)),
         ".glslinc": (EXT_TO_LANGUAGE[".glslinc"], lambda lang: GLSLChunker(lang)),
+        # TouchDesigner Python DAT mirrors (compound key, see extension_key()).
+        "__td.txt": (EXT_TO_LANGUAGE["__td.txt"], lambda lang: PythonChunker(lang)),
     }
 
     def __init__(self) -> None:
