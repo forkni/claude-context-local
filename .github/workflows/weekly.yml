@@ -1,4 +1,4 @@
-name: Weekly
+name: Monthly slow integration
 
 # Runs the tests/slow_integration/ tier (93 tests), which no other automated
 # job executes — branch-protection.yml's PR gate --ignores it entirely and
@@ -7,16 +7,15 @@ name: Weekly
 # leaving it permanently unexecuted means those 93 tests offer zero actual
 # regression protection (see tests/TESTING_GUIDE.md, Phase 11).
 #
-# schedule: only fires from the repo's default branch (main), so this job
-# explicitly checks out development to actually test the branch that matters
-# (same workaround nightly.yml documents and uses).
+# schedule: only fires from the default branch (development); the job still pins
+# ref: development (same as nightly.yml).
 #
-# Minutes budget: the job runs only when development received a commit in the
-# last 8 days (the changes gate); workflow_dispatch always runs it.
+# Minutes budget: one scheduled run per month (file name kept as weekly.yml for
+# history and doc links). Use workflow_dispatch for an on-demand run.
 
 on:
   schedule:
-    - cron: '0 9 * * 1'  # 09:00 UTC every Monday
+    - cron: '0 9 10 * *'  # 09:00 UTC on the 10th of each month
   workflow_dispatch: {}
 
 permissions:
@@ -31,31 +30,8 @@ defaults:
     shell: bash
 
 jobs:
-  changes:
-    name: Development changed in last 8 days?
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    outputs:
-      changed: ${{ steps.check.outputs.changed }}
-    steps:
-      - name: Count recent development commits
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          if [ "$EVENT" != "schedule" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          since=$(date -u -d '8 days ago' +%Y-%m-%dT%H:%M:%SZ)
-          count=$(gh api "repos/${GITHUB_REPOSITORY}/commits?sha=development&since=${since}&per_page=1" --jq 'length')
-          echo "commits since ${since}: ${count}"
-          if [ "$count" -gt 0 ]; then echo "changed=true"; else echo "changed=false"; fi >> "$GITHUB_OUTPUT"
-
   slow-integration:
     name: Slow Integration Tests
-    needs: changes
-    if: needs.changes.outputs.changed == 'true'
     runs-on: windows-2025
     timeout-minutes: 60
 

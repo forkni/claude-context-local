@@ -1,4 +1,4 @@
-name: Nightly (scheduled deep CI)
+name: Monthly deep CI
 
 # Scheduled deep-CI workflow:
 # 1. test-windows: Windows-native test execution against development branch.
@@ -6,17 +6,15 @@ name: Nightly (scheduled deep CI)
 #    and runs fast unit tests against it to detect upstream breakage before PRs fail.
 # 3. security-audit: pip-audit vulnerability scan across resolved dependencies.
 #
-# schedule: only fires from default branch (main), so jobs checkout development
-# to test the active integration branch.
+# schedule: only fires from the default branch (development); jobs still pin
+# ref: development so a default-branch change cannot silently retarget them.
 #
-# Minutes budget: test-windows (~14 min on windows-2025) runs only when
-# development received a commit in the last 25h (the changes gate). The two
-# ubuntu jobs run every night: upstream releases and new advisories land
-# whether or not development moved. workflow_dispatch always runs everything.
+# Minutes budget: one scheduled run per month (file name kept as nightly.yml for
+# history and doc links). Use workflow_dispatch for an on-demand run.
 
 on:
   schedule:
-    - cron: '0 7 * * *'  # 07:00 UTC daily
+    - cron: '0 7 1 * *'  # 07:00 UTC on the 1st of each month
   workflow_dispatch: {}
 
 permissions:
@@ -31,31 +29,8 @@ defaults:
     shell: bash
 
 jobs:
-  changes:
-    name: Development changed in last 25h?
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    outputs:
-      changed: ${{ steps.check.outputs.changed }}
-    steps:
-      - name: Count recent development commits
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          if [ "$EVENT" != "schedule" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          since=$(date -u -d '25 hours ago' +%Y-%m-%dT%H:%M:%SZ)
-          count=$(gh api "repos/${GITHUB_REPOSITORY}/commits?sha=development&since=${since}&per_page=1" --jq 'length')
-          echo "commits since ${since}: ${count}"
-          if [ "$count" -gt 0 ]; then echo "changed=true"; else echo "changed=false"; fi >> "$GITHUB_OUTPUT"
-
   test-windows:
     name: Test Suite (Windows)
-    needs: changes
-    if: needs.changes.outputs.changed == 'true'
     runs-on: windows-2025
     timeout-minutes: 30
 
