@@ -38,7 +38,7 @@ dependencies = [
     "mcp>=2.2.0,<3",  # v2: migrated to the SDK v2 API (decorator->constructor-kwarg handlers, see ADR-0017). Security: carries forward 1.28.1's CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin validation) fixes
     "msgpack>=1.2.3",  # Security: GHSA-6v7p-g79w-8964 (SEGV on repeated unpack after error)
     "networkx>=3.0",  # Required for graph storage and community detection
-    "nltk>=3.10.3",  # Security: Fixes CVE-2025-14009 (path traversal in downloader), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load()), and takes 3.9.4 out of CVE-2026-12243's affected range
+    "nltk>=3.10.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load()), CVE-2026-81726 / GHSA-8mgp-746c-j5xp (pathsec bypass in model-artifact APIs; fixed in 3.10.4), and takes 3.9.4 out of CVE-2026-12243's affected range
     "psutil>=7.2.1",
     "pydantic-settings>=2.14.2",  # Security: GHSA-4xgf-cpjx-pc3j (symlink follow in secrets_dir)
     "pygments>=2.20.0",  # Security: CVE-2026-4539 (ReDoS in AdlLexer)
@@ -465,19 +465,18 @@ evaluation = ["*.json", "*.md"]
 # * transformers PYSEC-2025-217 (X-CLIP checkpoint-conversion RCE) — no fix; not applicable (no X-CLIP conversion use)
 # * transformers PYSEC-2026-2290 / CVE-2026-5241 (LightGlue model-load RCE) — no fix; not applicable (no LightGlue use)
 # * diskcache CVE-2025-69872, sqlitedict CVE-2024-35515 (pickle RCE) — no upstream fix; sqlitedict mitigated via JSON serialization (metadata.py)
-# * nltk CVE-2026-81726 / GHSA-8mgp-746c-j5xp (pathsec bypass in model-artifact APIs:
+# * nltk CVE-2026-81726 / GHSA-8mgp-746c-j5xp — RESOLVED 2026-10-29: nltk 3.10.4 (published
+#   2026-10-20) fixes it and the direct-dependency floor is now >=3.10.4 (PR #98); pip-audit on
+#   the 3.10.4 venv reports no nltk findings. (Pathsec bypass in model-artifact APIs:
 #   TransitionParser.train/parse, AveragedPerceptron.save/load, PerceptronTagger.save_to_json,
-#   save_maxent_params) — affects <=3.10.3 (= PyPI latest), no fixed release as of 2026-09-02
-#   (OSV: last_affected=3.10.3). Not applicable: none of the affected APIs are used and pathsec
-#   is never enabled; the only nltk calls are stopwords/SnowballStemmer/word_tokenize plus the
-#   two hardcoded-literal data calls nltk.data.find("corpora/stopwords") and
-#   nltk.download("stopwords", quiet=True) (search/bm25_index.py:34,36). Upstream fixes merged
-#   to develop (nltk/nltk#3757, #3759, #3813, 2026-08-18..28), post-dating the v3.10.3 tag.
-#   Reopen: when nltk publishes >3.10.3, raise the floor to it and re-run pip-audit.
-#   Re-verified 2026-09-23: PyPI latest still 3.10.3, no fix released.
-#   Dependabot #33 dismissed not_used. (Predecessor entry nltk CVE-2026-12243 — path traversal,
-#   incomplete fix of CVE-2025-14009 — no longer flags on 3.10.3 per OSV query 2026-09-02;
-#   closed by the >=3.10.3 floor, see the direct-dependency comment above.)
+#   save_maxent_params; affected <=3.10.3. It was never applicable here: none of those APIs are
+#   used; the only nltk calls are stopwords/SnowballStemmer/word_tokenize plus the two
+#   hardcoded-literal data calls nltk.data.find("corpora/stopwords") and
+#   nltk.download("stopwords", quiet=True) in search/bm25_index.py.) 3.10.4 smoke-tested:
+#   stopwords (198) and SnowballStemmer load under the new nltk.data sandbox, TextPreprocessor
+#   output unchanged in shape, 113 bm25 unit tests pass. Dependabot #33 dismissed not_used.
+#   (Predecessor nltk CVE-2026-12243 — path traversal, incomplete fix of CVE-2025-14009 — was
+#   closed by the >=3.10.3 floor.)
 # * pyjwt PYSEC-2025-183 (disputed weak encryption) — no upstream fix
 # * torch 2.11.0+cu128, 1 CVE remaining (down from 8 as of 2026-08-06 — see the ML-stack-bump
 #   entry at the top of "Last audit" above and docs/adr/0033-lift-torch-ceiling.md). Note:
