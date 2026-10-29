@@ -154,6 +154,112 @@ class TestGarWindowMembership:
         assert _ids(out) == _ids(expected)
 
 
+class TestNoRerankerScores:
+    """Without the neural reranker (no GPU) the interleave order is the final
+    ranking, so the mixed-scale scores are replaced with rank scores."""
+
+    @staticmethod
+    def _rerank_without_model(pool: list) -> list:
+        engine = RerankingEngine()
+        engine._ensure_reranker = Mock(return_value=False)
+        cfg = _cfg()
+        with patch("search.reranking_engine.get_search_config", return_value=cfg):
+            return engine.rerank_by_query(
+                "q", pool, k=len(pool), config=cfg, window=_GAR
+            )
+
+    def test_scores_descend_in_interleave_order(self):
+        """BM25-scale hop-1 scores (9.2) next to cosines (0.77) come out
+        non-increasing, and the interleave order is kept."""
+        pool = [
+            _hop1(1, score=9.2),
+            _hop1(2, score=4.3),
+            _semantic("s1", 1, score=0.77),
+            _semantic("s2", 2, score=0.76),
+        ]
+        out = self._rerank_without_model(pool)
+
+        assert _ids(out) == _ids(RerankingEngine._order_merged_pool(pool, True))
+        scores = [r.score for r in out]
+        assert scores == sorted(scores, reverse=True)
+        assert len(set(scores)) == len(scores)
+
+    def test_raw_score_is_kept_and_input_is_not_mutated(self):
+        pool = [_hop1(1, score=9.2), _semantic("s1", 1, score=0.77)]
+        out = self._rerank_without_model(pool)
+
+        assert {r.chunk_id: r.metadata["raw_score"] for r in out} == {
+            "h1": 9.2,
+            "s1": 0.77,
+        }
+        assert [r.score for r in pool] == [9.2, 0.77]
+        assert "raw_score" not in pool[0].metadata
+
+    def test_failed_rerank_falls_back_to_rank_scores(self):
+        """OOM path: _run_rerank returns the candidates unchanged."""
+        engine = RerankingEngine()
+        engine._ensure_reranker = Mock(return_value=True)
+        engine.neural_reranker = Mock()
+        engine.neural_reranker.rerank.side_effect = RuntimeError("CUDA out of memory")
+        cfg = _cfg()
+        pool = [_hop1(1, score=9.2), _semantic("s1", 1, score=0.77), _hop1(2, 4.3)]
+        with patch("search.reranking_engine.get_search_config", return_value=cfg):
+            out = engine.rerank_by_query("q", pool, k=3, config=cfg, window=_GAR)
+
+        scores = [r.score for r in out]
+        assert scores == sorted(scores, reverse=True)
+        assert out[0].metadata["raw_score"] == 9.2
+
+    def test_successful_rerank_keeps_reranker_scores(self):
+        engine = RerankingEngine()
+        engine._ensure_reranker = Mock(return_value=True)
+        engine.neural_reranker = Mock()
+        engine.neural_reranker.rerank.side_effect = lambda q, cands, k: list(cands)
+        cfg = _cfg()
+        pool = [_hop1(1, score=-0.5), _semantic("s1", 1, score=0.77)]
+        with patch("search.reranking_engine.get_search_config", return_value=cfg):
+            out = engine.rerank_by_query("q", pool, k=2, config=cfg, window=_GAR)
+
+        assert [r.score for r in out] == [-0.5, 0.77]
+        assert all("raw_score" not in r.metadata for r in out)
+
+    def test_tail_pass_after_merged_pool_keeps_the_interleave(self):
+        """Default no-GPU path: ego neighbours score anchor_score * similarity,
+        so the tail sort keeps the merged-pool order and seats each neighbour
+        below its anchor."""
+        pool = [
+            _hop1(1, score=9.2),
+            _hop1(2, score=4.3),
+            _semantic("s1", 1, score=0.77),
+            _semantic("s2", 2, score=0.76),
+        ]
+        merged = self._rerank_without_model(pool)
+        neighbour = SearchResult(
+            chunk_id="ego", score=merged[1].score * 0.9, metadata={}, source="ego_graph"
+        )
+        engine = RerankingEngine()
+        engine._ensure_reranker = Mock(return_value=False)
+        cfg = _cfg()
+        with patch("search.reranking_engine.get_search_config", return_value=cfg):
+            out = engine.rerank_by_query(
+                "q", [*merged, neighbour], k=len(merged) + 1, config=cfg
+            )
+
+        assert _ids(out) == [*_ids(merged[:2]), "ego", *_ids(merged[2:])]
+
+    def test_tail_pass_keeps_real_scores(self):
+        """The tail pass sorts one score scale, so its scores stay as they are."""
+        engine = RerankingEngine()
+        engine._ensure_reranker = Mock(return_value=False)
+        cfg = _cfg()
+        pool = [_semantic("a", None, score=0.9), _semantic("b", None, score=0.5)]
+        with patch("search.reranking_engine.get_search_config", return_value=cfg):
+            out = engine.rerank_by_query("q", pool, k=2, config=cfg)
+
+        assert [r.score for r in out] == [0.9, 0.5]
+        assert all("raw_score" not in r.metadata for r in out)
+
+
 class TestBackfill:
     @staticmethod
     def _engine_with_reversing_reranker() -> RerankingEngine:
