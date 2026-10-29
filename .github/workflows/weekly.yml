@@ -1,4 +1,4 @@
-name: Weekly
+name: Monthly slow integration
 
 # Runs the tests/slow_integration/ tier (93 tests), which no other automated
 # job executes — branch-protection.yml's PR gate --ignores it entirely and
@@ -7,13 +7,15 @@ name: Weekly
 # leaving it permanently unexecuted means those 93 tests offer zero actual
 # regression protection (see tests/TESTING_GUIDE.md, Phase 11).
 #
-# schedule: only fires from the repo's default branch (main), so this job
-# explicitly checks out development to actually test the branch that matters
-# (same workaround nightly.yml documents and uses).
+# schedule: only fires from the default branch (development); the job still pins
+# ref: development (same as nightly.yml).
+#
+# Minutes budget: one scheduled run per month (file name kept as weekly.yml for
+# history and doc links). Use workflow_dispatch for an on-demand run.
 
 on:
   schedule:
-    - cron: '0 9 * * 1'  # 09:00 UTC every Monday
+    - cron: '0 9 10 * *'  # 09:00 UTC on the 10th of each month
   workflow_dispatch: {}
 
 permissions:

@@ -1,4 +1,4 @@
-name: Nightly (scheduled deep CI)
+name: Monthly deep CI
 
 # Scheduled deep-CI workflow:
 # 1. test-windows: Windows-native test execution against development branch.
@@ -6,12 +6,15 @@ name: Nightly (scheduled deep CI)
 #    and runs fast unit tests against it to detect upstream breakage before PRs fail.
 # 3. security-audit: pip-audit vulnerability scan across resolved dependencies.
 #
-# schedule: only fires from default branch (main), so jobs checkout development
-# to test the active integration branch.
+# schedule: only fires from the default branch (development); jobs still pin
+# ref: development so a default-branch change cannot silently retarget them.
+#
+# Minutes budget: one scheduled run per month (file name kept as nightly.yml for
+# history and doc links). Use workflow_dispatch for an on-demand run.
 
 on:
   schedule:
-    - cron: '0 7 * * *'  # 07:00 UTC daily
+    - cron: '0 7 1 * *'  # 07:00 UTC on the 1st of each month
   workflow_dispatch: {}
 
 permissions:
