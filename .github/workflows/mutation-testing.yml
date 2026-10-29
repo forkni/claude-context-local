@@ -3,7 +3,8 @@ name: Mutation Testing (Periodic)
 # Periodic, out-of-band mutation testing workflow.
 # Mutation runs are O(N mutants x suite time) — far too expensive for the commit-stage
 # budget, so this workflow never runs on the PR path. It runs on workflow_dispatch
-# (on demand, e.g. before releases or after major test refactors) and on a weekly schedule.
+# (on demand, e.g. before releases or after major test refactors) and on a monthly schedule.
+# The schedule uses up to 5 x 60 windows-2025 minutes, so it runs monthly, not weekly.
 #
 # Engine: cosmic-ray on windows-2025, matching the local developer environment and
 # the committed cr-*.toml configs for zero-mock and de-mocked deterministic cores.
@@ -23,7 +24,7 @@ on:
           - cr-centrality_ranker.toml
           - cr-reranking_engine.toml
   schedule:
-    - cron: "0 6 * * 1"   # Mondays 06:00 UTC (weekly)
+    - cron: "0 6 1 * *"   # 1st of each month 06:00 UTC (monthly)
 
 concurrency:
   group: mutation-${{ github.ref }}
