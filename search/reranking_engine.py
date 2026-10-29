@@ -380,10 +380,14 @@ class RerankingEngine:
         # runtime changes.
         reranked = False
         if sorted_results and self._ensure_reranker("[RERANK]", config=config):
-            sorted_results = self._run_rerank(
+            # _run_rerank returns its input list unchanged on failure and a new
+            # list on success; checking identity, not the shared
+            # last_rerank_skipped, keeps this right under concurrent searches.
+            reranked_results = self._run_rerank(
                 query, sorted_results, k, "[NEURAL_RERANK]", config=config
             )
-            reranked = not self.last_rerank_skipped
+            reranked = reranked_results is not sorted_results
+            sorted_results = reranked_results
 
         # Collapse split_block fragments before truncation so freed slots
         # backfill with distinct chunks. Not applied at hop-1
