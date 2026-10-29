@@ -154,6 +154,60 @@ class TestGarWindowMembership:
         assert _ids(out) == _ids(expected)
 
 
+class TestNoRerankerScores:
+    """Without the neural reranker (no GPU) the interleave order is the final
+    ranking, so the mixed-scale scores are replaced with rank scores."""
+
+    @staticmethod
+    def _rerank_without_model(pool: list) -> list:
+        engine = RerankingEngine()
+        engine._ensure_reranker = Mock(return_value=False)
+        cfg = _cfg()
+        with patch("search.reranking_engine.get_search_config", return_value=cfg):
+            return engine.rerank_by_query(
+                "q", pool, k=len(pool), config=cfg, window=_GAR
+            )
+
+    def test_scores_descend_in_interleave_order(self):
+        """BM25-scale hop-1 scores (9.2) next to cosines (0.77) come out
+        non-increasing, and the interleave order is kept."""
+        pool = [
+            _hop1(1, score=9.2),
+            _hop1(2, score=4.3),
+            _semantic("s1", 1, score=0.77),
+            _semantic("s2", 2, score=0.76),
+        ]
+        out = self._rerank_without_model(pool)
+
+        assert _ids(out) == _ids(RerankingEngine._order_merged_pool(pool, True))
+        scores = [r.score for r in out]
+        assert scores == sorted(scores, reverse=True)
+        assert len(set(scores)) == len(scores)
+
+    def test_raw_score_is_kept_and_input_is_not_mutated(self):
+        pool = [_hop1(1, score=9.2), _semantic("s1", 1, score=0.77)]
+        out = self._rerank_without_model(pool)
+
+        assert {r.chunk_id: r.metadata["raw_score"] for r in out} == {
+            "h1": 9.2,
+            "s1": 0.77,
+        }
+        assert [r.score for r in pool] == [9.2, 0.77]
+        assert "raw_score" not in pool[0].metadata
+
+    def test_tail_pass_keeps_real_scores(self):
+        """The tail pass sorts one score scale, so its scores stay as they are."""
+        engine = RerankingEngine()
+        engine._ensure_reranker = Mock(return_value=False)
+        cfg = _cfg()
+        pool = [_semantic("a", None, score=0.9), _semantic("b", None, score=0.5)]
+        with patch("search.reranking_engine.get_search_config", return_value=cfg):
+            out = engine.rerank_by_query("q", pool, k=2, config=cfg)
+
+        assert [r.score for r in out] == [0.9, 0.5]
+        assert all("raw_score" not in r.metadata for r in out)
+
+
 class TestBackfill:
     @staticmethod
     def _engine_with_reversing_reranker() -> RerankingEngine:

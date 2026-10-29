@@ -7,6 +7,7 @@ also coordinate was removed — verified dead code, see rerank_by_query.)
 
 import logging
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from utils.timing import timed
@@ -377,10 +378,12 @@ class RerankingEngine:
 
         # Neural reranking (Quality First mode) — always re-check config for
         # runtime changes.
+        reranked = False
         if sorted_results and self._ensure_reranker("[RERANK]", config=config):
             sorted_results = self._run_rerank(
                 query, sorted_results, k, "[NEURAL_RERANK]", config=config
             )
+            reranked = not self.last_rerank_skipped
 
         # Collapse split_block fragments before truncation so freed slots
         # backfill with distinct chunks. Not applied at hop-1
@@ -389,7 +392,25 @@ class RerankingEngine:
         if config.reranker.dedupe_split_blocks:
             sorted_results = dedupe_results(sorted_results)
 
+        # Without the neural pass (no GPU, OOM) the interleave order is the
+        # final ranking, but each result still carries its channel's raw
+        # score (jina, cosine, BM25), so .score would not follow the order.
+        if window.interleave and not reranked:
+            return self._rank_scores(sorted_results[:k])
         return sorted_results[:k]
+
+    @staticmethod
+    def _rank_scores(results: list) -> list:
+        """Copy ``results`` with ``.score = 1 / rank`` and the original score
+        in ``metadata["raw_score"]``, so scores descend in list order."""
+        return [
+            replace(
+                r,
+                score=1.0 / (i + 1),
+                metadata={**r.metadata, "raw_score": r.score},
+            )
+            for i, r in enumerate(results)
+        ]
 
     # RemoveDecorator on @timed is equivalent — decorator adds timing metadata only.
     @timed("neural_rerank")  # pragma: no mutate
