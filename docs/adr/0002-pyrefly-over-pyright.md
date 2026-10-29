@@ -59,3 +59,11 @@ Revisit this decision when any of the following hold:
 2. The backlog of `# pyrefly: ignore[...]` comments grows faster than it shrinks (signal that
    `replace-imports-with-any` heuristics need tightening rather than suppression at call sites).
 3. Ty reaches stable 1.0 with comparable throughput and torch handling.
+4. The project moves to Python 3.12 or starts doing tensor math. Pyrefly 1.4's experimental
+   tensor-shape checking (`Tensor[[N, D]]` via `pyrefly-torch-stubs` / `pyrefly-numpy-stubs`)
+   was evaluated on 2026-10-24 and deferred: `pyrefly-numpy-stubs` requires Python >= 3.12
+   (`requires-python` is `>=3.11`), and the torch usage here is device and VRAM management
+   (`embeddings/`, `mcp_server/resource_manager.py`, `search/neural_reranker.py`) plus
+   `np.ndarray` shuttling into FAISS (`search/faiss_index.py`), not shape-bearing math, so
+   `torch` stays in `replace-imports-with-any`. The stub packages must be pinned in lockstep
+   with `pyrefly`; adopting them means a baseline refresh in the same change.
