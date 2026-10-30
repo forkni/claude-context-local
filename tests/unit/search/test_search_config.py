@@ -184,6 +184,47 @@ class TestSearchConfigManager:
             "not a fresh parse from disk"
         )
 
+    def test_vanished_config_file_keeps_last_loaded_settings(self, caplog):
+        """A config file that disappears mid-session (e.g. a USB volume drop) must
+        not silently revert the live settings to dataclass defaults."""
+        model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": model}}, f)
+        manager = SearchConfigManager(self.config_file)
+        assert manager.load_config().embedding.model_name == model
+
+        os.remove(self.config_file)
+        with caplog.at_level("WARNING", logger="search.config"):
+            kept = manager.load_config()
+
+        assert kept.embedding.model_name == model
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "last-loaded" in warnings[0].getMessage()
+
+        # The cache holds while the file stays gone: no repeated warning.
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="search.config"):
+            assert manager.load_config() is kept
+        assert not caplog.records
+
+    def test_config_file_reappearing_reloads(self):
+        """When the vanished file returns, its contents win over the kept settings."""
+        old_model = "codefuse-ai/F2LLM-v2-0.6B"
+        new_model = "BAAI/bge-m3"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": old_model}}, f)
+        manager = SearchConfigManager(self.config_file)
+        manager.load_config()
+        os.remove(self.config_file)
+        assert manager.load_config().embedding.model_name == old_model
+
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": new_model}}, f)
+        os.utime(self.config_file, (1_700_000_000, 1_700_000_000))
+
+        assert manager.load_config().embedding.model_name == new_model
+
     def test_auto_mode_detection(self):
         """Test automatic search mode detection."""
         # Create config with auto mode

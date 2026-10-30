@@ -1,5 +1,6 @@
 """Configuration system for search modes and hybrid search features."""
 
+import copy
 import dataclasses
 import json
 import logging
@@ -2423,6 +2424,10 @@ class SearchConfigManager:
         self.config_file = config_file or self._get_default_config_path()
         self._config = None
         self._config_mtime: float | None = None  # Track file modification time
+        # Nested file layer from the last successful parse. Reused when the config
+        # file becomes unreadable mid-session (e.g. a USB volume drop), so live
+        # settings don't silently revert to dataclass defaults.
+        self._last_file_dict: dict[str, Any] | None = None
         # (path, mtime) of the applied per-project overrides file — part of the
         # hot-reload cache key so project switches and hand-edits invalidate.
         self._overrides_key: tuple[str, float] | None = None
@@ -2534,8 +2539,13 @@ class SearchConfigManager:
                     config_dict = (
                         raw if file_is_nested else SearchConfig._flat_to_nested(raw)
                     )
+                    self._last_file_dict = copy.deepcopy(config_dict)
+                except OSError as e:
+                    self._reuse_last_file_layer(config_dict, _read_path, e)
                 except Exception as e:  # noqa: BLE001 - parse-recovery: malformed config file, fall back to defaults
                     self.logger.warning(f"Failed to load config file {_read_path}: {e}")
+            elif self._last_file_dict is not None:
+                self._reuse_last_file_layer(config_dict, _read_path, "file not found")
 
             # Per-project overrides (ADR-0014): deep-merged over the global file so
             # probe results apply only to the active project.  Env vars are merged
@@ -2588,6 +2598,23 @@ class SearchConfigManager:
             )
 
             return self._config
+
+    def _reuse_last_file_layer(
+        self, config_dict: dict[str, Any], path: Path, reason: object
+    ) -> None:
+        """Fill ``config_dict`` from the last good parse when the file is unreadable.
+
+        Without a previous parse (first load) nothing is filled, so the caller
+        falls back to defaults exactly as before.
+        """
+        if self._last_file_dict is None:
+            self.logger.warning(f"Failed to load config file {path}: {reason}")
+            return
+        config_dict.update(copy.deepcopy(self._last_file_dict))
+        self.logger.warning(
+            f"Config file {path} is unreadable ({reason}); keeping the last-loaded "
+            "settings. Restore the file or restart the server."
+        )
 
     def _load_from_environment(self) -> dict[str, Any]:
         """Load configuration from environment variables."""
