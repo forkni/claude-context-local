@@ -4,8 +4,14 @@ Tests the centralized metadata storage layer extracted from CodeIndexManager
 as part of Phase 3 refactoring (Item 9).
 """
 
+import contextlib
+import json
+import pickle
+import sqlite3
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from search.metadata import MetadataStore
 
@@ -281,6 +287,72 @@ class TestMetadataStoreTransactions:
             # However, the behavior might vary - just ensure store can be reopened
             assert len(store2) >= 0  # Store is accessible
             store2.close()
+
+
+_UNPICKLED: list[str] = []
+
+
+def _record_unpickle(tag: str) -> str:
+    """Side effect that runs only if a stored value is passed to pickle.loads."""
+    _UNPICKLED.append(tag)
+    return tag
+
+
+class _PicklePayload:
+    def __reduce__(self):
+        return (_record_unpickle, ("unpickled",))
+
+
+class TestMetadataStoreSerialization:
+    """Pins the JSON codec that mitigates sqlitedict CVE-2024-35515 (pickle RCE).
+
+    sqlitedict has no upstream fix; the mitigation is ``encode=json.dumps`` /
+    ``decode=json.loads`` in ``MetadataStore._ensure_open``. Dropping either
+    argument puts sqlitedict back on its pickle default.
+    """
+
+    def test_values_are_stored_as_json_text(self):
+        """A committed value is JSON text in the raw table, not a pickle blob."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            store = MetadataStore(db_path)
+            store.set("file.py:1-10:function:foo", 0, {"relative_path": "file.py"})
+            store.commit()
+            store.close()
+
+            with contextlib.closing(sqlite3.connect(db_path)) as conn:
+                (raw,) = conn.execute("SELECT value FROM unnamed").fetchone()
+            assert isinstance(raw, str)
+            assert json.loads(raw) == {
+                "index_id": 0,
+                "metadata": {"relative_path": "file.py"},
+            }
+
+    def test_planted_pickle_payload_is_not_unpickled(self):
+        """A pickle blob written into the database never reaches pickle.loads."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            chunk_id = "file.py:1-10:function:foo"
+            store = MetadataStore(db_path)
+            store.set(chunk_id, 0, {"relative_path": "file.py"})
+            store.commit()
+            store.close()
+
+            with contextlib.closing(sqlite3.connect(db_path)) as conn:
+                conn.execute(
+                    "UPDATE unnamed SET value = ? WHERE key = ?",
+                    (sqlite3.Binary(pickle.dumps(_PicklePayload())), chunk_id),
+                )
+                conn.commit()
+
+            _UNPICKLED.clear()
+            store = MetadataStore(db_path)
+            try:
+                with pytest.raises(ValueError):
+                    store.get(chunk_id)
+            finally:
+                store.close()
+            assert _UNPICKLED == []
 
 
 class TestMetadataStoreReset:

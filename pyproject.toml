@@ -419,7 +419,8 @@ evaluation = ["*.json", "*.md"]
 # huggingface-hub>=1.3.0  # transformers>=5.3.0 requires >=1.3.0,<2
 #
 # Transitive dependency security updates:
-# click>=8.3.3             # Fixes CVE-2026-7246 (command injection in click.edit())
+# certifi>=2026.10.19      # Fixes PYSEC-2026-4320 / GHSA-6q48-6c7w-9gw2 (distrusts emSign ECC Root CA - G3 after compromised intermediates); lock at 2026.10.23
+# click>=8.3.3            # Fixes CVE-2026-7246 (command injection in click.edit())
 # cryptography>=50.0.0     # Fixes CVE-2026-34073 (46.0.6 DNS name-constraint), CVE-2026-39892 (46.0.7 buffer overflow), CVE-2026-69247 (50.0.0)
 # idna>=3.18               # Fixes CVE-2026-45409 (incomplete fix of CVE-2024-3651, DoS in idna.encode)
 # msgpack>=1.2.1           # Fixes GHSA-6v7p-g79w-8964 (repeated unpacker SEGV)
@@ -452,19 +453,28 @@ evaluation = ["*.json", "*.md"]
 #                          # ever built (nothing in .github/ runs build/uv build/twine; release.yml only publishes a
 #                          # GitHub Release), and no module imports setuptools/pkg_resources at runtime (verified
 #                          # via grep). Reopen when the cu128 index publishes torch>=2.13.0.
+#                          # Re-checked 2026-10-29: cu128 index still tops out at 2.11.0+cu128 (PyPI has 2.15.0);
+#                          # `uv lock --upgrade-package setuptools` still resolves 81.0.0. Deferral stands.
 #                          # Prior note (2026-08-06): forcing the *venv's installed* setuptools to 83.0.0 (separate
 #                          # from the lock) was tested and works (torch still imports, CUDA intact), but leaves a
 #                          # standing `pip check` conflict against torch's declared `setuptools<82` -- not done. See
 #                          # docs/PYTORCH_COMPATIBILITY.md and docs/adr/0033-lift-torch-ceiling.md.
 # urllib3>=2.7.0           # Fixes CVE-2026-44431 (cross-origin redirect), CVE-2026-44432 (decompression)
-# uv>=0.11.24              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal), GHSA-pjjw-68hj-v9mw (0.11.6, arbitrary file deletion via RECORD entries)
+# uv>=0.13.4               # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal), GHSA-pjjw-68hj-v9mw (0.11.6, arbitrary file deletion via RECORD entries),
+#                          # PYSEC-2026-4321 / GHSA-hq85-5cpj-mr62 (0.13.4, vendored webpki-root-certs still trusted the emSign ECC root).
+#                          # Not in uv.lock: the installers bootstrap it into the venv with an unpinned `pip install uv`
+#                          # (install-windows.cmd, scripts/powershell/install-windows.ps1, install_pytorch_cuda.bat), so the
+#                          # venv copy only moves on a reinstall or `.venv/Scripts/python.exe -m pip install -U uv`.
+#                          # Upgrade the standalone uv on PATH separately (`uv self update`).
 # werkzeug>=3.1.4          # Fixes CVE-2025-66221 (Windows device name handling)
 # wheel>=0.46.3            # Fixes CVE-2026-24049 (path traversal in unpack)
 #
 # Deferred (no upstream fix):
 # * transformers PYSEC-2025-217 (X-CLIP checkpoint-conversion RCE) — no fix; not applicable (no X-CLIP conversion use)
 # * transformers PYSEC-2026-2290 / CVE-2026-5241 (LightGlue model-load RCE) — no fix; not applicable (no LightGlue use)
-# * diskcache CVE-2025-69872, sqlitedict CVE-2024-35515 (pickle RCE) — no upstream fix; sqlitedict mitigated via JSON serialization (metadata.py)
+# * diskcache CVE-2025-69872, sqlitedict CVE-2024-35515 (pickle RCE) — no upstream fix; sqlitedict mitigated via JSON serialization (metadata.py);
+#   re-verified 2026-10-29 (PyPI latest still 2.1.0) and now pinned by
+#   tests/unit/search/test_metadata_store.py::TestMetadataStoreSerialization (red if encode/decode is dropped)
 # * nltk CVE-2026-81726 / GHSA-8mgp-746c-j5xp — RESOLVED 2026-10-29: nltk 3.10.4 (published
 #   2026-10-20) fixes it and the direct-dependency floor is now >=3.10.4 (PR #98); pip-audit on
 #   the 3.10.4 venv reports no nltk findings. (Pathsec bypass in model-artifact APIs:
