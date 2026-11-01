@@ -901,6 +901,191 @@ class TestBomTolerantPyanReader:
         assert content == "# \xe9\n"
 
 
+class TestPyanFailureContainment:
+    """One file pyan cannot scope must cost one file, not the whole tier.
+
+    2026-10-31 twozero-dev incident: a single ``def top`` made pyan raise
+    ``KeyError`` in ``_function_scope``. pyan pushes ``name_stack`` before that
+    lookup and does not unwind on error, and ``process_one`` swallowed the error
+    and carried on with the corrupted stacks -- so every later file failed too,
+    in both passes (~1000 "[PYAN] skipping" lines).
+    """
+
+    @staticmethod
+    def _write(tmp_path: Path, name: str, src: str) -> None:
+        (tmp_path / name).write_text(dedent(src))
+
+    @requires_pyan
+    def test_failed_file_does_not_cascade(self, tmp_path: Path) -> None:
+        """Files a, b, c: only a is made to fail; b and c must still resolve,
+        and the visitor stacks must be empty afterwards.
+
+        The trigger (a dropped function scope) is independent of the ``top``
+        collision, so this isolates the cascade from the trigger.
+        """
+        import logging
+
+        from chunking.relationships.external_call_graph import (
+            _gather_py_files,
+            _TrackedVisitor,
+        )
+
+        self._write(tmp_path, "a.py", "def f():\n    pass\n")
+        self._write(tmp_path, "b.py", "def g():\n    pass\n")
+        self._write(
+            tmp_path,
+            "c.py",
+            """\
+            from b import g
+
+
+            def h():
+                g()
+            """,
+        )
+
+        class _DropsAScope(_TrackedVisitor):
+            def analyze_scopes(self, code, filename):
+                super().analyze_scopes(code, filename)
+                if self.module_name == "a":
+                    del self.scopes["a.f"]  # visitor's lookup of a.f now KeyErrors
+
+        visitor = _DropsAScope(
+            _gather_py_files(tmp_path),
+            root=str(tmp_path),
+            logger=logging.getLogger("test_failure_containment"),
+        )
+
+        assert {Path(f).name for f in visitor._failed_files} == {"a.py"}
+        assert visitor.name_stack == []
+        assert visitor.scope_stack == []
+        assert visitor.class_stack == []
+        assert visitor.context_stack == []
+        edges = {
+            (f.namespace, f.name, t.namespace, t.name)
+            for f, ts in visitor.uses_edges.items()
+            for t in ts
+        }
+        assert ("c", "h", "b", "g") in edges
+
+    @requires_pyan
+    def test_function_named_top_is_scoped(self, tmp_path: Path) -> None:
+        """pyan 2.8.1 maps every symtable scope named ``top`` to the module
+        scope (CPython's module table is called ``top``), so a nested
+        ``def top`` replaced its parent's scope and the visitor's lookup of
+        ``outer.top`` raised ``KeyError``. Minimised from
+        ``dev/tools/qa/startup_dialogs.py::find_dialogs``.
+        """
+        import logging
+
+        import chunking.relationships.external_call_graph as ecg
+
+        self._write(
+            tmp_path,
+            "dialogs.py",
+            """\
+            def helper():
+                pass
+
+
+            def top(x):
+                helper()
+
+
+            def outer():
+                def top(hwnd):
+                    def child(ch):
+                        helper()
+                    return child
+                return top
+            """,
+        )
+
+        with ecg._module_only_top_scope():
+            visitor = ecg._TrackedVisitor(
+                ecg._gather_py_files(tmp_path),
+                root=str(tmp_path),
+                logger=logging.getLogger("test_top_scope"),
+            )
+
+        assert not visitor._failed_files
+        callers = {
+            f"{f.namespace}.{f.name}"
+            for f, ts in visitor.uses_edges.items()
+            for t in ts
+            if t.name == "helper"
+        }
+        assert "dialogs.outer.top.child" in callers
+        assert "dialogs.top" in callers
+
+
+class TestModuleOnlyTopScope:
+    """The scoped ``pyan.analyzer.Scope`` swap must be a clean round trip,
+    like ``_bom_tolerant_pyan_reader``."""
+
+    @requires_pyan
+    def test_scope_class_restored_on_exit(self) -> None:
+        import pyan.analyzer as pyan_analyzer
+
+        import chunking.relationships.external_call_graph as ecg
+
+        original = pyan_analyzer.Scope
+        with ecg._module_only_top_scope():
+            assert pyan_analyzer.Scope is not original
+            assert issubclass(pyan_analyzer.Scope, original)
+        assert pyan_analyzer.Scope is original
+
+    @requires_pyan
+    def test_scope_class_restored_on_exception(self) -> None:
+        import pyan.analyzer as pyan_analyzer
+
+        import chunking.relationships.external_call_graph as ecg
+
+        original = pyan_analyzer.Scope
+        with pytest.raises(RuntimeError), ecg._module_only_top_scope():
+            raise RuntimeError("boom")
+        assert pyan_analyzer.Scope is original
+
+    @requires_pyan
+    def test_resolver_applies_the_swap(self, tmp_path: Path) -> None:
+        """End to end through ``PyanResolver.resolve``: a ``def top`` file
+        must not land in the failed-file tally (checked via the log)."""
+        import logging
+
+        (tmp_path / "dialogs.py").write_text(
+            dedent("""\
+            def helper():
+                pass
+
+
+            def outer():
+                def top(hwnd):
+                    helper()
+                return top
+            """)
+        )
+        records: list[logging.LogRecord] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = _Capture(level=logging.WARNING)
+        pyan_logger = logging.getLogger("pyan")
+        pyan_logger.addHandler(handler)
+        try:
+            # py_files is passed so the empty line map cannot scope the file out.
+            PyanResolver().resolve(
+                tmp_path,
+                {},
+                logging.getLogger("test_top_resolve"),
+                py_files=_gather_py_files(tmp_path),
+            )
+        finally:
+            pyan_logger.removeHandler(handler)
+        assert not [r for r in records if "skipping" in r.getMessage()]
+
+
 # ---------------------------------------------------------------------------
 # Part 3 — pyan cooperative deadline (runaway-runtime budget)
 # ---------------------------------------------------------------------------

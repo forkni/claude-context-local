@@ -81,6 +81,15 @@ try:
         CallGraphVisitor as _CallGraphVisitor,  # type: ignore[import-untyped]
     )
 
+    # Same reasoning as the postprocessor imports: an API mismatch must flip
+    # _PYAN_AVAILABLE here, not surface later inside a resolver subprocess.
+    from pyan.anutils import (  # type: ignore[import-untyped]
+        Scope as _PyanScope,
+    )
+    from pyan.anutils import (  # type: ignore[import-untyped]
+        normalize_symtable_scope_name as _normalize_symtable_scope_name,
+    )
+
     # Imported at module scope (not lazily inside postprocess() below) so a
     # pyan3 install whose postprocessor API doesn't match what this module's
     # postprocess() override needs (e.g. pyan3 < 2.8, which has no
@@ -96,6 +105,25 @@ try:
         expand_unknowns,
         resolve_imports,
     )
+
+    class _ModuleOnlyTopScope(_PyanScope):
+        """``pyan.anutils.Scope`` that blanks only the *module* table's name.
+
+        pyan 2.8.1 ``Scope.__init__`` (anutils.py:520) turns every symtable
+        scope named ``"top"`` into ``""`` -- it checks the name, not the table
+        type, because CPython happens to call the module table ``top``. A user
+        ``def top`` / ``class top`` is then registered under its *parent's*
+        namespace (overwriting the parent's scope, hoisting its children), and
+        the visitor's lookup of ``<parent>.top`` raises ``KeyError``. Restoring
+        the real name for any non-module table fixes the registration.
+        """
+
+        def __init__(self, table):
+            super().__init__(table)
+            # get_type() is a str up to 3.12 and an enum with .value on 3.13+.
+            table_type = getattr(self.type, "value", self.type)
+            if self.name == "" and str(table_type) != "module":
+                self.name = _normalize_symtable_scope_name(table.get_name())
 
     class _TrackedVisitor(_CallGraphVisitor):
         """``CallGraphVisitor`` subclass that records which edges were added by
@@ -274,9 +302,27 @@ try:
             self._seen_files.add(filename)
             if self._past_deadline():
                 return
+            # pyan's scope context managers push these stacks BEFORE they look
+            # the scope up (analyzer.py _function_scope/_class_scope) and do
+            # not unwind when that lookup raises, and process_one() only
+            # resets module_name/filename on success. Continuing on that
+            # state fails every later file in both passes (2026-10-31
+            # twozero-dev: ~1000 files lost to one bad one), so restore the
+            # entry depth on failure.
+            stacks = (
+                self.name_stack,
+                self.scope_stack,
+                self.class_stack,
+                self.context_stack,
+            )
+            depths = [len(stack) for stack in stacks]
             try:
                 super().process_one(filename)
             except Exception:  # noqa: BLE001 - resilience: one bad file must not cost the whole pyan tier
+                for stack, depth in zip(stacks, depths, strict=True):
+                    del stack[depth:]
+                self.module_name = None
+                self.filename = None
                 first_sight = filename not in self._failed_files
                 self._failed_files.add(filename)
                 self.logger.warning(
@@ -454,6 +500,28 @@ def _bom_tolerant_pyan_reader() -> Iterator[None]:
             _pyan_analyzer.open = previous
 
 
+@contextmanager
+def _module_only_top_scope() -> Iterator[None]:
+    """Swap ``pyan.analyzer.Scope`` for :class:`_ModuleOnlyTopScope`.
+
+    Works around the pyan 2.8.1 ``"top"`` name collision (see the class
+    docstring). ``CallGraphVisitor.analyze_scopes`` resolves ``Scope`` from the
+    ``pyan.analyzer`` module globals (imported there by name), so assigning the
+    module attribute is enough. Scoped like :func:`_bom_tolerant_pyan_reader`
+    -- a clean round trip, never a permanent patch -- and ``PyanResolver``
+    already runs in its own child process. Remove once pyan3 checks the table
+    type upstream.
+    """
+    import pyan.analyzer as _pyan_analyzer  # inline, as _bom_tolerant_pyan_reader does
+
+    previous = _pyan_analyzer.Scope
+    _pyan_analyzer.Scope = _ModuleOnlyTopScope
+    try:
+        yield
+    finally:
+        _pyan_analyzer.Scope = previous
+
+
 # ---------------------------------------------------------------------------
 # Backward-compat alias for tests that import ``_gather_py_files`` directly
 # ---------------------------------------------------------------------------
@@ -605,6 +673,7 @@ class PyanResolver:
         with (
             heartbeat(logger, "[PYAN]", len(py_files), unit="files") as tick,
             _bom_tolerant_pyan_reader(),
+            _module_only_top_scope(),
         ):
             visitor = _TrackedVisitor(
                 py_files,
