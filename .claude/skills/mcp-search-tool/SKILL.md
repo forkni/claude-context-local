@@ -11,7 +11,7 @@ argument-hint: "search query or 'status' for index health"
 # requires MCP_EXPOSE_ADVANCED_TOOLS=1 on the server process + reconnect. See "Tool Tiers" below.
 allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources, code-search:get_procedural_guidance, code-search:edit_procedural_graph"
 metadata:
-  version: 0.27.0
+  version: 0.27.1
   mcp-server: code-search
 ---
 
@@ -242,6 +242,8 @@ code-search:switch_project     # if the active project is wrong
 
 If returned chunk_ids have file paths that don't match the expected project, call `switch_project` **before trusting any results**. Ignoring a wrong
 active project is a common silent error — results look plausible but are from the wrong codebase.
+
+A wrong active project does not make code-search unavailable. Run `switch_project`, then search. Do not fall back to Grep for that reason.
 
 ---
 
