@@ -435,6 +435,7 @@ class IncrementalIndexer:
             # Recovery would clear the index and re-run it as a full index,
             # which hits the same locked file. Report the lock and stop.
             logger.error(f"Incremental indexing stopped: {e}")
+            self._drop_snapshot_if_index_changed(e, project_path)
             return self._zero_result(start_time, success=False, error=str(e))
 
         except Exception as e:  # noqa: BLE001 - api-boundary: top-level indexing op converts failure to structured result
@@ -634,7 +635,8 @@ class IncrementalIndexer:
                 f"Recovery already failed previously ({marker_path.name} "
                 "present) and was not retried automatically. Call "
                 "cleanup_resources to release any held file handles, then "
-                "retry indexing; a successful recovery removes the marker."
+                "run a force reindex (index_directory with incremental=False); "
+                "a successful full index removes the marker."
             )
             logger.error(error)
             return self._zero_result(start_time, success=False, error=error)
@@ -649,6 +651,7 @@ class IncrementalIndexer:
             is_lock_error = isinstance(recovery_error, IndexFilesInUseError)
             if is_lock_error:
                 logger.error(f"Recovery stopped: {recovery_error}")
+                self._drop_snapshot_if_index_changed(recovery_error, project_path)
             else:
                 logger.error(f"Recovery failed: {recovery_error}")
                 logger.error(traceback.format_exc())
@@ -676,14 +679,39 @@ class IncrementalIndexer:
                 ),
             )
         else:
-            if marker_path is not None and marker_path.exists():
-                try:
-                    marker_path.unlink()
-                except OSError as marker_error:  # noqa: BLE001 - best-effort: stale marker cleanup, not fatal to a successful recovery
-                    logger.warning(
-                        f"Recovery succeeded but could not clear stale marker: {marker_error}"
-                    )
+            self._clear_recovery_marker()
             return result
+
+    def _clear_recovery_marker(self) -> None:
+        """Delete the recovery marker so automatic recovery can run again.
+
+        The marker blocks recovery while a held file would only fail it again.
+        Recovery is skipped while the marker exists, so a successful recovery
+        can never be what removes it; a successful full index is the signal
+        that the hold is gone. Best effort: a marker that cannot be deleted
+        must not fail an index that succeeded.
+        """
+        marker_path = self._recovery_marker_path()
+        if marker_path is None or not marker_path.exists():
+            return
+        try:
+            marker_path.unlink()
+        except OSError as marker_error:  # noqa: BLE001 - best-effort: stale marker cleanup, not fatal to a successful index
+            logger.warning(f"Could not clear stale recovery marker: {marker_error}")
+
+    def _drop_snapshot_if_index_changed(
+        self, error: IndexFilesInUseError, project_path: str
+    ) -> None:
+        """Delete the Merkle snapshot when a locked-file failure left a partial clear.
+
+        If part of the index is already deleted but the old snapshot stays, the
+        next normal run diffs against it, finds "no changes" and reports success
+        on an empty index. Best effort: the lock error is the real failure.
+        """
+        if not error.index_changed:
+            return
+        with contextlib.suppress(Exception):  # noqa: BLE001 - best-effort: never mask the lock error being reported
+            self.snapshot_manager.delete_snapshot(project_path)
 
     def _full_index(
         self, project_path: str, project_name: str, start_time: float
@@ -924,12 +952,15 @@ class IncrementalIndexer:
                         f"Index inconsistent after full index "
                         f"({len(issues)} issues): {issues}"
                     )
+            if result.success:
+                self._clear_recovery_marker()
             return result
 
         except IndexFilesInUseError as e:
             # Known, user-actionable condition (the message says what holds the
             # file and what to do): log it once, without a traceback.
             logger.error(f"Full indexing stopped: {e}")
+            self._drop_snapshot_if_index_changed(e, project_path)
             with contextlib.suppress(Exception):  # noqa: BLE001 - best-effort cache invalidation, never mask the original failure
                 self._resource_refresher.invalidate_searcher_cache()
             return self._zero_result(start_time, success=False, error=str(e))

@@ -10,6 +10,7 @@ import pytest
 
 from search.index_sync import IndexSynchronizer
 from search.index_write_lock import IndexFilesInUseError
+from tests.fixtures.lock_errors import lock_violation
 
 
 @pytest.fixture
@@ -305,9 +306,7 @@ class TestIndexSynchronizer:
         the probe passed, so the index is already partly gone: surface it as
         IndexFilesInUseError(index_changed=True), and never reach the dense
         clear."""
-        self.mock_bm25_index.clear.side_effect = PermissionError(
-            "[WinError 32] file in use by another process"
-        )
+        self.mock_bm25_index.clear.side_effect = lock_violation()
 
         with pytest.raises(IndexFilesInUseError) as excinfo:
             self.synchronizer.clear_index()

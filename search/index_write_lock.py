@@ -44,11 +44,34 @@ class IndexFilesInUseError(PermissionError):
 
     Unlike ``IndexWriteLockHeldError`` (another *writer* holds the write lock),
     this is a *reader* -- typically the running MCP server with the project
-    loaded -- holding the file, so the write lock was free. The failed clear is
-    a no-op: the existing index is untouched. Subclasses ``PermissionError`` so
-    callers and tests that catch ``PermissionError``/``OSError`` keep working;
-    the raw ``WinError`` is kept as ``__cause__``.
+    loaded -- holding the file, so the write lock was free. When ``index_changed``
+    is False (the probe rename failed) the failed clear is a no-op and the
+    existing index is untouched; when True, part of the index is already
+    deleted. Subclasses ``PermissionError`` so callers and tests that catch
+    ``PermissionError``/``OSError`` keep working; the raw ``WinError`` is kept
+    as ``__cause__``.
     """
+
+    #: True when part of the index was already deleted before the failure.
+    #: Callers use it to drop the Merkle snapshot so the next run cannot diff
+    #: against it, find "no changes" and report success on an empty index.
+    index_changed: bool = False
+
+
+#: Windows error codes for a file held open elsewhere: 32 is a sharing violation
+#: (the case a delete or rename hits), 33 a lock violation.
+_LOCK_WINERRORS = frozenset({32, 33})
+
+
+def is_lock_violation(exc: BaseException) -> bool:
+    """Return True when *exc* is Windows reporting a file held open elsewhere.
+
+    Any other ``PermissionError`` (a read-only file, an ACL denial, Windows
+    error 5 "Access is denied") is a real permission problem, and POSIX never
+    reports a lock for a delete, so neither carries a ``winerror`` in
+    ``_LOCK_WINERRORS``.
+    """
+    return getattr(exc, "winerror", None) in _LOCK_WINERRORS
 
 
 def files_in_use_error(
@@ -81,8 +104,9 @@ def files_in_use_error(
             f"Cannot finish clearing the index: {name} is open in another process.\n"
             f"  File: {path}\n"
             "The index is now incomplete.\n"
-            f"{holder} Stop that process, then run a force reindex "
-            "(index_directory with incremental=False) to rebuild it."
+            f"{holder} Stop that process, or run a force reindex through the MCP "
+            "server's index_directory tool with incremental=False (it releases "
+            "its own handle first), to rebuild it."
         )
     else:
         message = (
@@ -93,16 +117,21 @@ def files_in_use_error(
             "server's index_directory tool (it releases its own handle first), "
             "then try again."
         )
-    return IndexFilesInUseError(message)
+    error = IndexFilesInUseError(message)
+    error.index_changed = index_changed
+    return error
 
 
 @contextmanager
 def files_in_use_guard(path_hint: Path | str, *, index_changed: bool) -> Iterator[None]:
-    """Turn a ``PermissionError`` raised inside the block into the clear error.
+    """Turn a lock error raised inside the block into the clear error.
 
     Wrap each delete of an index file with this instead of repeating a
-    ``try/except``. An ``IndexFilesInUseError`` raised inside the block (for
-    example by a nested guard or the probe) passes through unchanged.
+    ``try/except``. Only a real lock (see :func:`is_lock_violation`) becomes an
+    ``IndexFilesInUseError``. An ``IndexFilesInUseError`` raised inside the
+    block (for example by a nested guard or the probe) and any other
+    ``PermissionError`` pass through unchanged: "Access is denied" is already
+    an accurate message, and calling it a lock would point at the wrong fix.
 
     Args:
         path_hint: File or directory to name when the ``PermissionError``
@@ -110,7 +139,7 @@ def files_in_use_guard(path_hint: Path | str, *, index_changed: bool) -> Iterato
         index_changed: Same meaning as in :func:`files_in_use_error`.
 
     Raises:
-        IndexFilesInUseError: Built from the ``PermissionError``, which stays
+        IndexFilesInUseError: Built from the lock error, which stays
             available as ``__cause__``.
     """
     try:
@@ -118,6 +147,8 @@ def files_in_use_guard(path_hint: Path | str, *, index_changed: bool) -> Iterato
     except IndexFilesInUseError:
         raise
     except PermissionError as exc:
+        if not is_lock_violation(exc):
+            raise
         raise files_in_use_error(
             exc.filename or path_hint, index_changed=index_changed
         ) from exc

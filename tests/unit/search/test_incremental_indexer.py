@@ -15,6 +15,7 @@ from search.filters import PathFilter
 from search.incremental_indexer import IncrementalIndexer, IncrementalIndexResult
 from search.index_write_lock import IndexFilesInUseError
 from search.resource_refresh import NullResourceRefresher
+from tests.fixtures.lock_errors import lock_violation
 
 
 class _SwappingRefresher:
@@ -1354,8 +1355,8 @@ class TestIncrementalIndexer:
         self.mock_snapshot_manager.get_snapshot_path.return_value = Path(
             "snapshots/proj_snapshot.json"
         )
-        self.mock_snapshot_manager.delete_snapshot.side_effect = PermissionError(
-            13, "denied", "snapshots/proj_snapshot.json"
+        self.mock_snapshot_manager.delete_snapshot.side_effect = lock_violation(
+            "snapshots/proj_snapshot.json"
         )
 
         with (
@@ -1910,6 +1911,69 @@ class TestBoundedRecovery:
         mock_recovery.assert_not_called()
         assert "Traceback" not in caplog.text
 
+    def _run_full_index(self, *, success: bool, error: str | None = None):
+        """Drive the real _full_index to its return with the write stage mocked.
+
+        The stage class is patched, not the instance attribute: _full_index
+        calls _build_write_pipeline() again after the resource refresher, which
+        would replace an instance attribute set here.
+        """
+        self.mock_snapshot_manager.has_snapshot.return_value = False
+        stage_result = IncrementalIndexResult(
+            success=success,
+            error=error,
+            files_added=0,
+            files_removed=0,
+            files_modified=0,
+            chunks_added=0,
+            chunks_removed=0,
+            time_taken=0.0,
+        )
+        with (
+            patch("search.incremental_indexer.IndexWriteStage") as mock_stage_class,
+            patch("search.incremental_indexer.MerkleDAG") as mock_dag_class,
+            patch.object(IncrementalIndexer, "_chunk_files_parallel", return_value=[]),
+        ):
+            mock_stage_class.return_value.run.return_value = stage_result
+            indexer = IncrementalIndexer(
+                indexer=self.mock_indexer,
+                embedder=self.mock_embedder,
+                chunker=self.mock_chunker,
+                snapshot_manager=self.mock_snapshot_manager,
+                resource_refresher=NullResourceRefresher(),
+            )
+            indexer._summary_stage = Mock()
+            mock_dag = Mock()
+            mock_dag.get_all_files.return_value = ["main.py"]
+            mock_dag.path_filter = PathFilter(None, None, self.project_path)
+            mock_dag.nodes = {}
+            mock_dag_class.return_value = mock_dag
+            self.mock_chunker.is_supported.return_value = True
+
+            return indexer.incremental_index(str(self.project_path), "test_project")
+
+    def test_successful_full_index_clears_the_recovery_marker(self):
+        """The marker blocks automatic recovery while a file is held. A full
+        index that succeeds proves the hold is gone, so it must remove the
+        marker; nothing else can (recovery is skipped while it exists)."""
+        self.marker_path.write_text("Original: x\nRecovery: y\nTimestamp: 0\n")
+
+        result = self._run_full_index(success=True)
+
+        assert result.success is True
+        assert not self.marker_path.exists()
+
+    def test_failed_full_index_keeps_the_recovery_marker(self):
+        self.marker_path.write_text("Original: x\nRecovery: y\nTimestamp: 0\n")
+
+        result = self._run_full_index(success=False, error="embedding failed")
+
+        assert result.success is False
+        assert self.marker_path.exists(), (
+            "a full index that failed proves nothing about the lock, so the "
+            "marker must stay"
+        )
+
     def test_recovery_short_circuits_when_marker_already_present(self):
         self.marker_path.write_text("Original: x\nRecovery: y\nTimestamp: 0\n")
         indexer = IncrementalIndexer(
@@ -1929,6 +1993,10 @@ class TestBoundedRecovery:
 
         assert result.success is False
         assert "cleanup_resources" in result.error
+        # The fix named must be one that works: recovery is skipped while the
+        # marker exists, so it can never be what removes the marker.
+        assert "force reindex" in result.error
+        assert "successful recovery removes" not in result.error
         # a prior marker must block retrying clear_index() against the same
         # held handle, not just report the same error after retrying
         self.mock_indexer.clear_index.assert_not_called()

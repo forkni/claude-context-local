@@ -26,6 +26,7 @@ from search.index_write_lock import IndexFilesInUseError
 from search.indexer import CodeIndexManager, probe_metadata_deletable
 from search.metadata import MetadataStore
 from search.mmap_vectors import MmapVectorStorage
+from tests.fixtures.lock_errors import lock_violation
 
 
 class TestClearIndexPreservesChunkCache:
@@ -123,7 +124,7 @@ class TestClearIndexFailsFastOnLockedMetadata:
         assert metadata_db.exists()
 
         def _raise_permission_error(*_args, **_kwargs):
-            raise PermissionError("[WinError 32] file in use by another process")
+            raise lock_violation(str(metadata_db))
 
         monkeypatch.setattr(os, "replace", _raise_permission_error)
 
@@ -321,6 +322,26 @@ class TestClearIndexDiscardsStaleDeletingDebris:
         assert second == deleting_path
         assert second.read_bytes() == b"live sqlite db"
 
+    def test_probe_leaves_access_denied_as_a_plain_permission_error(
+        self, tmp_path, monkeypatch
+    ):
+        """Windows error 5 (read-only file, ACL denial) is not a lock: the
+        probe must not call it 'open in another process'."""
+        metadata_path = tmp_path / "metadata.db"
+        metadata_path.write_bytes(b"live sqlite db")
+        denied = lock_violation(str(metadata_path), winerror=5)
+
+        def _raise_denied(*_args, **_kwargs):
+            raise denied
+
+        monkeypatch.setattr(os, "replace", _raise_denied)
+
+        with pytest.raises(PermissionError) as excinfo:
+            probe_metadata_deletable(metadata_path)
+
+        assert excinfo.value is denied
+        assert not isinstance(excinfo.value, IndexFilesInUseError)
+
     def test_locked_stale_deleting_sibling_reports_unchanged_index(
         self, tmp_path, monkeypatch
     ):
@@ -335,7 +356,7 @@ class TestClearIndexDiscardsStaleDeletingDebris:
 
         def _locked_unlink(self, *args, **kwargs):
             if self.name.endswith(".deleting"):
-                raise PermissionError("[WinError 32] file in use by another process")
+                raise lock_violation(str(self))
             return original_unlink(self, *args, **kwargs)
 
         monkeypatch.setattr(Path, "unlink", _locked_unlink)
@@ -370,7 +391,7 @@ class TestClearIndexReportsLockedSidecarsAsIncomplete:
 
         def _locked_unlink(self, *args, **kwargs):
             if self.name.endswith("-wal"):
-                raise PermissionError("[WinError 32] file in use by another process")
+                raise lock_violation(str(self))
             return original_unlink(self, *args, **kwargs)
 
         monkeypatch.setattr(Path, "unlink", _locked_unlink)
@@ -408,7 +429,7 @@ class TestClearIndexReportsLockedFaissAndGraphFiles:
         locked = storage_dir / "code.index"
 
         def _locked_clear():
-            raise PermissionError(13, "denied", str(locked))
+            raise lock_violation(str(locked))
 
         monkeypatch.setattr(manager._faiss_index, "clear", _locked_clear)
 
@@ -428,7 +449,7 @@ class TestClearIndexReportsLockedFaissAndGraphFiles:
         locked = tmp_path / "proj_call_graph.json"
 
         def _locked_clear():
-            raise PermissionError(13, "denied", str(locked))
+            raise lock_violation(str(locked))
 
         monkeypatch.setattr(manager._graph, "clear", _locked_clear)
 

@@ -32,7 +32,7 @@ from search.batch_operations import BatchOperations
 from search.faiss_index import FaissVectorIndex, index_kind_for
 from search.filters import FilterEngine
 from search.graph_integration import GraphIntegration
-from search.index_write_lock import files_in_use_error, files_in_use_guard
+from search.index_write_lock import files_in_use_guard
 from search.metadata import MetadataStore
 
 
@@ -84,17 +84,14 @@ def probe_metadata_deletable(metadata_path: Path) -> Path:
     """
     deleting_path = Path(str(metadata_path) + ".deleting")
     if metadata_path.exists():
-        locked_path = metadata_path
-        try:
-            if deleting_path.exists():
-                # Debris from an aborted clear; never let it shadow the live DB.
-                locked_path = deleting_path
+        # Nothing has been deleted yet on either branch: a lock here is a
+        # no-op failure (index_changed=False).
+        if deleting_path.exists():
+            # Debris from an aborted clear; never let it shadow the live DB.
+            with files_in_use_guard(deleting_path, index_changed=False):
                 deleting_path.unlink()
-                locked_path = metadata_path
+        with files_in_use_guard(metadata_path, index_changed=False):
             os.replace(metadata_path, deleting_path)
-        except PermissionError as exc:
-            # Nothing has been deleted yet on either branch: a no-op failure.
-            raise files_in_use_error(locked_path, index_changed=False) from exc
         return deleting_path
     if deleting_path.exists():
         return deleting_path

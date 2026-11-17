@@ -37,7 +37,9 @@ from search.index_write_lock import (
     files_in_use_guard,
     index_write_lock,
     is_index_write_locked,
+    is_lock_violation,
 )
+from tests.fixtures.lock_errors import lock_violation
 
 
 def _successful_result() -> IncrementalIndexResult:
@@ -82,6 +84,9 @@ class TestFilesInUseErrorMessage:
         assert "force reindex" in text
         assert "not changed" not in text
         assert "MCP server" in text
+        # Same two routes as the unchanged variant, so the advice never conflicts.
+        assert "index_directory" in text
+        assert "incremental=False" in text
 
 
 class TestFilesInUseGuard:
@@ -94,7 +99,7 @@ class TestFilesInUseGuard:
             pytest.raises(IndexFilesInUseError) as excinfo,
             files_in_use_guard(tmp_path, index_changed=True),
         ):
-            raise PermissionError(13, "denied", str(locked))
+            raise lock_violation(str(locked))
 
         text = str(excinfo.value)
         assert str(locked) in text, "the file the OS named wins over the hint"
@@ -106,7 +111,7 @@ class TestFilesInUseGuard:
             pytest.raises(IndexFilesInUseError) as excinfo,
             files_in_use_guard(tmp_path / "bm25", index_changed=True),
         ):
-            raise PermissionError("[WinError 32] file in use by another process")
+            raise lock_violation()
 
         assert str(tmp_path / "bm25") in str(excinfo.value)
 
@@ -115,10 +120,31 @@ class TestFilesInUseGuard:
             pytest.raises(IndexFilesInUseError) as excinfo,
             files_in_use_guard(tmp_path / "metadata.db", index_changed=False),
         ):
-            raise PermissionError("[WinError 32] file in use by another process")
+            raise lock_violation()
 
         assert "not changed" in str(excinfo.value)
         assert "incomplete" not in str(excinfo.value)
+
+    def test_is_lock_violation_reads_the_windows_error_code(self):
+        assert is_lock_violation(lock_violation(winerror=32)) is True
+        assert is_lock_violation(lock_violation(winerror=33)) is True
+        assert is_lock_violation(lock_violation(winerror=5)) is False
+        # No Windows error code at all (any POSIX PermissionError, or a bare one).
+        assert is_lock_violation(PermissionError("denied")) is False
+
+    def test_access_denied_is_not_reported_as_a_lock(self, tmp_path):
+        """Windows error 5 is a real permission problem (read-only file, ACL
+        denial). Calling it 'open in another process' would send the reader to
+        the wrong fix, so it must reach the caller as the original error."""
+        denied = lock_violation(str(tmp_path / "metadata.db"), winerror=5)
+        with (
+            pytest.raises(PermissionError) as excinfo,
+            files_in_use_guard(tmp_path, index_changed=True),
+        ):
+            raise denied
+
+        assert excinfo.value is denied
+        assert not isinstance(excinfo.value, IndexFilesInUseError)
 
     def test_passes_an_existing_files_in_use_error_through_unchanged(self, tmp_path):
         original = IndexFilesInUseError("built by the probe")
