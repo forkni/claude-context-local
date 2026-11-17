@@ -4,6 +4,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from search.index_write_lock import IndexFilesInUseError
 from utils.path_utils import normalize_path, path_matches
 
 
@@ -145,6 +146,12 @@ class BatchOperations:
             )
 
             return len(chunks_to_remove_ids)
+
+        except IndexFilesInUseError:
+            # A locked index file is not a corrupted index. The generic handler
+            # below would log a traceback and try to clear the index a second
+            # time against the same lock; the caller reports this error as is.
+            raise
 
         except Exception as e:
             self._logger.error(f"Failed to batch remove chunks: {e}", exc_info=True)

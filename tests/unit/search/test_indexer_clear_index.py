@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from search.faiss_index import FaissVectorIndex
+from search.index_write_lock import IndexFilesInUseError
 from search.indexer import CodeIndexManager, probe_metadata_deletable
 from search.metadata import MetadataStore
 from search.mmap_vectors import MmapVectorStorage
@@ -136,8 +137,23 @@ class TestClearIndexFailsFastOnLockedMetadata:
 
         monkeypatch.setattr(manager._faiss_index, "clear", _tracking_clear)
 
-        with pytest.raises(PermissionError):
+        # IndexFilesInUseError subclasses PermissionError, so existing
+        # `except OSError` / `except PermissionError` callers keep working.
+        with pytest.raises(IndexFilesInUseError) as excinfo:
             manager.clear_index()
+
+        assert isinstance(excinfo.value, PermissionError)
+        message = str(excinfo.value)
+        assert str(metadata_db) in message, "the message must name the locked file"
+        assert "not changed" in message, (
+            "the message must say the existing index was left intact"
+        )
+        assert "MCP server" in message, "the message must name the likely holder"
+        assert "index_directory" in message, "the message must say how to proceed"
+        assert "WinError" not in message, (
+            "the raw OS error belongs in __cause__, not the user-facing text"
+        )
+        assert isinstance(excinfo.value.__cause__, PermissionError)
 
         assert not faiss_clear_called, (
             "FAISS must not be cleared until metadata.db is proven deletable"
@@ -195,8 +211,11 @@ class TestClearIndexFailsFastOnLockedMetadata:
         other_handle = MetadataStore(metadata_db)
         other_handle.get("a.py:1-2:function:f")  # force the connection open
         try:
-            with pytest.raises(OSError):
+            with pytest.raises(IndexFilesInUseError) as excinfo:
                 manager.clear_index()
+
+            assert str(metadata_db) in str(excinfo.value)
+            assert "not changed" in str(excinfo.value)
 
             assert metadata_db.exists(), (
                 "a failed probe must leave metadata.db exactly where it was"
@@ -301,6 +320,124 @@ class TestClearIndexDiscardsStaleDeletingDebris:
         second = probe_metadata_deletable(metadata_path)
         assert second == deleting_path
         assert second.read_bytes() == b"live sqlite db"
+
+    def test_locked_stale_deleting_sibling_reports_unchanged_index(
+        self, tmp_path, monkeypatch
+    ):
+        """The stale-debris unlink runs before the rename, so a lock on it is
+        still a no-op failure: same clear message, live DB left in place."""
+        metadata_path = tmp_path / "metadata.db"
+        metadata_path.write_bytes(b"live sqlite db")
+        deleting_path = Path(str(metadata_path) + ".deleting")
+        deleting_path.write_bytes(b"stale debris from an aborted clear")
+
+        original_unlink = Path.unlink
+
+        def _locked_unlink(self, *args, **kwargs):
+            if self.name.endswith(".deleting"):
+                raise PermissionError("[WinError 32] file in use by another process")
+            return original_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _locked_unlink)
+
+        with pytest.raises(IndexFilesInUseError) as excinfo:
+            probe_metadata_deletable(metadata_path)
+
+        assert str(deleting_path) in str(excinfo.value)
+        assert "not changed" in str(excinfo.value)
+        assert metadata_path.read_bytes() == b"live sqlite db"
+
+
+class TestClearIndexReportsLockedSidecarsAsIncomplete:
+    """Files unlinked AFTER the probe (-wal/-shm/stats.json) can still be held
+    open by another process. By then FAISS is already cleared, so the message
+    must say the index is incomplete, not that it was left unchanged.
+    """
+
+    def test_locked_wal_file_raises_files_in_use_with_incomplete_index(
+        self, tmp_path, monkeypatch
+    ):
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+        manager.metadata_store.set("a.py:1-2:function:f", 0, {"relative_path": "a.py"})
+        manager.metadata_store.commit()
+        manager.metadata_store.close()
+        wal_path = Path(str(storage_dir / "metadata.db") + "-wal")
+        wal_path.write_bytes(b"wal sidecar held by another process")
+
+        original_unlink = Path.unlink
+
+        def _locked_unlink(self, *args, **kwargs):
+            if self.name.endswith("-wal"):
+                raise PermissionError("[WinError 32] file in use by another process")
+            return original_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", _locked_unlink)
+
+        with pytest.raises(IndexFilesInUseError) as excinfo:
+            manager.clear_index()
+
+        message = str(excinfo.value)
+        assert str(wal_path) in message, "the message must name the locked sidecar"
+        assert "incomplete" in message
+        assert "not changed" not in message, (
+            "FAISS was already cleared, so claiming the index is unchanged "
+            "would be false"
+        )
+        assert isinstance(excinfo.value.__cause__, PermissionError)
+
+
+class TestClearIndexReportsLockedFaissAndGraphFiles:
+    """The FAISS files and the call-graph JSON are deleted after the probe has
+    already renamed metadata.db, so a lock on either leaves an incomplete
+    index and must say so instead of raising a raw PermissionError."""
+
+    @staticmethod
+    def _manager_with_probe_passing(tmp_path):
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+        manager.metadata_store.set("a.py:1-2:function:f", 0, {"relative_path": "a.py"})
+        manager.metadata_store.commit()
+        manager.metadata_store.close()
+        return storage_dir, manager
+
+    def test_locked_faiss_file_reports_incomplete_index(self, tmp_path, monkeypatch):
+        storage_dir, manager = self._manager_with_probe_passing(tmp_path)
+        locked = storage_dir / "code.index"
+
+        def _locked_clear():
+            raise PermissionError(13, "denied", str(locked))
+
+        monkeypatch.setattr(manager._faiss_index, "clear", _locked_clear)
+
+        with pytest.raises(IndexFilesInUseError) as excinfo:
+            manager.clear_index()
+
+        message = str(excinfo.value)
+        assert str(locked) in message
+        assert "incomplete" in message
+        assert "not changed" not in message
+        assert isinstance(excinfo.value.__cause__, PermissionError)
+
+    def test_locked_call_graph_file_reports_incomplete_index(
+        self, tmp_path, monkeypatch
+    ):
+        storage_dir, manager = self._manager_with_probe_passing(tmp_path)
+        locked = tmp_path / "proj_call_graph.json"
+
+        def _locked_clear():
+            raise PermissionError(13, "denied", str(locked))
+
+        monkeypatch.setattr(manager._graph, "clear", _locked_clear)
+
+        with pytest.raises(IndexFilesInUseError) as excinfo:
+            manager.clear_index()
+
+        message = str(excinfo.value)
+        assert str(locked) in message
+        assert "incomplete" in message
 
 
 class TestCloseReleasesFaissMmapHandle:

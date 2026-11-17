@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from search.index_sync import IndexSynchronizer
+from search.index_write_lock import IndexFilesInUseError
 
 
 @pytest.fixture
@@ -298,6 +299,37 @@ class TestIndexSynchronizer:
         self.synchronizer.clear_index()
 
         assert call_order == ["preflight_clear", "bm25.clear", "dense.clear_index"]
+
+    def test_clear_index_locked_bm25_dir_reports_index_incomplete(self):
+        """A PermissionError while deleting the BM25 directory happens after
+        the probe passed, so the index is already partly gone: surface it as
+        IndexFilesInUseError(index_changed=True), and never reach the dense
+        clear."""
+        self.mock_bm25_index.clear.side_effect = PermissionError(
+            "[WinError 32] file in use by another process"
+        )
+
+        with pytest.raises(IndexFilesInUseError) as excinfo:
+            self.synchronizer.clear_index()
+
+        message = str(excinfo.value)
+        assert "incomplete" in message
+        assert "not changed" not in message
+        assert str(self.storage_dir / "bm25") in message
+        assert isinstance(excinfo.value.__cause__, PermissionError)
+        self.mock_dense_index.clear_index.assert_not_called()
+
+    def test_clear_index_probe_error_passes_through_unchanged(self):
+        """The probe's own IndexFilesInUseError ("index not changed") must
+        reach the caller as the same object, with BM25 untouched."""
+        probe_error = IndexFilesInUseError("probe: metadata.db is locked")
+        self.mock_dense_index.preflight_clear.side_effect = probe_error
+
+        with pytest.raises(IndexFilesInUseError) as excinfo:
+            self.synchronizer.clear_index()
+
+        assert excinfo.value is probe_error
+        self.mock_bm25_index.clear.assert_not_called()
 
     def test_remove_files_single_file(self):
         """Test removing chunks for a single file (set-of-one)."""

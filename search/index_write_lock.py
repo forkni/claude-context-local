@@ -39,6 +39,90 @@ class IndexWriteLockHeldError(RuntimeError):
     """Raised when another process already holds a project's index write lock."""
 
 
+class IndexFilesInUseError(PermissionError):
+    """Raised when an index file (metadata.db) is open in another process.
+
+    Unlike ``IndexWriteLockHeldError`` (another *writer* holds the write lock),
+    this is a *reader* -- typically the running MCP server with the project
+    loaded -- holding the file, so the write lock was free. The failed clear is
+    a no-op: the existing index is untouched. Subclasses ``PermissionError`` so
+    callers and tests that catch ``PermissionError``/``OSError`` keep working;
+    the raw ``WinError`` is kept as ``__cause__``.
+    """
+
+
+def files_in_use_error(
+    path: Path | str, *, index_changed: bool
+) -> IndexFilesInUseError:
+    """Build the user-facing error for an index file held open elsewhere.
+
+    One builder keeps every raise site on the same wording. The only thing
+    that varies is the fact the reader needs first: whether the failed clear
+    changed the index.
+
+    Args:
+        path: The file or directory another process holds open.
+        index_changed: False when the failure came before anything was
+            deleted (the probe rename), True when part of the index is
+            already gone (deletes after the probe).
+
+    Returns:
+        The error to raise. Callers chain the original ``PermissionError``
+        with ``raise ... from exc`` so the raw ``WinError`` stays in
+        ``__cause__``.
+    """
+    name = Path(path).name or str(path)
+    holder = (
+        "Likely holder: the running code-search MCP server with this project "
+        "loaded, or a second indexer."
+    )
+    if index_changed:
+        message = (
+            f"Cannot finish clearing the index: {name} is open in another process.\n"
+            f"  File: {path}\n"
+            "The index is now incomplete.\n"
+            f"{holder} Stop that process, then run a force reindex "
+            "(index_directory with incremental=False) to rebuild it."
+        )
+    else:
+        message = (
+            f"Cannot rebuild the index: {name} is open in another process.\n"
+            f"  File: {path}\n"
+            "The existing index was not changed.\n"
+            f"{holder} Stop that process, or run this reindex through the MCP "
+            "server's index_directory tool (it releases its own handle first), "
+            "then try again."
+        )
+    return IndexFilesInUseError(message)
+
+
+@contextmanager
+def files_in_use_guard(path_hint: Path | str, *, index_changed: bool) -> Iterator[None]:
+    """Turn a ``PermissionError`` raised inside the block into the clear error.
+
+    Wrap each delete of an index file with this instead of repeating a
+    ``try/except``. An ``IndexFilesInUseError`` raised inside the block (for
+    example by a nested guard or the probe) passes through unchanged.
+
+    Args:
+        path_hint: File or directory to name when the ``PermissionError``
+            carries no file name of its own.
+        index_changed: Same meaning as in :func:`files_in_use_error`.
+
+    Raises:
+        IndexFilesInUseError: Built from the ``PermissionError``, which stays
+            available as ``__cause__``.
+    """
+    try:
+        yield
+    except IndexFilesInUseError:
+        raise
+    except PermissionError as exc:
+        raise files_in_use_error(
+            exc.filename or path_hint, index_changed=index_changed
+        ) from exc
+
+
 def _lock_path(storage_dir: Path | str) -> Path:
     return Path(storage_dir) / _LOCK_FILE_NAME
 
@@ -74,7 +158,9 @@ def index_write_lock(storage_dir: Path | str) -> Iterator[None]:
         lock.acquire()
     except Timeout as exc:
         raise IndexWriteLockHeldError(
-            f"index write lock already held for {storage_dir}"
+            "Another indexer is already writing this project's index "
+            f"(lock: {_lock_path(storage_dir)}). Nothing was changed. "
+            "Wait for it to finish, then try again."
         ) from exc
     try:
         yield

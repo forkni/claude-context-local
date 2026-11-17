@@ -31,7 +31,10 @@ from filelock import FileLock, Timeout
 from search.incremental_indexer import IncrementalIndexer, IncrementalIndexResult
 from search.index_write_lock import (
     _LOCK_FILE_NAME,
+    IndexFilesInUseError,
     IndexWriteLockHeldError,
+    files_in_use_error,
+    files_in_use_guard,
     index_write_lock,
     is_index_write_locked,
 )
@@ -47,6 +50,119 @@ def _successful_result() -> IncrementalIndexResult:
         chunks_removed=0,
         time_taken=0.0,
     )
+
+
+class TestFilesInUseErrorMessage:
+    """files_in_use_error builds the one user-facing text for a locked index
+    file. The two variants differ in the one fact the reader needs: did the
+    failed clear change the index or not?"""
+
+    def test_unchanged_variant_names_file_and_says_index_not_changed(self, tmp_path):
+        path = tmp_path / "metadata.db"
+        err = files_in_use_error(path, index_changed=False)
+
+        assert isinstance(err, IndexFilesInUseError)
+        assert isinstance(err, PermissionError)
+        text = str(err)
+        assert "metadata.db is open in another process" in text
+        assert str(path) in text
+        assert "not changed" in text
+        assert "incomplete" not in text
+        assert "MCP server" in text
+        assert "index_directory" in text
+
+    def test_changed_variant_says_index_incomplete_and_how_to_rebuild(self, tmp_path):
+        path = tmp_path / "metadata.db-wal"
+        err = files_in_use_error(path, index_changed=True)
+
+        text = str(err)
+        assert "metadata.db-wal is open in another process" in text
+        assert str(path) in text
+        assert "incomplete" in text
+        assert "force reindex" in text
+        assert "not changed" not in text
+        assert "MCP server" in text
+
+
+class TestFilesInUseGuard:
+    """files_in_use_guard turns a PermissionError from a delete into the clear
+    IndexFilesInUseError, so no call site repeats the try/except."""
+
+    def test_converts_permission_error_using_the_failing_file(self, tmp_path):
+        locked = tmp_path / "code.index"
+        with (
+            pytest.raises(IndexFilesInUseError) as excinfo,
+            files_in_use_guard(tmp_path, index_changed=True),
+        ):
+            raise PermissionError(13, "denied", str(locked))
+
+        text = str(excinfo.value)
+        assert str(locked) in text, "the file the OS named wins over the hint"
+        assert "incomplete" in text
+        assert isinstance(excinfo.value.__cause__, PermissionError)
+
+    def test_falls_back_to_the_hint_when_the_error_names_no_file(self, tmp_path):
+        with (
+            pytest.raises(IndexFilesInUseError) as excinfo,
+            files_in_use_guard(tmp_path / "bm25", index_changed=True),
+        ):
+            raise PermissionError("[WinError 32] file in use by another process")
+
+        assert str(tmp_path / "bm25") in str(excinfo.value)
+
+    def test_message_follows_index_changed(self, tmp_path):
+        with (
+            pytest.raises(IndexFilesInUseError) as excinfo,
+            files_in_use_guard(tmp_path / "metadata.db", index_changed=False),
+        ):
+            raise PermissionError("[WinError 32] file in use by another process")
+
+        assert "not changed" in str(excinfo.value)
+        assert "incomplete" not in str(excinfo.value)
+
+    def test_passes_an_existing_files_in_use_error_through_unchanged(self, tmp_path):
+        original = IndexFilesInUseError("built by the probe")
+        with (
+            pytest.raises(IndexFilesInUseError) as excinfo,
+            files_in_use_guard(tmp_path, index_changed=True),
+        ):
+            raise original
+
+        assert excinfo.value is original
+
+    def test_leaves_other_exceptions_alone(self, tmp_path):
+        with (
+            pytest.raises(ValueError, match="not a lock"),
+            files_in_use_guard(tmp_path, index_changed=True),
+        ):
+            raise ValueError("not a lock")
+
+    def test_no_error_means_no_effect(self, tmp_path):
+        with files_in_use_guard(tmp_path, index_changed=True):
+            result = 1 + 1
+
+        assert result == 2
+
+
+class TestIndexWriteLockHeldMessage:
+    """IndexWriteLockHeldError text must name the lock file, say nothing was
+    changed, and say what to do -- not just 'already held for <dir>'."""
+
+    def test_message_names_lock_file_and_next_step(self, tmp_path):
+        storage_dir = tmp_path / "index"
+        with (
+            index_write_lock(storage_dir),
+            pytest.raises(IndexWriteLockHeldError) as excinfo,
+            index_write_lock(storage_dir),
+        ):
+            pass  # pragma: no cover - must never be entered
+
+        text = str(excinfo.value)
+        assert "Another indexer is already writing this project's index" in text
+        assert _LOCK_FILE_NAME in text
+        assert str(storage_dir) in text
+        assert "Nothing was changed" in text
+        assert "try again" in text
 
 
 class TestIndexWriteLockInProcessContention:
@@ -201,7 +317,8 @@ class TestIncrementalIndexRespectsHeldLock:
             )
 
         assert result.success is False
-        assert result.error is not None and "index write lock" in result.error
+        assert result.error is not None and "already writing" in result.error
+        assert "Nothing was changed" in result.error
         self.mock_indexer.clear_index.assert_not_called()
 
     def test_incremental_index_succeeds_once_the_lock_is_free(self):
@@ -288,7 +405,7 @@ class TestIncrementalIndexRespectsHeldLock:
         # rather than returning the "another process" failure.
         bare_mock_indexer.clear_index.assert_called()
         assert result.success is True
-        assert result.error is None or "index write lock" not in (result.error or "")
+        assert result.error is None or "already writing" not in (result.error or "")
 
 
 class TestFileLockTimeoutBehavior:
