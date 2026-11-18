@@ -514,4 +514,4 @@ class CentralityRanker:
                         f"[CENTRALITY] Name-match boost {boost_multiplier}x for '{name}': "
                         f"overlap={overlap:.2f}, tokens={query_tokens & name_tokens}, "  # pragma: no mutate
                         f"score {pre_boost_score:.4f} → {result['blended_score']:.4f}"
-                    )  # pragma: no mutate
+                    )

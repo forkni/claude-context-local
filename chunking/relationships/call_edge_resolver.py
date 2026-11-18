@@ -168,7 +168,8 @@ class CallEdgeResolver(Protocol):
         project_root: Path,
         raw_line_map: dict[str, list[tuple[int, int, str]]],
         logger: logging.Logger,
-        py_files: list[str] | None = None,
+        # Annotation only: PEP 563 postpones it, so it is never evaluated.
+        py_files: list[str] | None = None,  # pragma: no mutate
     ) -> list[ResolvedEdge]:
         """Run the resolver and return call edges.
 
@@ -303,7 +304,8 @@ def prepare_scoped_files(
     raw_line_map: dict[str, list[tuple[int, int, str]]],
     logger: logging.Logger,
     source_name: str,
-) -> list[str] | None:
+    # Annotation only: PEP 563 postpones it, so it is never evaluated.
+) -> list[str] | None:  # pragma: no mutate
     """Gather, scope, and validate .py files for a call-edge resolver pass.
 
     This is the identical 5-step preamble shared by PyanResolver, LibCSTResolver,
@@ -351,7 +353,8 @@ def _resolve_in_subprocess(
     resolver: CallEdgeResolver,
     project_root: Path,
     raw_line_map: dict[str, list[tuple[int, int, str]]],
-    py_files: list[str] | None,
+    # Annotation only: PEP 563 postpones it, so it is never evaluated.
+    py_files: list[str] | None,  # pragma: no mutate
     log_level: int,
 ) -> list[ResolvedEdge]:
     """Process-pool entry point for CPU-bound resolvers (pyan, LibCST).
