@@ -3132,6 +3132,20 @@ expires>`; a re-dated quarantine that expires again fails collection with "delet
 rejects unknown marker arguments; `today` is injectable (`tests/unit/test_conftest_quarantine.py`,
 10 tests, four hand mutations killed).
 
+#### Review follow-up (PR #104, agy gemini-4-carbon-medium) — `6de0bc4d`, `dcd1ea25`, `9ba7cad8`
+
+Five findings, all confirmed against the code and fixed test first:
+
+- `load_config` stats each path once through `_file_mtime`; any `OSError` (not only "not found";
+  `Path.exists()` lets access-denied, I/O and device errors through) reaches the kept layer.
+- The kept-layer key is resolved once in `__init__`, so the cache-hit path is a single `stat()`.
+- The delete-project hint adds "see errors" only for a non-`OSError` failure (it compared a set
+  size with a list length).
+- `test_handle_clear_index_left_locked_files_says_locked` could not fail (the error echoes the
+  per-file reasons); it now checks the stated cause, and a mixed-reasons test pins `all` against
+  `any`.
+- `_check_quarantine` rejects positional marker arguments.
+
 #### Still open
 
 - Re-run the other five targets with the fixed commands (follow-up doc §2.2 item 9) and run
