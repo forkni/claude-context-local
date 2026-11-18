@@ -16,8 +16,8 @@ import tests.conftest as conftest_module
 TODAY = dt.date(2026, 11, 18)
 
 
-def _item(**marker_kwargs):
-    mark = pytest.mark.quarantine(**marker_kwargs).mark
+def _item(*marker_args, **marker_kwargs):
+    mark = pytest.mark.quarantine(*marker_args, **marker_kwargs).mark
     return SimpleNamespace(
         nodeid="tests/unit/test_x.py::test_flaky",
         get_closest_marker=lambda name: mark if name == "quarantine" else None,
@@ -60,6 +60,15 @@ def test_unknown_argument_fails_so_a_typo_cannot_hide_a_redate():
 
     assert "unknown quarantine argument" in message
     assert "redate" in message
+
+
+def test_positional_argument_fails_so_a_redate_cannot_hide_in_it():
+    item = _item("2026-10-01", **OWNED, expires="2026-12-01")
+
+    with pytest.raises(pytest.UsageError) as excinfo:
+        conftest_module._check_quarantine([item], today=TODAY)
+
+    assert "positional" in str(excinfo.value)
 
 
 def test_expired_quarantine_offers_one_redate():

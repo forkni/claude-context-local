@@ -130,8 +130,8 @@ def _check_quarantine(items: list[Any], today: Any = None) -> None:
     A quarantine needs reason=, issue= and an unexpired expires= date. It may be
     re-dated once: the new expires= goes in with redated=<the old expires date>.
     A re-dated quarantine that expires again fails the run, and the only way out
-    is to delete the test and write down why. Unknown arguments fail too, so a
-    typo such as redate= cannot pass as a first quarantine.
+    is to delete the test and write down why. Unknown or positional arguments
+    fail too, so a typo such as redate= cannot pass as a first quarantine.
 
     Args:
         items: Collected test items.
@@ -146,6 +146,12 @@ def _check_quarantine(items: list[Any], today: Any = None) -> None:
         if m is None:
             continue
         kw = m.kwargs
+        if m.args:
+            bad.append(
+                f"{item.nodeid}: quarantine takes keyword arguments only, "
+                f"got positional {list(m.args)!r}"
+            )
+            continue
         if unknown := set(kw) - _QUARANTINE_KWARGS:
             bad.append(
                 f"{item.nodeid}: unknown quarantine argument(s) {sorted(unknown)}"
