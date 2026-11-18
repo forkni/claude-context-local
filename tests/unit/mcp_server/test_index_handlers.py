@@ -390,6 +390,38 @@ class TestPurgeIndexDirFailureReporting:
 
         assert failed == {"metadata.db": "The directory is not empty"}
 
+    def test_locked_bm25_dir_is_reported_with_its_reason(self):
+        from mcp_server.storage_manager import get_storage_dir
+        from mcp_server.tools.index_handlers import _purge_index_dir
+
+        index_dir = get_storage_dir() / "projects" / "proj_bm25lock" / "index"
+        shutil.rmtree(index_dir, ignore_errors=True)
+        (index_dir / "bm25").mkdir(parents=True)
+
+        with patch("shutil.rmtree", side_effect=lock_violation(winerror=32)):
+            _deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
+
+        assert failed == {"bm25/": "locked by another process"}
+
+    def test_denied_call_graph_file_is_reported_by_bare_name(self):
+        """Call-graph files live one level up and are reported by bare name."""
+        from mcp_server.storage_manager import get_storage_dir
+        from mcp_server.tools.index_handlers import _purge_index_dir
+
+        model_dir = get_storage_dir() / "projects" / "proj_graphdeny"
+        index_dir = model_dir / "index"
+        shutil.rmtree(model_dir, ignore_errors=True)
+        index_dir.mkdir(parents=True)
+        (model_dir / "proj_call_graph.json").write_text("{}")
+
+        def _denied_unlink(self, *args, **kwargs):
+            raise lock_violation(str(self), winerror=5)
+
+        with patch.object(Path, "unlink", _denied_unlink):
+            _deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
+
+        assert failed == {"proj_call_graph.json": "access denied"}
+
     def test_all_files_deletable_reports_empty_failed(self, tmp_path):
         from mcp_server.storage_manager import get_storage_dir
         from mcp_server.tools.index_handlers import _purge_index_dir

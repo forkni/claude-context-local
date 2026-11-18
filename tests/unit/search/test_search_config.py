@@ -371,6 +371,37 @@ class TestSearchConfigManager:
 
         assert kept.embedding.model_name == model
 
+    def test_config_that_stats_but_cannot_be_opened_keeps_settings(self, caplog):
+        """stat() can succeed while open() is refused (a lock or ACL change);
+        the kept settings apply, with one warning."""
+        import builtins
+
+        model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": model}}, f)
+        manager = SearchConfigManager(self.config_file)
+        manager.load_config()
+        os.utime(self.config_file, (1_700_000_000, 1_700_000_000))
+
+        real_open = builtins.open
+        target = os.path.abspath(self.config_file)
+
+        def denied_open(file, *args, **kwargs):
+            if os.path.abspath(str(file)) == target:
+                raise PermissionError(13, "Access is denied", str(file))
+            return real_open(file, *args, **kwargs)
+
+        with (
+            patch.object(builtins, "open", denied_open),
+            caplog.at_level("WARNING", logger="search.config"),
+        ):
+            kept = manager.load_config()
+
+        assert kept.embedding.model_name == model
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "last-loaded" in warnings[0].getMessage()
+
     def test_cache_hit_does_not_resolve_the_config_path(self):
         """load_config runs per file and per query; its cache-hit path must stay
         a stat(), without a Path.resolve() (a CreateFile round trip on Windows)."""
