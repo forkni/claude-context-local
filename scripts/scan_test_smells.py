@@ -28,12 +28,19 @@ Detectors (smell id -> what it flags):
     parametrize-no-ids parametrize with >=2 literal cases and no ids= / pytest.param(id=) (K 5.8)
     overprotective     `assert x is not None` immediately followed by an assert that uses x.attr
                        or x[...] (K 4.9)
-    bitwise-assert     &, |, ^, ~, <<, >> inside an assert (K 4.3); set operands are skipped
+    bitwise-assert     &, |, ^, ~, <<, >> inside an assert (K 4.3); set operands are skipped: a
+                       set literal or set()/frozenset() call, or a name bound to one in the test
+                       or at module level (`x = {...}`, `x: frozenset[str] = ...`, `x = a & b`)
     suboptimal-assert  `assert x == True/False/None` or `assert (a == b) is True`;
                        assertTrue/assertFalse/assertIs(<comparison>); assertEqual(x, True/False/None)
                        (PyNose "Suboptimal Assert": a wrapped comparison loses the operands, and
                        equality with True/False/None also passes for 1/0). assertIs(x, True/False/None)
                        is the strict form and is never flagged; the hint keeps a `!=`/Not negation
+    real-clock         REPORT ONLY (kept out of counts, TOTAL, the baseline and --strict): an
+                       assertion comparing a value traced from time.time()/monotonic()/perf_counter(),
+                       or, in a module that really sleeps, an assertion bounding a float or a
+                       duration-named value (`elapsed`, `x['collect_ms']`) with < <= > >= (K 5.6).
+                       Module-wide, so script-style module-level check() calls are covered
 
 Suppress one finding with a trailing `# smell: ignore` or `# smell: ignore[sleep,abs-path]`
 on the reported line. Prefer fixing; suppression is for deliberate, reviewed exceptions.
@@ -82,6 +89,10 @@ SKIP_DIRS = {
 # smell id -> (one-line description, source section)
 SMELLS = {
     "sleep": ("time.sleep/asyncio.sleep in a test", "Koskela 5.6 Sleeping snail"),
+    "real-clock": (
+        "assertion on a real-clock reading or a slept duration (report only)",
+        "Koskela 5.6 / Meszaros Erratic Test",
+    ),
     "no-assert": ("test with no assertion", "Koskela 6.4 Shallow promises"),
     "early-exit": (
         "early return / pytest.skip() inside a test body",
@@ -239,6 +250,31 @@ PLATFORM_FUNCS = {
     "mac_ver",
 }
 BITWISE_OPS = (ast.BitAnd, ast.BitOr, ast.BitXor, ast.LShift, ast.RShift)
+# Smells listed and reported but kept out of counts, TOTAL, the baseline ratchet and --strict.
+REPORT_ONLY = {"real-clock"}
+CLOCK_FUNCS = {
+    "time",
+    "monotonic",
+    "perf_counter",
+    "time_ns",
+    "monotonic_ns",
+    "perf_counter_ns",
+}
+NUMERIC_WRAPPERS = {"int", "float", "round", "abs"}
+ORDER_OPS = (ast.Lt, ast.LtE, ast.Gt, ast.GtE)
+UNITTEST_CMP_ASSERTS = {
+    "assertLess",
+    "assertLessEqual",
+    "assertGreater",
+    "assertGreaterEqual",
+    "assertAlmostEqual",
+    "assertNotAlmostEqual",
+    "assertEqual",
+    "assertNotEqual",
+}
+DURATION_NAME_RE = re.compile(
+    r"(?:^|_)(?:ms|sec|secs|seconds|elapsed|duration|latency|dt)(?:$|_)", re.I
+)
 NESTED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 
 
@@ -504,29 +540,70 @@ def d_overprotective(func):
                     )
 
 
-def _is_set_expr(node: ast.AST) -> bool:
+SET_TYPE_NAMES = {"set", "frozenset", "Set", "FrozenSet", "AbstractSet", "MutableSet"}
+
+
+def _is_set_expr(node: ast.AST, set_names: frozenset = frozenset()) -> bool:
+    """True for a value that is a set: a literal, set()/frozenset(), a name assigned one, or a set
+    operation on such values (`a & b`, `a - b`)."""
     if isinstance(node, (ast.Set, ast.SetComp)):
         return True
-    return isinstance(node, ast.Call) and dotted_name(node) in ("set", "frozenset")
-
-
-def _has_set_operand(node: ast.BinOp, set_names: set[str] | None = None) -> bool:
-    for side in (node.left, node.right):
-        if _is_set_expr(side):
-            return True
-        if set_names and isinstance(side, ast.Name) and side.id in set_names:
-            return True
+    if isinstance(node, ast.Call):
+        return dotted_name(node) in ("set", "frozenset")
+    if isinstance(node, ast.Name):
+        return node.id in set_names
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (*BITWISE_OPS, ast.Sub)):
+        return _is_set_expr(node.left, set_names) or _is_set_expr(node.right, set_names)
     return False
 
 
-def d_bitwise(func):
-    set_names = {
-        target.id
-        for stmt in ast.walk(func)
-        if isinstance(stmt, ast.Assign) and _is_set_expr(stmt.value)
-        for target in stmt.targets
-        if isinstance(target, ast.Name)
-    }
+def _is_set_annotation(node: ast.AST) -> bool:
+    """`set[str]`, `frozenset[int]`, `typing.AbstractSet[...]`, bare `set`."""
+    if isinstance(node, ast.Subscript):
+        node = node.value
+    return dotted_name(node).rsplit(".", 1)[-1] in SET_TYPE_NAMES
+
+
+def collect_set_names(scope: ast.AST) -> frozenset:
+    """Names bound to a set in `scope` (same scope only): `x = {...}`, `x = frozenset(...)`,
+    `x: set[str] = ...`, `x = a & b` on known sets. Iterated to a fixpoint so a name built from
+    another set name counts too. Used to tell a set intersection from a bitwise operator."""
+    names: set = set()
+    nodes = list(walk_same_scope(scope))
+    changed = True
+    while changed:
+        changed = False
+        for node in nodes:
+            if isinstance(node, ast.Assign) and _is_set_expr(
+                node.value, frozenset(names)
+            ):
+                targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            elif (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and (
+                    _is_set_annotation(node.annotation)
+                    or node.value is not None
+                    and _is_set_expr(node.value, frozenset(names))
+                )
+            ):
+                targets = [node.target.id]
+            else:
+                continue
+            new = set(targets) - names
+            if new:
+                names |= new
+                changed = True
+    return frozenset(names)
+
+
+def _has_set_operand(node: ast.BinOp, set_names: frozenset = frozenset()) -> bool:
+    return any(_is_set_expr(side, set_names) for side in (node.left, node.right))
+
+
+def d_bitwise(func, module_sets: frozenset = frozenset()):
+    # A name bound locally shadows the module binding; a local set name only adds to the module ones.
+    set_names = module_sets | collect_set_names(func)
     for node in ast.walk(func):
         if not isinstance(node, ast.Assert):
             continue
@@ -741,6 +818,204 @@ def t_temp(tree):
             yield "persistent-temp", node.lineno, "NamedTemporaryFile(delete=False)"
 
 
+def _time_imports(tree):
+    """(module aliases of `time`, bare clock-function names, bare sleep names) imported by the module."""
+    aliases, clocks, sleeps = set(), set(), set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            aliases.update(a.asname or a.name for a in node.names if a.name == "time")
+        elif isinstance(node, ast.ImportFrom) and node.module == "time":
+            for a in node.names:
+                if a.name in CLOCK_FUNCS:
+                    clocks.add(a.asname or a.name)
+                elif a.name == "sleep":
+                    sleeps.add(a.asname or a.name)
+    return aliases, clocks, sleeps
+
+
+def _assert_leaf(call: ast.Call) -> str:
+    """Leaf name of an assertion call (assert*/check*/verify*/expect*), else ''."""
+    name = dotted_name(call)
+    leaf = (
+        name.rsplit(".", 1)[-1]
+        if name
+        else (call.func.attr if isinstance(call.func, ast.Attribute) else "")
+    )
+    if leaf.lower().lstrip("_").startswith(ASSERT_CALL_PREFIXES) and leaf not in (
+        "check_output",
+        "check_call",
+    ):
+        return leaf
+    return ""
+
+
+def _duration_name(node: ast.AST) -> bool:
+    """True when a Name, attribute or string subscript key reads like a duration (`elapsed`, `collect_ms`)."""
+    if isinstance(node, ast.Name):
+        key = node.id
+    elif isinstance(node, ast.Attribute):
+        key = node.attr
+    elif (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.slice, ast.Constant)
+        and isinstance(node.slice.value, str)
+    ):
+        key = node.slice.value
+    else:
+        return False
+    return bool(DURATION_NAME_RE.search(key))
+
+
+def _is_number(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, (int, float))
+        and not isinstance(node.value, bool)
+    )
+
+
+def t_real_clock(tree):
+    """An assertion that depends on wall-clock speed fails on a slow or loaded CI runner.
+
+    Rule A: an assertion compares a value derived from a real clock read (time.time(),
+    time.monotonic(), perf_counter(), via `import time as X` or `from time import ...`). The
+    value is traced through assignments, arithmetic, int/float/round/abs and functions that
+    return it. `CLOCK.perf_counter()` on an injected fake clock is not a clock read.
+    Rule B: in a module that really sleeps, an assertion bounds a name, attribute or subscript by
+    a number with <, <=, >, >= where the number is a float or the other side is named like a
+    duration (`elapsed`, `x['collect_ms']`).
+    Module-wide, so script-style tests (module-level check() calls) are covered too."""
+    aliases, clocks, sleeps = _time_imports(tree)
+
+    def is_clock_read(call):
+        head, _, leaf = dotted_name(call).rpartition(".")
+        return (
+            head.rsplit(".", 1)[-1] in aliases and leaf in CLOCK_FUNCS
+            if head
+            else leaf in clocks
+        )
+
+    names, funcs = set(), set()
+
+    def clocked(node):
+        if isinstance(node, ast.Call):
+            name = dotted_name(node)
+            if is_clock_read(node) or name in funcs:
+                return True
+            return (
+                name in NUMERIC_WRAPPERS and bool(node.args) and clocked(node.args[0])
+            )
+        if isinstance(node, ast.Name):
+            return node.id in names
+        if isinstance(node, ast.BinOp):
+            return clocked(node.left) or clocked(node.right)
+        if isinstance(node, ast.UnaryOp):
+            return clocked(node.operand)
+        return False
+
+    def taint(target, value):
+        if isinstance(target, ast.Name) and clocked(value) and target.id not in names:
+            names.add(target.id)
+            return True
+        if isinstance(target, ast.Tuple):
+            if isinstance(value, ast.Tuple) and len(value.elts) == len(target.elts):
+                # a list, not a generator: every target must be tainted, any() would stop at the first
+                tainted = [
+                    taint(t, v) for t, v in zip(target.elts, value.elts, strict=True)
+                ]
+                return any(tainted)
+            if isinstance(value, ast.Call) and dotted_name(value) in funcs:
+                new = {t.id for t in target.elts if isinstance(t, ast.Name)} - names
+                names.update(new)
+                return bool(new)
+        return False
+
+    changed = True
+    while (
+        changed
+    ):  # fixpoint: a helper can return a value tainted by a later assignment
+        changed = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                changed |= any([taint(t, node.value) for t in node.targets])  # noqa: C419 (taint every target)
+            elif (
+                isinstance(node, (ast.AnnAssign, ast.AugAssign))
+                and node.value is not None
+            ):
+                changed |= taint(node.target, node.value)
+            elif (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name not in funcs
+            ):
+                for ret in walk_same_scope(node):
+                    if (
+                        isinstance(ret, ast.Return)
+                        and ret.value is not None
+                        and (
+                            clocked(ret.value)
+                            or isinstance(ret.value, ast.Tuple)
+                            and any(clocked(e) for e in ret.value.elts)
+                        )
+                    ):
+                        funcs.add(node.name)
+                        changed = True
+                        break
+
+    sleeps_real = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            head, _, leaf = dotted_name(node).rpartition(".")
+            if (
+                leaf == "sleep"
+                and (head.rsplit(".", 1)[-1] in aliases or head == "asyncio")
+                or not head
+                and leaf in sleeps
+            ):
+                sleeps_real = True
+                break
+
+    def duration_bound(cmp):
+        sides = [cmp.left, *cmp.comparators]
+        for op, a, b in zip(cmp.ops, sides, sides[1:], strict=False):
+            if isinstance(op, ORDER_OPS):
+                for num, other in ((a, b), (b, a)):
+                    # a measured value sits in a name, attribute or subscript; `sum(TABLE) <= 0.25` is config
+                    if (
+                        _is_number(num)
+                        and isinstance(other, (ast.Name, ast.Attribute, ast.Subscript))
+                        and (isinstance(num.value, float) or _duration_name(other))
+                    ):
+                        return True
+        return False
+
+    seen = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assert):
+            parts, leaf = [node.test], ""
+        elif isinstance(node, ast.Call) and _assert_leaf(node):
+            parts, leaf = (
+                [*node.args, *(kw.value for kw in node.keywords)],
+                _assert_leaf(node),
+            )
+        else:
+            continue
+        if node.lineno in seen:
+            continue
+        compares = [c for p in parts for c in ast.walk(p) if isinstance(c, ast.Compare)]
+        if (
+            any(clocked(s) for c in compares for s in (c.left, *c.comparators))
+            or leaf in UNITTEST_CMP_ASSERTS
+            and any(clocked(p) for p in parts)
+        ):
+            detail = "assertion compares a real-clock reading"
+        elif sleeps_real and any(duration_bound(c) for c in compares):
+            detail = "assertion bounds a duration in a module that really sleeps"
+        else:
+            continue
+        seen.add(node.lineno)
+        yield "real-clock", node.lineno, detail
+
+
 def commented_tests(text: str):
     """(lineno, detail) for comment *tokens* that hold a test def; strings never match."""
     try:
@@ -772,14 +1047,19 @@ def scan_file(path: Path, rel: str, ignore: set) -> tuple:
     raw = []  # (smell, lineno, detail, test_name)
 
     tests = find_test_functions(tree)
+    module_sets = collect_set_names(tree)
     for func in tests:
         for det in FUNC_DETECTORS:
-            for smell, lineno, detail in det(func):
+            found = det(func, module_sets) if det is d_bitwise else det(func)
+            for smell, lineno, detail in found:
                 raw.append((smell, lineno, detail, func.name))
     for smell, lineno, detail in t_abs_path(tree):
         raw.append((smell, lineno, detail, ""))
     for smell, lineno, detail in t_temp(tree):
         raw.append((smell, lineno, detail, ""))
+    if "real-clock" not in ignore:
+        for smell, lineno, detail in t_real_clock(tree):
+            raw.append((smell, lineno, detail, ""))
     for lineno, detail in commented_tests(text):
         raw.append(("commented-test", lineno, detail, ""))
 
@@ -932,9 +1212,10 @@ def main() -> int:
         findings.extend(f)
         n_tests += n
 
-    counts = {sid: 0 for sid in SMELLS if sid not in ignore}
+    counts = {sid: 0 for sid in SMELLS if sid not in ignore and sid not in REPORT_ONLY}
+    report_only = {sid: 0 for sid in SMELLS if sid not in ignore and sid in REPORT_ONLY}
     for f in findings:
-        counts[f["smell"]] += 1
+        (report_only if f["smell"] in REPORT_ONLY else counts)[f["smell"]] += 1
     total = sum(counts.values())
 
     code, status = 0, None
@@ -951,6 +1232,7 @@ def main() -> int:
                     "tests": n_tests,
                     "counts": counts,
                     "total": total,
+                    "report_only": report_only,
                     "findings": findings,
                     "baseline": status,
                     "exit_code": code,
@@ -966,6 +1248,10 @@ def main() -> int:
     for sid, n in counts.items():
         print(f"{sid:20s}   : {n:4d}   {SMELLS[sid][1]}")
     print(f"{'TOTAL':20s}   : {total:4d}")
+    for sid, n in report_only.items():
+        print(
+            f"{sid:20s}   : {n:4d}   report only: not in TOTAL, the baseline or --strict"
+        )
     if args.verbose and findings:
         print()
         for f in sorted(findings, key=lambda x: (x["path"], x["line"])):
