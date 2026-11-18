@@ -26,8 +26,32 @@ from pathlib import Path  # noqa: E402
 from typing import Any  # noqa: E402
 
 import pytest  # noqa: E402
+from hypothesis import settings  # noqa: E402
+from hypothesis.database import DirectoryBasedExampleDatabase  # noqa: E402
 
 from search.filters import normalize_path  # noqa: E402
+
+
+# ── Hypothesis profiles (Phase 4.1) ─────────────────────────────────────────────
+# "ci" re-registers Hypothesis's built-in profile (derandomize=True, deadline=None,
+# database=None, print_blob=True): the generated examples depend on the test alone,
+# so a cosmic-ray mutant gets the same verdict on every run. "dev" is the randomized
+# local loop; "nightly" is the only place for a large example count and new random
+# examples, keeping failures in .hypothesis/examples. The default follows the CI env
+# var (GitHub Actions sets CI=true), so a CI job without HYPOTHESIS_PROFILE is still
+# derandomized. Override with --hypothesis-profile=<name> or HYPOTHESIS_PROFILE.
+settings.register_profile("ci", settings.get_profile("ci"))
+settings.register_profile("dev", max_examples=50)
+settings.register_profile(
+    "nightly",
+    settings.get_profile("ci"),
+    max_examples=2000,
+    derandomize=False,
+    database=DirectoryBasedExampleDatabase(".hypothesis/examples"),
+)
+settings.load_profile(
+    os.environ.get("HYPOTHESIS_PROFILE", "ci" if os.environ.get("CI") else "dev")
+)
 
 
 # CRITICAL: Ensure tests run from project .venv, not system Python

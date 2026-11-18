@@ -106,6 +106,7 @@ test = [
     "pytest-xdist>=3.6.0",      # Phase 2/CI: parallel test execution (-n auto)
     "syrupy>=4.0.0",             # Phase 4: snapshot/golden-file regression testing
     "pytest-timeout>=2.3.0",     # Phase 13.2.a: per-test timeout (thread method, Windows-safe)
+    "hypothesis>=6.116.0",       # Phase 4.1: property tests; 6.116 is the first with the built-in "ci" profile (tests/conftest.py)
 ]
 dev = [
     "ruff>=0.16.9",
