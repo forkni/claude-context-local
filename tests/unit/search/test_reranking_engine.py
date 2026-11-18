@@ -19,6 +19,8 @@ assertions are dropped as moot.
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from search.config import PerformanceConfig, RerankerConfig, SearchConfig
 from search.reranker import SearchResult
 from search.reranking_engine import RerankingEngine
@@ -267,10 +269,17 @@ class TestRerankingEngine:
             assert mock_neural_reranker_class.call_count == 2  # init + re-init
             assert mock_reranker_instance.rerank.call_count == 2  # phase 1 + 3
 
+    # Both directions: a one-way pair (a -> b only) lets `!=` -> `<` survive (cosmic-ray
+    # 2026-11-18, search/reranking_engine.py L186), because "model-a" < "model-b".
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [("model-a", "model-b"), ("model-b", "model-a")],
+        ids=["a-to-b", "b-to-a"],
+    )
     @patch("search.reranking_engine.torch")
     @patch("search.neural_reranker.NeuralReranker")
     def test_neural_reranker_swaps_on_model_name_change(
-        self, mock_neural_reranker_class, mock_torch
+        self, mock_neural_reranker_class, mock_torch, first, second
     ):
         """Test neural reranker reloads when configure_reranking() changes model_name.
 
@@ -289,9 +298,9 @@ class TestRerankingEngine:
         )
 
         model_a_instance = MagicMock()
-        model_a_instance.model_name = "model-a"
+        model_a_instance.model_name = first
         model_b_instance = MagicMock()
-        model_b_instance.model_name = "model-b"
+        model_b_instance.model_name = second
         mock_neural_reranker_class.side_effect = [model_a_instance, model_b_instance]
 
         results = [SearchResult(chunk_id="chunk1", score=0.5, metadata={})]
@@ -300,7 +309,7 @@ class TestRerankingEngine:
         config_a = SearchConfig(
             reranker=RerankerConfig(
                 enabled=True,
-                model_name="model-a",
+                model_name=first,
                 batch_size=16,
                 top_k_candidates=50,
                 min_vram_gb=4.0,
@@ -318,7 +327,7 @@ class TestRerankingEngine:
         config_b = SearchConfig(
             reranker=RerankerConfig(
                 enabled=True,
-                model_name="model-b",
+                model_name=second,
                 batch_size=16,
                 top_k_candidates=50,
                 min_vram_gb=4.0,
@@ -332,7 +341,7 @@ class TestRerankingEngine:
             # Old instance must be released before the new one takes over
             model_a_instance.cleanup.assert_called_once()
             assert self.engine.neural_reranker is model_b_instance
-            assert self.engine.neural_reranker.model_name == "model-b"
+            assert self.engine.neural_reranker.model_name == second
             assert mock_neural_reranker_class.call_count == 2
 
     @patch("search.reranking_engine.torch")

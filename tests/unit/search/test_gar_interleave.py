@@ -315,3 +315,47 @@ class TestBackfill:
 
         expected = RerankingEngine._order_merged_pool(pool, True)
         assert _ids(out) == list(reversed(_ids(expected)))
+
+
+class TestSurvivingMutantsKilled:
+    """Pins left by the 2026-11-18 cosmic-ray run on search/reranking_engine.py: these
+    mutants survived every test that imports the module (see tests/TESTING_GUIDE.md,
+    Phase 17)."""
+
+    def test_only_graph_hop_counts_as_the_graph_channel(self):
+        # Kills L323 `r.source == GRAPH_HOP` -> `<=`: "dense" sorts before "graph_hop", so
+        # the mutant files a dense frontier result under graph. Also kills L331
+        # `i < len(other)` -> `!=`: three graph results against one other reads other[2].
+        pool = [
+            _graph("g1", 1),
+            _graph("g2", 1),
+            _graph("g3", 1),
+            SearchResult(
+                chunk_id="d1", score=0.5, metadata={"anchor_rank": 1}, source="dense"
+            ),
+        ]
+        assert _ids(RerankingEngine._gar_interleave(pool)) == ["g1", "d1", "g2", "g3"]
+
+    def test_rank_scores_are_one_over_rank(self):
+        # Kills the L413 NumberReplacer mutants (`2.0 / (i + 1)`, `1.0 / (i + 2)`).
+        pool = [_hop1(1, 9.2), _hop1(2, 4.3), _hop1(3, 1.0)]
+        assert [r.score for r in RerankingEngine._rank_scores(pool)] == [
+            1.0,
+            0.5,
+            1 / 3,
+        ]
+
+    def test_last_rerank_skipped_tracks_the_latest_rerank(self):
+        # Kills L88 (initial value), L250 (reset after success) and L267 (set on failure).
+        engine = RerankingEngine()
+        assert engine.last_rerank_skipped is False
+
+        engine.neural_reranker = Mock()
+        engine.neural_reranker.rerank.side_effect = RuntimeError("model exploded")
+        pool = [_hop1(1), _hop1(2)]
+        engine._run_rerank("q", pool, k=2, log_prefix="[T]", config=_cfg())
+        assert engine.last_rerank_skipped is True
+
+        engine.neural_reranker.rerank.side_effect = lambda q, cands, k: list(cands)
+        engine._run_rerank("q", pool, k=2, log_prefix="[T]", config=_cfg())
+        assert engine.last_rerank_skipped is False
