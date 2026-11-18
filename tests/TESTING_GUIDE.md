@@ -3004,7 +3004,7 @@ from missing tests.
 | `search/reranking_engine.py` | 159 | 99 (38%) | 15 | 10 | 5: 4 equivalent (L255 window guard ×3, L293 `@staticmethod` on a class-called method) and L186 `!=` → `is not` (differs only for equal names in distinct string objects) |
 | `search/reranker.py` | 484 | 83 (17%) | 43 (the replay already ran the 15 `analyze_fusion_quality` kills from 18.3's first test) | 16 | 27: equivalent reserve-path variants (reserve 0, fallback guard entered more often, earlier scan start, `break` → `continue` after the loop is full), L472 ×2 equivalent, L206 `+` → `**` (real, narrow) |
 | `search/centrality_ranker.py` | 382 | 3 (0.8%) | 3 | 1 (L369) | L129 equivalent; L119 cache-key suffix inverted (real, narrow) |
-| `evaluation/metrics.py` | 944 | run in progress at this commit; filled in by the follow-up commit | | | |
+| `evaluation/metrics.py` | 944 | 210 (22%) | 71 | 35 (`test_metrics_mutation_pins.py`) | 36: 20 type-annotation (L355), L237 ×3 (zero grades add no gain), L304 ×2 (rank offset shifts both ranks), L311 `break` → `continue` after both ranks are found, `split(":", 1)[0]` maxsplit variants (L94, L958); narrow, not pinned: length checks that differ only for 4-part drive-letter ids (L859 `!= 3`, L1042, L1094 ×3) and L933 for a tag with two colons |
 | `search/hybrid_searcher.py` | — | not run: ~12 h at this machine's pace (33 / 692 in 35 min); it is not in CI's `all` set either | | | |
 
 Findings beyond the counts:
