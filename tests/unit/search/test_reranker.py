@@ -698,3 +698,105 @@ class TestFusionQualityValues:
         analysis = RRFReranker().analyze_fusion_quality(results)
         assert analysis["coverage_balance"] == 1.0
         assert analysis["diversity_score"] == 0.0  # one source only
+
+
+class TestSelectWithReserveEdges:
+    """Pins for mutants left alive by the 2026-11-18 cosmic-ray run on _select_with_reserve,
+    _theoretical_min_max_normalize and fuse_tm2c2 (search/reranker.py L186-207, L291,
+    L320). Expected orders are worked by hand from RRF with k=100 and equal weights.
+
+    Fixture: list A = [x1, u, x2, x3], list B = [x1, y, x2, x3].
+    RRF order: x1 (rank 1 in both), x2 (3, 3), x3 (4, 4), then u and y (rank 2 in one list
+    each, a tie). So plain top-3 = [x1, x2, x3]; u is unique to A, y to B.
+    """
+
+    @staticmethod
+    def _lists():
+        def mk(ids):
+            return [SearchResult(cid, 1.0, {}) for cid in ids]
+
+        return [mk(["x1", "u", "x2", "x3"]), mk(["x1", "y", "x2", "x3"])]
+
+    def _ids(self, **kwargs):
+        out = RRFReranker(k=100).rerank(self._lists(), **kwargs)
+        return [r.chunk_id for r in out]
+
+    def test_a_single_reserved_slot_is_honoured(self):
+        # Kills L186 `reserved_slots <= 0` -> `<= 1`.
+        assert self._ids(max_results=3, reserved_slots=1) == ["x1", "x2", "u"]
+
+    def test_reserve_can_draw_from_the_second_list(self):
+        # Kills L187 `0 <= idx` -> `0 == idx` / `0 >= idx`.
+        assert self._ids(max_results=3, reserved_slots=1, reserve_list_idx=1) == [
+            "x1",
+            "x2",
+            "y",
+        ]
+
+    @pytest.mark.parametrize(
+        "idx", [-1, 2, 3], ids=["negative", "one-past-end", "two-past-end"]
+    )
+    def test_out_of_range_reserve_list_gives_plain_rrf(self, idx):
+        # Kills L187 `-1 <= idx`, `idx <= len`, `idx != len`, `idx is not len`.
+        assert self._ids(max_results=3, reserved_slots=1, reserve_list_idx=idx) == [
+            "x1",
+            "x2",
+            "x3",
+        ]
+
+    def test_negative_reserve_gives_plain_rrf(self):
+        # Kills L186 `<= 0` -> `== 0` / `< 0` (a negative reserve grew the head past max).
+        assert self._ids(max_results=3, reserved_slots=-1) == ["x1", "x2", "x3"]
+
+    def test_unused_reserve_falls_back_to_the_next_rrf_candidate(self):
+        # Reserve list = [x1, x2] only, all inside the head, so the reserved slot falls
+        # back to RRF order past the head. Kills L207 `max_results - reserve` ->
+        # `max_results // reserve` (4 // 1 = 4 skips x4 at index 3).
+        lists = [
+            [SearchResult(c, 1.0, {}) for c in ["x1", "x2"]],
+            [SearchResult(c, 1.0, {}) for c in ["x1", "x2", "x3", "x4", "x5"]],
+        ]
+        out = RRFReranker(k=100).rerank(lists, max_results=4, reserved_slots=1)
+        assert [r.chunk_id for r in out] == ["x1", "x2", "x3", "x4"]
+
+    def test_fallback_runs_when_the_reserve_fills_only_part_of_its_slots(self):
+        # max 6, reserve 2: head = 4 RRF picks, list A has one unique left (u), so one
+        # slot falls back to RRF order. Kills L206 `len(head) + len(fill)` -> `<<`
+        # (4 << 1 = 8 >= 6 would skip the fallback and return 5 results).
+        a = ["x1", "x2", "x3", "x4", "u"]
+        b = ["x1", "x2", "x3", "x4", "y1", "y2"]
+        lists = [[SearchResult(c, 1.0, {}) for c in ids] for ids in (a, b)]
+        out = RRFReranker(k=100).rerank(lists, max_results=6, reserved_slots=2)
+        assert len(out) == 6
+        assert [r.chunk_id for r in out][:5] == ["x1", "x2", "x3", "x4", "u"]
+
+    def test_tm2c2_normalisation_with_a_denominator_below_one(self):
+        # (s - 0) / (0.6 - 0): kills L291 `denom <= 0` -> `denom <= 1`.
+        norm = RRFReranker._theoretical_min_max_normalize([("a", 0.2), ("b", 0.6)], 0.0)
+        assert norm == pytest.approx({"a": 1 / 3, "b": 1.0})
+
+    def test_tm2c2_normalisation_with_scores_below_the_minimum(self):
+        # max below the theoretical min: negative denominator, all zeros. Kills
+        # `denom <= 0` -> `denom == 0`.
+        norm = RRFReranker._theoretical_min_max_normalize(
+            [("a", -3.0), ("b", -2.0)], 0.0
+        )
+        assert norm == {"a": 0.0, "b": 0.0}
+
+    def test_tm2c2_bm25_leg_weight_is_one_minus_alpha(self):
+        # BM25-only doc with the max BM25 score normalises to 1.0, so its fused score is
+        # 1 - alpha = 0.7. Kills L320 `(1 - alpha)` -> `(1 % alpha)` (1 % 0.3 = 0.1).
+        fused = dict(
+            RRFReranker().fuse_tm2c2([("a", 5.0, {})], [("d", 0.5, {})], alpha=0.3)
+        )
+        assert fused["a"] == pytest.approx(0.7)
+
+
+def test_high_quality_count_counts_results_over_the_threshold():
+    # Kills L438 `sum(1 for ...)` -> `sum(0 ...)` / `sum(2 ...)`.
+    results = [
+        SearchResult("a", 1.0, {"rrf_score": 0.9}),
+        SearchResult("b", 1.0, {"rrf_score": 0.6}),
+        SearchResult("c", 1.0, {"rrf_score": 0.1}),
+    ]
+    assert RRFReranker().analyze_fusion_quality(results)["high_quality_count"] == 2
