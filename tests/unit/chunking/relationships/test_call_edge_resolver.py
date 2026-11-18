@@ -425,6 +425,34 @@ class TestRunResolvers:
         assert ("a", "b") in result
         assert result[("a", "b")].source == "thread_stub"
 
+    def test_process_isolated_resolver_edges_are_merged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A pyan/libcst resolver goes through the process pool, and its edges reach
+        the merged result. Stubs the pool's submit() (the process boundary) with an
+        already-finished future. Kills the 2026-11-18 cosmic-ray survivor
+        ZeroIterationForLoop on `for resolver in process_resolvers:` (call_edge_resolver
+        L477): with no submission, pyan's edges vanish and nothing else failed.
+        """
+        from concurrent.futures import Future, ProcessPoolExecutor
+
+        from chunking.relationships.external_call_graph import PyanResolver
+
+        pyan = PyanResolver()
+        monkeypatch.setattr(pyan, "available", lambda: True)
+        edge = ResolvedEdge("a", "b", 3, False, "pyan", 0.75)
+
+        def _finished(self, *args, **kwargs):  # noqa: ARG001
+            future: Future = Future()
+            future.set_result([edge])
+            return future
+
+        monkeypatch.setattr(ProcessPoolExecutor, "submit", _finished)
+
+        result = run_resolvers([pyan], self._root, self._rlm, self._logger)
+
+        assert result == {("a", "b"): edge}
+
     def test_unavailable_lsp_resolver_names_correct_extra(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

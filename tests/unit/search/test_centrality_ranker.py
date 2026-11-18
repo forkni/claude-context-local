@@ -996,3 +996,20 @@ def test_composite_cache_key_distinct_across_all_flag_combinations(
         "pagerank:no_phantoms:no_contains",
     }
     assert mock_graph_query_engine.compute_centrality.call_count == len(combos)
+
+
+@pytest.mark.parametrize(
+    ("chunk_type", "expected"),
+    [("module", 0.5), ("struct", 1.0), ("function", 1.0)],
+    ids=["module-demoted", "struct-kept", "function-kept"],
+)
+def test_only_module_chunks_get_the_synthetic_demotion(
+    mock_graph_query_engine, chunk_type, expected
+):
+    """Zero-centrality demotion is for synthetic module chunks only. "struct" sorts
+    after "module", so it kills the 2026-11-18 cosmic-ray survivor
+    `chunk_type == "module"` -> `>=` (search/centrality_ranker.py L369)."""
+    ranker = CentralityRanker(mock_graph_query_engine, method="pagerank", alpha=0.3)
+    result = {"blended_score": 1.0, "centrality": 0}
+    ranker._apply_synthetic_demotion(result, chunk_type, "m.py:1-9:x:y")
+    assert result["blended_score"] == expected
