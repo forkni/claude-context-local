@@ -3,6 +3,7 @@
 import pytest
 
 from search.reranker import RRFReranker, SearchResult
+from search.types import ResultSource
 
 
 class TestSearchResult:
@@ -639,3 +640,61 @@ class TestTM2C2Fusion:
             reserved_slots=2,
         )
         assert [r.chunk_id for r in reserved] == ["d1", "d2", "b1", "b2"]
+
+
+class TestFusionQualityValues:
+    """analyze_fusion_quality numbers, worked by hand from its docstring definitions.
+
+    The older test above checks only key presence and [0, 1] ranges, so cosmic-ray mutants on
+    the source-count, diversity and coverage arithmetic survived (2026-11-18 run, lines 448,
+    454, 471 and 472 of search/reranker.py): the `# pragma: no mutate` comments there sit on
+    the closing-paren lines left by formatting, not on the lines the mutants change.
+    """
+
+    @staticmethod
+    def _result(cid, source, appears_in_lists, rrf_score=0.1):
+        return SearchResult(
+            chunk_id=cid,
+            score=1.0,
+            metadata={"appears_in_lists": appears_in_lists, "rrf_score": rrf_score},
+            source=source,
+        )
+
+    def test_three_to_one_source_split(self):
+        # Sources 3x bm25 + 1x dense: expected 2 per source, deviations |3-2| and |1-2|,
+        # diversity = 1 - ((1/4 + 1/4) / 2) = 0.75. Two of four appear in >1 list: 0.5.
+        results = [
+            self._result("a", ResultSource.BM25, 2),
+            self._result("b", ResultSource.BM25, 1),
+            self._result("c", ResultSource.BM25, 1),
+            self._result("d", ResultSource.DENSE, 3),
+        ]
+        analysis = RRFReranker().analyze_fusion_quality(results)
+        assert analysis["source_distribution"] == {
+            ResultSource.BM25: 3,
+            ResultSource.DENSE: 1,
+        }
+        assert analysis["diversity_score"] == pytest.approx(0.75)
+        assert analysis["coverage_balance"] == pytest.approx(0.5)
+
+    def test_four_one_one_source_split(self):
+        # 6 results over 3 sources: expected 6 / 3 = 2 each, deviations 2 + 1 + 1 = 4,
+        # diversity = 1 - (4 / 6) / 3 = 7 / 9. (A 4-over-2 split cannot tell `/` from `-`.)
+        sources = [ResultSource.BM25] * 4 + [ResultSource.DENSE, ResultSource.HYBRID]
+        results = [self._result(f"r{i}", s, 1) for i, s in enumerate(sources)]
+        analysis = RRFReranker().analyze_fusion_quality(results)
+        assert analysis["diversity_score"] == pytest.approx(7 / 9)
+
+    def test_missing_rrf_score_counts_as_zero_in_the_average(self):
+        results = [
+            SearchResult(chunk_id="a", score=1.0, metadata={}),
+            SearchResult(chunk_id="b", score=1.0, metadata={"rrf_score": 0.4}),
+        ]
+        analysis = RRFReranker().analyze_fusion_quality(results)
+        assert analysis["avg_rrf_score"] == pytest.approx(0.2)
+
+    def test_single_result_in_two_lists_has_full_coverage_balance(self):
+        results = [self._result("a", ResultSource.HYBRID, 2)]
+        analysis = RRFReranker().analyze_fusion_quality(results)
+        assert analysis["coverage_balance"] == 1.0
+        assert analysis["diversity_score"] == 0.0  # one source only
