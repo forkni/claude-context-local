@@ -13,6 +13,7 @@ import pytest
 # Import handlers
 from mcp_server import tool_specs
 from search.config import SearchConfig
+from tests.fixtures.lock_errors import lock_violation
 
 
 # Structural guard coverage (ToolSpec.mutation_lock / .requires_index vs. each
@@ -1822,14 +1823,125 @@ async def test_handle_delete_project_adds_to_cleanup_queue(tmp_path):
                 )
 
                 # Verify cleanup queue was used
+                # A PermissionError with no Windows lock code is access
+                # denied, not a lock, and is still queued for retry.
                 mock_queue.add.assert_called_once_with(
                     str(model_dir),
-                    f"{model_dir.name}: File locked - File is locked",
+                    f"{model_dir.name}: access denied",
                 )
 
     assert result["success"] is False
     assert len(result.get("errors", [])) == 1
     assert result.get("queued_for_retry") == 1
+
+
+async def _delete_project_failing_with(tmp_path, error: OSError):
+    """Run handle_delete_project with one model dir whose rmtree raises *error*.
+
+    Returns (result, cleanup-queue mock, model dir).
+    """
+    import hashlib
+
+    project_path = tmp_path / "proj"
+    project_path.mkdir()
+    project_hash = hashlib.md5(str(project_path.resolve()).encode()).hexdigest()[:8]
+    base_dir = tmp_path / "storage"
+    model_dir = base_dir / "projects" / f"proj_{project_hash}_bge-m3_1024d"
+    model_dir.mkdir(parents=True)
+
+    mock_state = Mock()
+    mock_state.current_project = None
+    mock_state.get_reindex_rwlock = Mock(return_value=_make_rwlock_mock())
+
+    with (
+        patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
+        patch("mcp_server.tools.index_handlers.get_storage_dir", return_value=base_dir),
+        patch("mcp_server.server.close_project_resources"),
+        patch("merkle.snapshot_manager.SnapshotManager") as mock_sm,
+        patch("shutil.rmtree", side_effect=error),
+        patch("mcp_server.cleanup_queue.CleanupQueue") as mock_queue_cls,
+    ):
+        mock_sm.return_value.delete_all_snapshots.return_value = 0
+        result = await tool_specs.handle_delete_project(
+            {"project_path": str(project_path)}
+        )
+    return result, mock_queue_cls.return_value, model_dir
+
+
+@pytest.mark.asyncio
+async def test_handle_delete_project_reports_a_held_directory_as_locked(tmp_path):
+    """WinError 32 (sharing violation) is a real lock: say so, queue a retry."""
+    result, queue, model_dir = await _delete_project_failing_with(
+        tmp_path, lock_violation(winerror=32)
+    )
+
+    assert result["errors"] == [f"{model_dir.name}: locked by another process"]
+    queue.add.assert_called_once_with(
+        str(model_dir), f"{model_dir.name}: locked by another process"
+    )
+    assert "locked" in result["hint"]
+    assert "WinError" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_handle_delete_project_reports_access_denied_not_locked(tmp_path):
+    """WinError 5 is a permission failure, not a lock: calling it "locked"
+    points at the wrong fix. It is still queued, because a delete-pending
+    directory can surface as WinError 5 and a retry then succeeds."""
+    result, queue, model_dir = await _delete_project_failing_with(
+        tmp_path, lock_violation(winerror=5)
+    )
+
+    assert result["errors"] == [f"{model_dir.name}: access denied"]
+    queue.add.assert_called_once_with(
+        str(model_dir), f"{model_dir.name}: access denied"
+    )
+    assert "lock" not in result["hint"]
+    assert "access denied" in result["hint"]
+    assert result["queued_for_retry"] == 1
+
+
+async def _clear_index_leaving(tmp_path, failed: dict[str, str]):
+    """Run handle_clear_index with one model dir whose purge leaves *failed*."""
+    model_dir = tmp_path / "projects" / "proj_abcd1234_bge-m3_1024d"
+    mock_state = Mock()
+    mock_state.current_project = str(tmp_path / "proj")
+    mock_state.get_reindex_rwlock = Mock(return_value=_make_rwlock_mock())
+    with (
+        patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
+        patch(
+            "mcp_server.tools.index_handlers._iter_project_model_dirs",
+            return_value=iter([model_dir]),
+        ),
+        patch(
+            "mcp_server.tools.index_handlers._purge_index_dir",
+            return_value=([], failed),
+        ),
+        patch("mcp_server.server.close_project_resources"),
+        patch("merkle.snapshot_manager.SnapshotManager") as mock_sm,
+    ):
+        mock_sm.return_value.delete_all_snapshots.return_value = 0
+        return await tool_specs.handle_clear_index({})
+
+
+@pytest.mark.asyncio
+async def test_handle_clear_index_left_locked_files_says_locked(tmp_path):
+    result = await _clear_index_leaving(
+        tmp_path, {"metadata.db": "locked by another process"}
+    )
+
+    assert "locked" in result["error"]
+    assert "metadata.db" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_handle_clear_index_left_denied_files_does_not_say_locked(tmp_path):
+    """Only a real lock may be reported as one; any other failure names its
+    own reason."""
+    result = await _clear_index_leaving(tmp_path, {"metadata.db": "access denied"})
+
+    assert "lock" not in result["error"]
+    assert "access denied" in result["error"]
 
 
 def _make_recording_rwlock(events: list[str]):
