@@ -129,7 +129,7 @@ gpu = [
     "nvidia-ml-py>=12.535.77",
 ]
 otel = [
-    "opentelemetry-api>=1.45.2",  # Security: CVE-2026-114603 (1.45.1)
+    "opentelemetry-api>=1.45.2",  # CVE-2026-114603 (1.45.1); 1.45.2 caps traceparent at 512 chars
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp-proto-http>=1.20.0",
 ]
@@ -515,6 +515,11 @@ evaluation = ["*.json", "*.md"]
 #   passed / 2 skipped. PR #86's CI test job hung (gw1 killed by pytest-timeout 300 s inside
 #   test_prune_guard_declines_when_faiss_side_also_broken, a 0.01 s test; xdist never replaced
 #   the worker, job idled to the 20-min cap) -- not reproducible locally, unrelated to aiohttp.
+#
+# Resolved 2026-11-18: opentelemetry-api 1.45.1 -> 1.45.2 (Dependabot #103; floor raised to
+#   >=1.45.2 for the 512-character traceparent limit, no CVE). The lock moves the whole family
+#   to 1.45.2 / 0.66b2 together (api, sdk, semantic-conventions, exporter-otlp-proto-http,
+#   proto, the exporter common packages), as for the 2026-10-23 trio bump below.
 #
 # Resolved 2026-10-23: gitpython 3.2.0 -> 3.2.1 (CVE-2026-114145; floor raised to >=3.2.1),
 #   opentelemetry-api 1.44.0 -> 1.45.1 (CVE-2026-114603; floor raised to >=1.45.1) and virtualenv
