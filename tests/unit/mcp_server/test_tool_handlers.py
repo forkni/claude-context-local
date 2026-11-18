@@ -1835,10 +1835,13 @@ async def test_handle_delete_project_adds_to_cleanup_queue(tmp_path):
     assert result.get("queued_for_retry") == 1
 
 
-async def _delete_project_failing_with(tmp_path, error: OSError):
-    """Run handle_delete_project with one model dir whose rmtree raises *error*.
+async def _delete_project_failing_with(
+    tmp_path, error: OSError, models: tuple[str, ...] = ("bge-m3_1024d",)
+):
+    """Run handle_delete_project with one model dir per *models*, each of whose
+    rmtree raises *error*.
 
-    Returns (result, cleanup-queue mock, model dir).
+    Returns (result, cleanup-queue mock, first model dir).
     """
     import hashlib
 
@@ -1846,8 +1849,9 @@ async def _delete_project_failing_with(tmp_path, error: OSError):
     project_path.mkdir()
     project_hash = hashlib.md5(str(project_path.resolve()).encode()).hexdigest()[:8]
     base_dir = tmp_path / "storage"
-    model_dir = base_dir / "projects" / f"proj_{project_hash}_bge-m3_1024d"
-    model_dir.mkdir(parents=True)
+    model_dirs = [base_dir / "projects" / f"proj_{project_hash}_{m}" for m in models]
+    for model_dir in model_dirs:
+        model_dir.mkdir(parents=True)
 
     mock_state = Mock()
     mock_state.current_project = None
@@ -1865,7 +1869,7 @@ async def _delete_project_failing_with(tmp_path, error: OSError):
         result = await tool_specs.handle_delete_project(
             {"project_path": str(project_path)}
         )
-    return result, mock_queue_cls.return_value, model_dir
+    return result, mock_queue_cls.return_value, model_dirs[0]
 
 
 @pytest.mark.asyncio
@@ -1901,6 +1905,36 @@ async def test_handle_delete_project_reports_access_denied_not_locked(tmp_path):
     assert result["queued_for_retry"] == 1
 
 
+@pytest.mark.asyncio
+async def test_handle_delete_project_same_reason_twice_names_only_that_reason(
+    tmp_path,
+):
+    """Two model dirs locked by the same process give one reason in the hint;
+    "see errors" is only for failures that have no reason of their own."""
+    result, _queue, _dir = await _delete_project_failing_with(
+        tmp_path,
+        lock_violation(winerror=32),
+        models=("bge-m3_1024d", "F2LLM-v2-0.6B_1024d"),
+    )
+
+    assert result["queued_for_retry"] == 2
+    assert result["hint"] == (
+        "Some directories couldn't be deleted (locked by another process). "
+        "They'll be retried on next server startup."
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_delete_project_unexpected_error_points_at_errors(tmp_path):
+    """A failure that is not an OSError has no reason to name; the hint points
+    at the per-directory errors."""
+    result, _queue, _dir = await _delete_project_failing_with(
+        tmp_path, RuntimeError("handle table corrupted")
+    )
+
+    assert "(see errors)" in result["hint"]
+
+
 async def _clear_index_leaving(tmp_path, failed: dict[str, str]):
     """Run handle_clear_index with one model dir whose purge leaves *failed*."""
     model_dir = tmp_path / "projects" / "proj_abcd1234_bge-m3_1024d"
@@ -1930,8 +1964,25 @@ async def test_handle_clear_index_left_locked_files_says_locked(tmp_path):
         tmp_path, {"metadata.db": "locked by another process"}
     )
 
-    assert "locked" in result["error"]
+    # The error also echoes the per-file reasons, so check the stated cause.
+    assert result["error"].startswith(
+        "Clear index left files behind (locked by another process — a running "
+        "MCP server or open file handle)"
+    )
     assert "metadata.db" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_handle_clear_index_mixed_leftovers_do_not_claim_a_lock(tmp_path):
+    """One locked file and one denied file: the cause is not "locked"."""
+    result = await _clear_index_leaving(
+        tmp_path,
+        {"metadata.db": "locked by another process", "code.index": "access denied"},
+    )
+
+    assert result["error"].startswith(
+        "Clear index left files behind (see the reason per file)"
+    )
 
 
 @pytest.mark.asyncio

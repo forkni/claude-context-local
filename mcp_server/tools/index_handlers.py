@@ -585,6 +585,9 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
         deleted_dirs = []
         errors = []
         reasons: set[str] = set()
+        # A non-OSError failure has no reason of its own; the hint then points
+        # at the per-directory errors instead.
+        saw_unexpected_error = False
 
         logger.info(f"Searching for project directories: {project_path_resolved}")
 
@@ -605,6 +608,7 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
             except Exception as e:  # noqa: BLE001 - cleanup: per-directory delete, must not block remaining directories
                 error_msg = f"{model_dir.name}: {e}"
                 errors.append(error_msg)
+                saw_unexpected_error = True
                 logger.error(f"Unexpected error deleting {model_dir}: {e}")
 
         # 5. Delete Merkle snapshots for this project
@@ -651,10 +655,9 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
         result["errors"] = errors
         # pyrefly: ignore [bad-typed-dict-key]
         result["queued_for_retry"] = len(errors)
-        # Non-OSError failures have no reason of their own; name them generically.
-        why = ", ".join(sorted(reasons)) if reasons else "see errors"
-        if len(reasons) < len(errors) and reasons:
-            why += ", see errors"
+        why = ", ".join(
+            sorted(reasons) + (["see errors"] if saw_unexpected_error else [])
+        )
         # pyrefly: ignore [bad-typed-dict-key]
         result["hint"] = (
             f"Some directories couldn't be deleted ({why}). "
