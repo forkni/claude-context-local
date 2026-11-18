@@ -346,6 +346,46 @@ class TestSearchConfigManager:
 
         assert kept.embedding.model_name == model
 
+    def test_unreadable_config_path_falls_back_to_kept_settings(self):
+        """A drive drop can make exists()/stat() raise errors other than "not
+        found" (access denied, I/O, device not ready). Those must reach the
+        kept-settings fallback, not escape load_config."""
+        from pathlib import Path
+
+        model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": model}}, f)
+        manager = SearchConfigManager(self.config_file)
+        manager.load_config()
+
+        target = Path(self.config_file)
+        real_stat = Path.stat
+
+        def denied_stat(path, *args, **kwargs):
+            if path == target:
+                raise PermissionError(13, "Access is denied", str(path))
+            return real_stat(path, *args, **kwargs)
+
+        with patch.object(Path, "stat", denied_stat):
+            kept = manager.load_config()
+
+        assert kept.embedding.model_name == model
+
+    def test_cache_hit_does_not_resolve_the_config_path(self):
+        """load_config runs per file and per query; its cache-hit path must stay
+        a stat(), without a Path.resolve() (a CreateFile round trip on Windows)."""
+        from pathlib import Path
+
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": "BAAI/bge-m3"}}, f)
+        manager = SearchConfigManager(self.config_file)
+        first = manager.load_config()
+
+        with patch.object(Path, "resolve", autospec=True) as mock_resolve:
+            assert manager.load_config() is first
+
+        mock_resolve.assert_not_called()
+
     def test_kept_settings_are_per_config_file(self):
         """A manager for another config file never receives this file's kept
         settings: with no previous parse of its own it falls back to defaults."""
