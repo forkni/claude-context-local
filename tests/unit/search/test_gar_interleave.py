@@ -320,7 +320,7 @@ class TestBackfill:
 class TestSurvivingMutantsKilled:
     """Pins left by the 2026-11-18 cosmic-ray run on search/reranking_engine.py: these
     mutants survived every test that imports the module (see tests/TESTING_GUIDE.md,
-    Phase 17)."""
+    Phase 18)."""
 
     def test_only_graph_hop_counts_as_the_graph_channel(self):
         # Kills L323 `r.source == GRAPH_HOP` -> `<=`: "dense" sorts before "graph_hop", so

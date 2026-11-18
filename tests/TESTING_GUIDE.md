@@ -2935,3 +2935,112 @@ Verified the repository's CI/CD pipeline and test suite against `setup-ci-cd-pip
 | Pytest strictness (`[tool.pytest.ini_options]`) | `--strict-markers` in `addopts` only | Added `strict_markers = true`, `strict_config = true`, `xfail_strict = true` |
 | Installed-wheel smoke gate (`branch-protection.yml`) | `pytest tests/ -m smoke -q \|\| true` (swallowed failures and exit code 5) | Tagged `TestIsChunkId` with `@pytest.mark.smoke` and removed `\|\| true` so smoke failures fail fast |
 | Workflow security & anatomy | Read-only checkouts omitted `persist-credentials: false`; `nightly.yml`/`weekly.yml` used `windows-latest` without `concurrency:` or `shell: bash`; `mutation-testing.yml` omitted `cr-filter-pragma` | `persist-credentials: false` on all read-only checkouts; `merge_group:` trigger and `--output-format=github` on `pyrefly`; `windows-2025`, `concurrency:`, and `shell: bash` in `nightly.yml`/`weekly.yml`; `cr-filter-pragma` in `mutation-testing.yml`; `dependabot.yml` torch ignore updated to `>=2.12.0` |
+
+### Test Suite Audit, Property Tests & Mutation Sweep (Phase 18 — 2026-11-18)
+
+Ran against the `harden-test-suite` skill v1.12.0 (scripts synced into `scripts/` in this phase).
+Measured on Linux, Python 3.11.15, CPU-only torch 2.11.0, 4 cores, the locked dependency set.
+Windows-only tests skip here, so the coverage figure is not directly comparable to the Windows
+baselines above.
+
+#### Audit baseline (Phase 18.1)
+
+| Metric | Value |
+| --- | --- |
+| Total tests (CI-shaped run: `tests/` minus `slow_integration`, `-m "not slow and not quarantine"`) | 5,620 passed, 26 skipped, 0 failed |
+| Fast loop (`tests/unit`, `-n 3`) | ~57 s wall per run |
+| CI-shaped run with coverage (`-n 3 --dist loadfile`) | 104 s wall |
+| Branch coverage (clean run) | **87.94%** (21,440 statements, 7,464 branches) |
+| Current `fail_under` | 87 (unchanged; 87.94% does not clear 88) |
+| Functions over CRAP 30 (`crap4py`, 8 gated packages) | 40 (was 39 at Phase 14.2). Worst: `CodeEmbedder.embed_chunks` 240.2, `LSPResolver._session` 215.5, `MultiLanguageChunker.chunk_directory` 156.0 at **0%** coverage, `GraphQueryEngine.find_all_callers` / `find_all_callees` 90.0 at 0% |
+| `ruff --select C901` over 15 | 2 without a per-file ignore: `chunking/languages/c.py` `extract_metadata` (16), `search/neural_reranker.py` `_load_or_fetch` (16) |
+| Order independence (10 × `tests/unit` under `pytest-randomly`, seeds in the run log) | 10 / 10 green; `rank_failures.py`: no failing test |
+| Past-fix recall (`replay_fixes.py --last 10`) | **6 / 7 = 86%** (3 skipped: no test change or no `.py` change). MISSED: `52614e1` (skipped-rerank race), fixed in 18.4. Two CAUGHT verdicts (`26b09be`, `4c5d187`) went red with a pytest *error*, not an assertion failure, so they are weaker evidence |
+| Test-smell scan total (`scan_test_smells.py`) | 307 (308 before the set-intersection false positive was fixed); `real-clock` report-only: 12 |
+| Mutation score | see 18.3 |
+
+Structure (AUDIT Step 1): config is in `[tool.pytest.ini_options]` with `--import-mode=importlib`,
+`pythonpath`, strict markers/config and `xfail_strict`. Gaps: no `-ra` in `addopts` (skips and
+xfails are not summarised by default); the quarantine hook in `tests/conftest.py` checks `reason`,
+`issue` and `expires` but not the skill's one-re-date rule (`redated=`); the global `timeout = 300`
+is above the skill's 120 s default (deliberate per Phase 13.2.a). No code pollution
+(`TESTING` / `is_test` flags) in production packages. `tests/slow_integration/test_system.py:317`
+calls test functions from a `main()` script entry point, not from another test (Nit).
+
+#### Script sync and Hypothesis tooling (Phase 18.2)
+
+- `scripts/scan_test_smells.py` synced with the skill (adds the report-only `real-clock`
+  detector). The upstream `bitwise-assert` detector counted `a & b` on set-valued names; the set
+  tracking now covers module scope, annotated assignments and names built from other sets
+  (`tests/unit/tools/test_scan_test_smells.py`). `.smell-baseline.json`: 308 → 307.
+- Added `scripts/rank_failures.py`, `scripts/replay_fixes.py`, `scripts/crap_dry_gate.py`.
+  Point `rank_failures.py` at a directory holding only the JUnit files: it also parses `*.log` and
+  `*.txt`, and mixing them double-counts runs.
+- `hypothesis>=6.116.0` in the `test` extra; `tests/conftest.py` registers `ci` (derandomized, no
+  deadline, no database), `dev` (50 examples) and `nightly` (2,000 examples, database in
+  `.hypothesis/examples`). The default follows the `CI` env var.
+
+Phase 4.1 property tests (30 tests, `ci` profile and seeds 1/2/3 green):
+
+| File | Core | Properties |
+| --- | --- | --- |
+| `tests/unit/evaluation/test_metrics_properties.py` | `evaluation/metrics.py` | range merge/intersect/count and line recall/precision/IoU against a set-of-lines model; recall@k, precision@k, MRR against their definitions; recall@k monotone in k; NDCG in [0, 1] and 1 for an ideal ranking |
+| `tests/unit/search/test_reranker_properties.py` | `RRFReranker.rerank` | uniqueness and length, order by `rrf_score`, `appears_in_lists`, prefix-of-a-longer-cut, input-list-order independence, dominance, reserved slots keep the plain-RRF head |
+| `tests/unit/search/test_chunk_id_properties.py` | `search/chunk_id.py` | parse/str round trip, `normalize`/`dedup_key` idempotent, line-range and Windows-separator invariance, `split_block` → `method` key |
+
+Not given a property: `call_edge_resolver` (orchestration over resolvers and process pools) and
+`centrality_ranker` (config-weighted boosts; 0.59% mutant survival, nothing a property adds).
+
+#### Mutation sweep (Phase 18.3)
+
+Ran every `cr-*.toml` on Linux (each target in its own worktree, test command made
+`-x -p no:randomly`). Survivors were then replayed against **every** test file that imports the
+module (`scratchpad` helper, not committed) before writing tests, which separates config scope
+from missing tests.
+
+| Target | Mutants (non-pragma) | Survived (config test-command) | Still alive after broad replay | Killed by new tests | Left alive |
+| --- | --- | --- | --- | --- | --- |
+| `chunking/relationships/call_edge_resolver.py` | 107 | 44 (35%) | 44 | 1 (L477 process-pool loop) | 43: 33 type-annotation, 4 logging-only counters/tie-break, 6 executor-shutdown flags |
+| `search/reranking_engine.py` | 159 | 99 (38%) | 15 | 10 | 5: 4 equivalent (L255 window guard ×3, L293 `@staticmethod` on a class-called method) and L186 `!=` → `is not` (differs only for equal names in distinct string objects) |
+| `search/reranker.py` | 484 | 83 (17%) | 43 (the replay already ran the 15 `analyze_fusion_quality` kills from 18.3's first test) | 16 | 27: equivalent reserve-path variants (reserve 0, fallback guard entered more often, earlier scan start, `break` → `continue` after the loop is full), L472 ×2 equivalent, L206 `+` → `**` (real, narrow) |
+| `search/centrality_ranker.py` | 382 | 3 (0.8%) | 3 | 1 (L369) | L129 equivalent; L119 cache-key suffix inverted (real, narrow) |
+| `evaluation/metrics.py` | 944 | run in progress at this commit; filled in by the follow-up commit | | | |
+| `search/hybrid_searcher.py` | — | not run: ~12 h at this machine's pace (33 / 692 in 35 min); it is not in CI's `all` set either | | | |
+
+Findings beyond the counts:
+
+- **Config scope was the largest cause.** `cr-reranking_engine.toml` ran only
+  `test_reranking_engine.py`; widening it to the interleave and window-policy tests killed 84 of
+  99 survivors with no new test. The three test commands that missed covering tests (and now also
+  run the property files with `--hypothesis-profile=ci`) were widened in a separate commit.
+- **Pragma drift.** In `RRFReranker.analyze_fusion_quality` the `# pragma: no mutate` comments
+  sit on closing-paren lines left by `ruff format`, not on the lines the mutants change, so 13
+  arithmetic mutants ran and survived. A formatter pass can silently move a pragma off its line;
+  re-check pragmas after reformatting.
+- `call_edge_resolver`'s 35% survival rate would fail `mutation-testing.yml`'s
+  `cr-rate --fail-over 25.0` gate on the next scheduled run; 33 of its 44 survivors are
+  annotation mutants on `list[str] | None` (lines 171, 306, 354) that only `# pragma: no mutate`
+  on those lines (or an operator filter) removes.
+- One OOM kill per long run came from mutants that make a loop grow without bound (10–12 GB
+  RSS); cosmic-ray counts those as killed, which is correct, but run fewer targets in parallel on
+  a 16 GB machine.
+
+#### Fix-commit review and the missed fix (Phase 18.4)
+
+- `52614e1` (detect a skipped rerank by list identity) had no test guarding the race it fixed:
+  `test_a_concurrent_failed_rerank_does_not_hide_this_ones_success` stages it deterministically and
+  fails with the fix reverted. `replay_fixes.py` still reports the commit MISSED by design (it
+  only runs the fix commit's own tests).
+- Checklist review of `6fd1be8`, `3dcecef`, `4c5d187`, `26b09be` (hand-mutation of each fix, plus a
+  same-bug-class search): three Important findings, all untouched here because they need
+  production changes:
+  1. The vanished-config fix is per-instance, and `invalidate_config_caches()`
+     (`mcp_server/state.py:387`) discards the instance on every project switch, so a drive drop
+     after a switch still reverts to the default model (reproduced).
+  2. `save_config` does not refresh the cached file layer, so a vanish after a save restores the
+     pre-save settings (reproduced).
+  3. Dropping the Merkle snapshot after a partial clear (`_drop_snapshot_if_index_changed`, the
+     `index_changed` attribute, three call sites) has no test: making it a no-op passes the suite.
+  Same class elsewhere (Pre-existing): `mcp_server/tools/index_handlers.py:564-570` and
+  `:310-348` still report any `PermissionError` / `OSError` as "locked" and surface raw WinError
+  text.

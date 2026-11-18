@@ -12,7 +12,7 @@ at least one property here): merge_ranges `prev_end + 1` -> `prev_end + 2` and
 `max(prev_end, end)` -> `end`; intersect_ranges `lo <= hi` -> `lo < hi`; line precision
 denominator `end - start + 1` -> `end - start`. The pragma'd intersect pointer advance
 `a[i][1] < b[j][1]` -> `<=` passes every property, which supports its equivalence note.
-Mutants these properties kill that the example tests miss: tests/TESTING_GUIDE.md, Phase 17.
+Mutants these properties kill that the example tests miss: tests/TESTING_GUIDE.md, Phase 18.
 """
 
 import pytest
