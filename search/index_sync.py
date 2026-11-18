@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .bm25_index import BM25Index
+from .index_write_lock import files_in_use_guard
 from .indexer import CodeIndexManager
 from .tokenization import augment_bm25_document
 
@@ -312,7 +313,10 @@ class IndexSynchronizer:
             # gone — a half-clear with no rollback.
             self.dense_index.preflight_clear()
 
-            self.bm25_index.clear()
+            # The probe passed, so a lock here is no longer a no-op failure:
+            # part of the index may already be deleted.
+            with files_in_use_guard(self.storage_dir / "bm25", index_changed=True):
+                self.bm25_index.clear()
 
             # preflight_clear() is idempotent (see probe_metadata_deletable's
             # docstring) — clear_index() calling it again internally is a

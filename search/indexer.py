@@ -32,6 +32,7 @@ from search.batch_operations import BatchOperations
 from search.faiss_index import FaissVectorIndex, index_kind_for
 from search.filters import FilterEngine
 from search.graph_integration import GraphIntegration
+from search.index_write_lock import files_in_use_guard
 from search.metadata import MetadataStore
 
 
@@ -74,18 +75,23 @@ def probe_metadata_deletable(metadata_path: Path) -> Path:
         path is returned (guarded by ``.exists()``) as the real delete step.
 
     Raises:
-        OSError: If metadata.db exists but cannot be renamed (e.g. a
-            lingering open handle) — the signal that the whole clear must
+        IndexFilesInUseError: (a ``PermissionError``) If metadata.db exists but
+            cannot be renamed because another process holds it open — the
+            signal that the whole clear must
             abort before BM25 or FAISS state is destroyed. Left untouched
             (not unlinked) so a failed probe is a clean no-op, not a
             half-clear.
     """
     deleting_path = Path(str(metadata_path) + ".deleting")
     if metadata_path.exists():
+        # Nothing has been deleted yet on either branch: a lock here is a
+        # no-op failure (index_changed=False).
         if deleting_path.exists():
             # Debris from an aborted clear; never let it shadow the live DB.
-            deleting_path.unlink()
-        os.replace(metadata_path, deleting_path)
+            with files_in_use_guard(deleting_path, index_changed=False):
+                deleting_path.unlink()
+        with files_in_use_guard(metadata_path, index_changed=False):
+            os.replace(metadata_path, deleting_path)
         return deleting_path
     if deleting_path.exists():
         return deleting_path
@@ -1016,8 +1022,11 @@ class CodeIndexManager:
         metadata_deleting_path = self.preflight_clear()
 
         # Clear FAISS index (includes GPU cleanup if needed) — only reached
-        # once metadata.db has been proven deletable.
-        self._faiss_index.clear()
+        # once metadata.db has been proven deletable. The probe has already
+        # renamed metadata.db, so a lock on a FAISS file means the index is
+        # incomplete, not unchanged.
+        with files_in_use_guard(self.storage_dir, index_changed=True):
+            self._faiss_index.clear()
 
         # Remove additional files - NOW safe because store is closed.
         # metadata.db-wal/-shm are not a defensive nicety: SQLite routinely
@@ -1043,10 +1052,14 @@ class CodeIndexManager:
             self.storage_dir / "metadata_symbol_cache.json",
         ]:
             if file_path.exists():
-                file_path.unlink()
+                with files_in_use_guard(file_path, index_changed=True):
+                    file_path.unlink()
 
-        # Clear call graph via integration layer
-        self._graph.clear()
+        # Clear call graph via integration layer. GraphIntegration.clear only
+        # swallows RuntimeError/AttributeError, so a locked call_graph.json
+        # (an unlink in CodeGraphStorage.clear) reaches this guard.
+        with files_in_use_guard(self.storage_dir.parent, index_changed=True):
+            self._graph.clear()
 
         # Legacy debris: *_communities.json was written by the community
         # subsystem removed in ADR-0015. Nothing reads it anymore, but nothing

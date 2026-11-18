@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import numpy as np
 
 from search.batch_operations import BatchOperations
+from search.index_write_lock import IndexFilesInUseError
 
 
 class TestBatchOperations(TestCase):
@@ -126,6 +127,32 @@ class TestBatchOperations(TestCase):
 
         # All chunks removed, should invoke clear callback
         self.assertEqual(result, 2)
+        clear_callback.assert_called_once()
+
+    def test_remove_files_lock_error_propagates_without_second_clear(self):
+        """A locked index file is not a corrupted index: the lock error must
+        reach the caller as-is, with one clear attempt, no retry and no
+        ERROR log (the generic handler logs a traceback and clears again)."""
+        chunk_ids = ["file1.py:1-10:function:func1", "file1.py:11-20:function:func2"]
+
+        self.mock_metadata_store.get.return_value = {
+            "metadata": {"file_path": "file1.py", "relative_path": "file1.py"}
+        }
+        self.mock_faiss_index.index = Mock()
+        self.mock_faiss_index.index.ntotal = 2
+        self.mock_faiss_index.remove_positions.return_value = False
+
+        clear_callback = Mock(side_effect=IndexFilesInUseError("metadata.db locked"))
+
+        with (
+            self.assertNoLogs("search.batch_operations", level="ERROR"),
+            self.assertRaises(IndexFilesInUseError) as ctx,
+        ):
+            self.batch_ops.remove_files(
+                {"file1.py"}, chunk_ids, clear_index_callback=clear_callback
+            )
+
+        self.assertEqual(str(ctx.exception), "metadata.db locked")
         clear_callback.assert_called_once()
 
     def test_remove_files_error_handling(self):

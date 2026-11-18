@@ -1,7 +1,7 @@
 {
   "counts": {
     "abs-path": 15,
-    "bitwise-assert": 1,
+    "bitwise-assert": 0,
     "commented-test": 0,
     "early-exit": 36,
     "multi-mock-assert": 17,
@@ -13,5 +13,5 @@
     "sleep": 27,
     "suboptimal-assert": 0
   },
-  "total": 308
+  "total": 307
 }

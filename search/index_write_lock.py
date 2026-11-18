@@ -39,6 +39,121 @@ class IndexWriteLockHeldError(RuntimeError):
     """Raised when another process already holds a project's index write lock."""
 
 
+class IndexFilesInUseError(PermissionError):
+    """Raised when an index file (metadata.db) is open in another process.
+
+    Unlike ``IndexWriteLockHeldError`` (another *writer* holds the write lock),
+    this is a *reader* -- typically the running MCP server with the project
+    loaded -- holding the file, so the write lock was free. When ``index_changed``
+    is False (the probe rename failed) the failed clear is a no-op and the
+    existing index is untouched; when True, part of the index is already
+    deleted. Subclasses ``PermissionError`` so callers and tests that catch
+    ``PermissionError``/``OSError`` keep working; the raw ``WinError`` is kept
+    as ``__cause__``.
+    """
+
+    #: True when part of the index was already deleted before the failure.
+    #: Callers use it to drop the Merkle snapshot so the next run cannot diff
+    #: against it, find "no changes" and report success on an empty index.
+    index_changed: bool = False
+
+
+#: Windows error codes for a file held open elsewhere: 32 is a sharing violation
+#: (the case a delete or rename hits), 33 a lock violation.
+_LOCK_WINERRORS = frozenset({32, 33})
+
+
+def is_lock_violation(exc: BaseException) -> bool:
+    """Return True when *exc* is Windows reporting a file held open elsewhere.
+
+    Any other ``PermissionError`` (a read-only file, an ACL denial, Windows
+    error 5 "Access is denied") is a real permission problem, and POSIX never
+    reports a lock for a delete, so neither carries a ``winerror`` in
+    ``_LOCK_WINERRORS``.
+    """
+    return getattr(exc, "winerror", None) in _LOCK_WINERRORS
+
+
+def files_in_use_error(
+    path: Path | str, *, index_changed: bool
+) -> IndexFilesInUseError:
+    """Build the user-facing error for an index file held open elsewhere.
+
+    One builder keeps every raise site on the same wording. The only thing
+    that varies is the fact the reader needs first: whether the failed clear
+    changed the index.
+
+    Args:
+        path: The file or directory another process holds open.
+        index_changed: False when the failure came before anything was
+            deleted (the probe rename), True when part of the index is
+            already gone (deletes after the probe).
+
+    Returns:
+        The error to raise. Callers chain the original ``PermissionError``
+        with ``raise ... from exc`` so the raw ``WinError`` stays in
+        ``__cause__``.
+    """
+    name = Path(path).name or str(path)
+    holder = (
+        "Likely holder: the running code-search MCP server with this project "
+        "loaded, or a second indexer."
+    )
+    if index_changed:
+        message = (
+            f"Cannot finish clearing the index: {name} is open in another process.\n"
+            f"  File: {path}\n"
+            "The index is now incomplete.\n"
+            f"{holder} Stop that process, or run a force reindex through the MCP "
+            "server's index_directory tool with incremental=False (it releases "
+            "its own handle first), to rebuild it."
+        )
+    else:
+        message = (
+            f"Cannot rebuild the index: {name} is open in another process.\n"
+            f"  File: {path}\n"
+            "The existing index was not changed.\n"
+            f"{holder} Stop that process, or run this reindex through the MCP "
+            "server's index_directory tool (it releases its own handle first), "
+            "then try again."
+        )
+    error = IndexFilesInUseError(message)
+    error.index_changed = index_changed
+    return error
+
+
+@contextmanager
+def files_in_use_guard(path_hint: Path | str, *, index_changed: bool) -> Iterator[None]:
+    """Turn a lock error raised inside the block into the clear error.
+
+    Wrap each delete of an index file with this instead of repeating a
+    ``try/except``. Only a real lock (see :func:`is_lock_violation`) becomes an
+    ``IndexFilesInUseError``. An ``IndexFilesInUseError`` raised inside the
+    block (for example by a nested guard or the probe) and any other
+    ``PermissionError`` pass through unchanged: "Access is denied" is already
+    an accurate message, and calling it a lock would point at the wrong fix.
+
+    Args:
+        path_hint: File or directory to name when the ``PermissionError``
+            carries no file name of its own.
+        index_changed: Same meaning as in :func:`files_in_use_error`.
+
+    Raises:
+        IndexFilesInUseError: Built from the lock error, which stays
+            available as ``__cause__``.
+    """
+    try:
+        yield
+    except IndexFilesInUseError:
+        raise
+    except PermissionError as exc:
+        if not is_lock_violation(exc):
+            raise
+        raise files_in_use_error(
+            exc.filename or path_hint, index_changed=index_changed
+        ) from exc
+
+
 def _lock_path(storage_dir: Path | str) -> Path:
     return Path(storage_dir) / _LOCK_FILE_NAME
 
@@ -74,7 +189,9 @@ def index_write_lock(storage_dir: Path | str) -> Iterator[None]:
         lock.acquire()
     except Timeout as exc:
         raise IndexWriteLockHeldError(
-            f"index write lock already held for {storage_dir}"
+            "Another indexer is already writing this project's index "
+            f"(lock: {_lock_path(storage_dir)}). Nothing was changed. "
+            "Wait for it to finish, then try again."
         ) from exc
     try:
         yield
