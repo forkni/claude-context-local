@@ -121,31 +121,65 @@ def pytest_unconfigure(config: Any) -> None:
     pass
 
 
-def _check_quarantine(items: list[Any]) -> None:
-    """Enforce quarantine marker discipline: reason=, issue=, and unexpired expires=."""
+_QUARANTINE_KWARGS = frozenset({"reason", "issue", "expires", "redated"})
+
+
+def _check_quarantine(items: list[Any], today: Any = None) -> None:
+    """Enforce quarantine marker discipline at collection.
+
+    A quarantine needs reason=, issue= and an unexpired expires= date. It may be
+    re-dated once: the new expires= goes in with redated=<the old expires date>.
+    A re-dated quarantine that expires again fails the run, and the only way out
+    is to delete the test and write down why. Unknown arguments fail too, so a
+    typo such as redate= cannot pass as a first quarantine.
+
+    Args:
+        items: Collected test items.
+        today: The date to check expiry against; defaults to today's date.
+    """
     import datetime as dt
 
-    today = dt.date.today()
+    today = today or dt.date.today()
     bad = []
     for item in items:
         m = item.get_closest_marker("quarantine")
         if m is None:
             continue
         kw = m.kwargs
-        if not kw.get("reason") or not kw.get("issue") or "expires" not in kw:
+        if unknown := set(kw) - _QUARANTINE_KWARGS:
             bad.append(
-                f"{item.nodeid}: quarantine marker requires reason=, issue=, expires="
+                f"{item.nodeid}: unknown quarantine argument(s) {sorted(unknown)}"
             )
-        else:
-            try:
-                expires_date = dt.date.fromisoformat(kw["expires"])
-                if expires_date < today:
-                    bad.append(
-                        f"{item.nodeid}: quarantine expired on {kw['expires']} ({kw['issue']})"
-                    )
-            except ValueError:
+            continue
+        if not kw.get("reason") or not kw.get("issue") or "expires" not in kw:
+            bad.append(f"{item.nodeid}: quarantine needs reason=, issue=, expires=")
+            continue
+        try:
+            expires = dt.date.fromisoformat(kw["expires"])
+            redated = dt.date.fromisoformat(kw["redated"]) if "redated" in kw else None
+        except (TypeError, ValueError):
+            bad.append(
+                f"{item.nodeid}: expires= and redated= must be ISO date strings "
+                f"(YYYY-MM-DD), got {kw!r}"
+            )
+            continue
+        if redated is not None and redated >= expires:
+            bad.append(
+                f"{item.nodeid}: redated= is the OLD expiry date and must be "
+                "before expires="
+            )
+            continue
+        if expires < today:
+            if redated is not None:
                 bad.append(
-                    f"{item.nodeid}: invalid expires date format '{kw['expires']}', expected YYYY-MM-DD"
+                    f"{item.nodeid}: re-dated quarantine expired {kw['expires']} "
+                    f"({kw['issue']}): delete the test and record why"
+                )
+            else:
+                bad.append(
+                    f"{item.nodeid}: quarantine expired {kw['expires']} "
+                    f"({kw['issue']}): fix it, or re-date once with "
+                    "redated=<old expires>"
                 )
     if bad:
         raise pytest.UsageError("\n".join(bad))

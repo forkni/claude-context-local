@@ -815,6 +815,7 @@ xfail_strict = true
 addopts = [
     "-v",
     "--tb=short",
+    "-ra",  # summarise every skip, xfail and error reason at the end of each run
     "--strict-markers",
     "--color=yes",
     "--durations=10",
