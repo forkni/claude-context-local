@@ -11,7 +11,7 @@
 module-path = "search/reranking_engine.py"
 timeout = 60.0
 excluded-modules = []
-test-command = ".venv/Scripts/python.exe -m pytest tests/unit/search/test_reranking_engine.py -q --no-header --tb=no"
+test-command = ".venv/Scripts/python.exe -m pytest tests/unit/search/test_reranking_engine.py tests/unit/search/test_gar_interleave.py tests/unit/search/test_rerank_window_policy.py -q --no-header --tb=no"
 
 [cosmic-ray.distributor]
 name = "local"
