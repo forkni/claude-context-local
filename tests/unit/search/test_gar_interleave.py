@@ -359,3 +359,30 @@ class TestSurvivingMutantsKilled:
         engine.neural_reranker.rerank.side_effect = lambda q, cands, k: list(cands)
         engine._run_rerank("q", pool, k=2, log_prefix="[T]", config=_cfg())
         assert engine.last_rerank_skipped is False
+
+    def test_a_concurrent_failed_rerank_does_not_hide_this_ones_success(self):
+        """Regression for 52614e1: rerank_by_query decides "reranked?" from the list it
+        got back, not from the shared last_rerank_skipped flag. Stage the race
+        deterministically: this search's rerank succeeds, then a concurrent search on
+        the same engine fails and sets the flag before this one reads it. Reading the
+        flag would throw away the reranker's scores and rank-score the list instead.
+        replay_fixes.py reported this fix as MISSED before this test existed."""
+        engine = RerankingEngine()
+        engine._ensure_reranker = Mock(return_value=True)
+        engine.neural_reranker = Mock()
+        engine.neural_reranker.rerank.side_effect = lambda q, cands, k: list(cands)
+        real_run_rerank = engine._run_rerank
+
+        def run_then_concurrent_failure(*args, **kwargs):
+            out = real_run_rerank(*args, **kwargs)
+            engine.last_rerank_skipped = True  # written by the other, failed search
+            return out
+
+        engine._run_rerank = run_then_concurrent_failure
+        cfg = _cfg()
+        pool = [_hop1(1, score=-0.5), _semantic("s1", 1, score=0.77)]
+        with patch("search.reranking_engine.get_search_config", return_value=cfg):
+            out = engine.rerank_by_query("q", pool, k=2, config=cfg, window=_GAR)
+
+        assert [r.score for r in out] == [-0.5, 0.77]
+        assert all("raw_score" not in r.metadata for r in out)
