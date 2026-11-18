@@ -94,6 +94,11 @@ class TestSearchConfigManager:
 
     def setup_method(self):
         """Set up test fixtures."""
+        import search.config as config_module
+
+        # Kept settings live at module level (they must survive manager
+        # resets), so each test starts without any.
+        config_module._last_file_layers.clear()
         self.temp_dir = tempfile.mkdtemp()
         self.config_file = os.path.join(self.temp_dir, "test_config.json")
 
@@ -224,6 +229,42 @@ class TestSearchConfigManager:
         os.utime(self.config_file, (1_700_000_000, 1_700_000_000))
 
         assert manager.load_config().embedding.model_name == new_model
+
+    def test_vanished_config_survives_manager_reset(self, caplog, monkeypatch):
+        """The kept settings must outlive the singleton reset that every
+        switch_project / index_directory performs (invalidate_config_caches sets
+        search.config._config_manager = None), or a drive drop after any project
+        switch silently reverts the model to the default."""
+        import search.config as config_module
+
+        model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": model}}, f)
+        monkeypatch.setattr(config_module, "_config_manager", None)
+        config_module.get_config_manager(self.config_file).load_config()
+
+        monkeypatch.setattr(config_module, "_config_manager", None)
+        os.remove(self.config_file)
+        with caplog.at_level("WARNING", logger="search.config"):
+            kept = config_module.get_config_manager(self.config_file).load_config()
+
+        assert kept.embedding.model_name == model
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "last-loaded" in warnings[0].getMessage()
+
+    def test_kept_settings_are_per_config_file(self):
+        """A manager for another config file never receives this file's kept
+        settings: with no previous parse of its own it falls back to defaults."""
+        model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": model}}, f)
+        SearchConfigManager(self.config_file).load_config()
+
+        other_file = os.path.join(self.temp_dir, "other_config.json")
+        loaded = SearchConfigManager(other_file).load_config()
+
+        assert loaded.embedding.model_name == SearchConfig().embedding.model_name
 
     def test_auto_mode_detection(self):
         """Test automatic search mode detection."""

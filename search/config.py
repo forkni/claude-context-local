@@ -2416,6 +2416,20 @@ class SearchConfig:
         )
 
 
+# Nested file layer from the last successful parse of each config file, keyed
+# by resolved path. Reused when that file becomes unreadable mid-session (e.g. a
+# USB volume drop), so live settings don't silently revert to defaults. Module
+# level so it survives the `_config_manager = None` reset that every
+# switch_project / index_directory performs (mcp_server/state.py
+# invalidate_config_caches); keyed by path so a manager for one file never
+# receives another file's settings.
+_last_file_layers: dict[str, dict[str, Any]] = {}
+
+
+def _layer_key(config_file: str | Path) -> str:
+    return str(Path(config_file).resolve())
+
+
 class SearchConfigManager:
     """Manages search configuration from environment variables and config files."""
 
@@ -2424,10 +2438,6 @@ class SearchConfigManager:
         self.config_file = config_file or self._get_default_config_path()
         self._config = None
         self._config_mtime: float | None = None  # Track file modification time
-        # Nested file layer from the last successful parse. Reused when the config
-        # file becomes unreadable mid-session (e.g. a USB volume drop), so live
-        # settings don't silently revert to dataclass defaults.
-        self._last_file_dict: dict[str, Any] | None = None
         # (path, mtime) of the applied per-project overrides file — part of the
         # hot-reload cache key so project switches and hand-edits invalidate.
         self._overrides_key: tuple[str, float] | None = None
@@ -2539,12 +2549,14 @@ class SearchConfigManager:
                     config_dict = (
                         raw if file_is_nested else SearchConfig._flat_to_nested(raw)
                     )
-                    self._last_file_dict = copy.deepcopy(config_dict)
+                    _last_file_layers[_layer_key(self.config_file)] = copy.deepcopy(
+                        config_dict
+                    )
                 except OSError as e:
                     self._reuse_last_file_layer(config_dict, _read_path, e)
                 except Exception as e:  # noqa: BLE001 - parse-recovery: malformed config file, fall back to defaults
                     self.logger.warning(f"Failed to load config file {_read_path}: {e}")
-            elif self._last_file_dict is not None:
+            elif _layer_key(self.config_file) in _last_file_layers:
                 self._reuse_last_file_layer(config_dict, _read_path, "file not found")
 
             # Per-project overrides (ADR-0014): deep-merged over the global file so
@@ -2607,10 +2619,11 @@ class SearchConfigManager:
         Without a previous parse (first load) nothing is filled, so the caller
         falls back to defaults exactly as before.
         """
-        if self._last_file_dict is None:
+        last_layer = _last_file_layers.get(_layer_key(self.config_file))
+        if last_layer is None:
             self.logger.warning(f"Failed to load config file {path}: {reason}")
             return
-        config_dict.update(copy.deepcopy(self._last_file_dict))
+        config_dict.update(copy.deepcopy(last_layer))
         self.logger.warning(
             f"Config file {path} is unreadable ({reason}); keeping the last-loaded "
             "settings. Restore the file or restart the server."
