@@ -2490,13 +2490,20 @@ class SearchConfigManager:
         # search_config.json.example). When it hasn't been created yet, fall back to
         # the committed template so shared defaults still apply -- read-only: this
         # branch never affects save_config(), which always writes self.config_file.
+        # A real file that was read before and has since vanished is not "not
+        # created yet": its kept layer wins over the template (below).
         _read_path = _config_path
-        if not _config_path.exists():
+        _has_kept_layer = _layer_key(self.config_file) in _last_file_layers
+        if not _config_path.exists() and not _has_kept_layer:
             _example_path = _config_path.with_name(_config_path.name + ".example")
             if _example_path.exists():
                 _read_path = _example_path
         if _read_path.exists():
-            current_mtime = _read_path.stat().st_mtime
+            try:
+                current_mtime = _read_path.stat().st_mtime
+            except FileNotFoundError:
+                # Vanished between exists() and stat(): treat as missing.
+                current_mtime = None
 
         # Per-project overrides file (ADR-0014) participates in the cache key:
         # switching projects or hand-editing the file must trigger a reload.
@@ -2549,9 +2556,12 @@ class SearchConfigManager:
                     config_dict = (
                         raw if file_is_nested else SearchConfig._flat_to_nested(raw)
                     )
-                    _last_file_layers[_layer_key(self.config_file)] = copy.deepcopy(
-                        config_dict
-                    )
+                    # Keep only what the real file held: the template is not a
+                    # file that can vanish, so it is never kept.
+                    if _read_path == _config_path:
+                        _last_file_layers[_layer_key(self.config_file)] = copy.deepcopy(
+                            config_dict
+                        )
                 except OSError as e:
                     self._reuse_last_file_layer(config_dict, _read_path, e)
                 except Exception as e:  # noqa: BLE001 - parse-recovery: malformed config file, fall back to defaults

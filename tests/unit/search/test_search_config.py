@@ -283,6 +283,69 @@ class TestSearchConfigManager:
 
         assert fresh.embedding.model_name == saved_model
 
+    def test_vanished_config_prefers_kept_settings_over_template(self, caplog):
+        """When only the real file vanishes, the committed .example template next
+        to it must not replace the kept settings without a word."""
+        kept_model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": kept_model}}, f)
+        with open(self.config_file + ".example", "w") as f:
+            json.dump({"embedding": {"model_name": "BAAI/bge-m3"}}, f)
+        manager = SearchConfigManager(self.config_file)
+        manager.load_config()
+
+        os.remove(self.config_file)
+        with caplog.at_level("WARNING", logger="search.config"):
+            kept = manager.load_config()
+
+        assert kept.embedding.model_name == kept_model
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "last-loaded" in warnings[0].getMessage()
+
+    def test_template_only_install_reloads_without_warning(self, caplog):
+        """With no real file ever written, the template is the config: loading it
+        again must not report a vanished file."""
+        template_model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file + ".example", "w") as f:
+            json.dump({"embedding": {"model_name": template_model}}, f)
+        manager = SearchConfigManager(self.config_file)
+        assert manager.load_config().embedding.model_name == template_model
+
+        fresh = SearchConfigManager(self.config_file)
+        with caplog.at_level("WARNING", logger="search.config"):
+            assert fresh.load_config().embedding.model_name == template_model
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_config_file_vanishing_between_exists_and_stat(self):
+        """A file that disappears after exists() and before stat() must be
+        treated as missing, not raise FileNotFoundError out of load_config."""
+        from pathlib import Path
+
+        model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": model}}, f)
+        manager = SearchConfigManager(self.config_file)
+        manager.load_config()
+        os.remove(self.config_file)
+
+        target = Path(self.config_file)
+        real_exists = Path.exists
+
+        stale_checks = [True, True]
+
+        def stale_exists(path, *args, **kwargs):
+            # The file is gone, but the existence checks made before stat()
+            # (template fallback, then mtime) still saw it.
+            if path == target and stale_checks:
+                return stale_checks.pop()
+            return real_exists(path, *args, **kwargs)
+
+        with patch.object(Path, "exists", stale_exists):
+            kept = manager.load_config()
+
+        assert kept.embedding.model_name == model
+
     def test_kept_settings_are_per_config_file(self):
         """A manager for another config file never receives this file's kept
         settings: with no previous parse of its own it falls back to defaults."""
