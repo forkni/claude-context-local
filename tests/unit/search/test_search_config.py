@@ -253,6 +253,36 @@ class TestSearchConfigManager:
         assert len(warnings) == 1
         assert "last-loaded" in warnings[0].getMessage()
 
+    def test_vanished_config_after_save_keeps_saved_settings(self):
+        """A file that vanishes after save_config must restore what was saved,
+        not the settings loaded before the save."""
+        loaded_model = "codefuse-ai/F2LLM-v2-0.6B"
+        saved_model = "BAAI/bge-m3"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": loaded_model}}, f)
+        manager = SearchConfigManager(self.config_file)
+        config = manager.load_config()
+        config.embedding.model_name = saved_model
+        manager.save_config(config)
+
+        os.remove(self.config_file)
+        fresh = SearchConfigManager(self.config_file).load_config()
+
+        assert fresh.embedding.model_name == saved_model
+
+    def test_vanished_config_after_first_save_keeps_saved_settings(self):
+        """With no load before the save, a vanish must still restore the saved
+        settings rather than the defaults."""
+        saved_model = "codefuse-ai/F2LLM-v2-0.6B"
+        config = SearchConfig()
+        config.embedding.model_name = saved_model
+        SearchConfigManager(self.config_file).save_config(config)
+
+        os.remove(self.config_file)
+        fresh = SearchConfigManager(self.config_file).load_config()
+
+        assert fresh.embedding.model_name == saved_model
+
     def test_kept_settings_are_per_config_file(self):
         """A manager for another config file never receives this file's kept
         settings: with no previous parse of its own it falls back to defaults."""

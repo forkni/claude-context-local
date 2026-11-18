@@ -2749,6 +2749,9 @@ class SearchConfigManager:
             config_dict = config.to_dict()  # Serialize BEFORE opening file
             self._prune_active_overrides(config_dict)
             write_json_atomic(self.config_file, config_dict)
+            # The file now holds config_dict: keep it as this file's last good
+            # layer, so a vanish after the save restores the saved settings.
+            _last_file_layers[_layer_key(self.config_file)] = copy.deepcopy(config_dict)
 
             self.logger.info(f"Saved search config to {self.config_file}")
             self._config = config  # Update cached config
