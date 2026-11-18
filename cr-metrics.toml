@@ -7,7 +7,11 @@
 module-path = "evaluation/metrics.py"
 timeout = 120.0
 excluded-modules = []
-test-command = ".venv/Scripts/python.exe -m pytest tests/unit/evaluation/test_benchmark_metrics.py tests/unit/evaluation/test_line_overlap_metrics.py tests/unit/evaluation/test_metrics_snapshot.py tests/unit/evaluation/test_metrics_properties.py --hypothesis-profile=ci -q --no-header --tb=no"
+# The interpreter path is quoted with backslashes on purpose: cosmic-ray passes
+# shlex.split(test-command) to Popen, and Windows CreateProcess cannot start a
+# relative path written with forward slashes (WinError 2). Every job then ends
+# INCOMPETENT, which cr-rate counts as killed, so the gate passes with nothing tested.
+test-command = '".venv\Scripts\python.exe" -m pytest tests/unit/evaluation/test_benchmark_metrics.py tests/unit/evaluation/test_line_overlap_metrics.py tests/unit/evaluation/test_metrics_snapshot.py tests/unit/evaluation/test_metrics_properties.py --hypothesis-profile=ci -q --no-header --tb=no'
 
 [cosmic-ray.distributor]
 name = "local"

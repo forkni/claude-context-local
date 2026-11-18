@@ -13,7 +13,7 @@ from merkle.merkle_dag import MerkleNode
 from search.call_edge_injection import InjectionStats
 from search.filters import PathFilter
 from search.incremental_indexer import IncrementalIndexer, IncrementalIndexResult
-from search.index_write_lock import IndexFilesInUseError
+from search.index_write_lock import IndexFilesInUseError, files_in_use_error
 from search.resource_refresh import NullResourceRefresher
 from tests.fixtures.lock_errors import lock_violation
 
@@ -1309,6 +1309,39 @@ class TestIncrementalIndexer:
             "a known, user-actionable condition must not dump a traceback"
         )
 
+    def test_full_index_partial_clear_lock_drops_snapshot(self):
+        """A lock hit after part of the index was deleted leaves an incomplete
+        index. The old Merkle snapshot must go too, or the next run diffs
+        against it, finds no changes and reports success on that index."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
+        )
+        self.mock_snapshot_manager.has_snapshot.return_value = False
+        self.mock_indexer.clear_index.side_effect = files_in_use_error(
+            self.project_path / "metadata.db", index_changed=True
+        )
+
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
+            mock_dag = Mock()
+            mock_dag.get_all_files.return_value = ["a.py"]
+            mock_dag.path_filter = self._mock_dependency_only_path_filter(
+                only_dependency_paths_matched=False
+            )
+            mock_dag_class.return_value = mock_dag
+            self.mock_chunker.is_supported.return_value = True
+
+            result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is False
+        assert "The index is now incomplete." in result.error
+        self.mock_snapshot_manager.delete_snapshot.assert_called_once_with(
+            str(self.project_path)
+        )
+
     def test_full_index_deletes_snapshot_only_after_clear_succeeds(self):
         """Order guard for the reorder above: on the success path the snapshot
         is still deleted, and only after clear_index has run."""
@@ -1910,6 +1943,72 @@ class TestBoundedRecovery:
         assert result.error == message
         mock_recovery.assert_not_called()
         assert "Traceback" not in caplog.text
+
+    def _incremental_run_hitting(self, error: IndexFilesInUseError):
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
+        )
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+        with patch.object(IncrementalIndexer, "detect_changes", side_effect=error):
+            return indexer.incremental_index(str(self.project_path), "test_project")
+
+    def test_incremental_run_partial_clear_lock_drops_snapshot(self):
+        """Same partial-clear rule on the incremental path: a lock error that
+        left part of the index deleted also drops the Merkle snapshot."""
+        result = self._incremental_run_hitting(
+            files_in_use_error(self.project_path / "bm25", index_changed=True)
+        )
+
+        assert result.success is False
+        self.mock_snapshot_manager.delete_snapshot.assert_called_once_with(
+            str(self.project_path)
+        )
+
+    def test_incremental_run_unchanged_index_lock_keeps_snapshot(self):
+        """A lock error before anything was deleted leaves the index whole, so
+        its snapshot is still accurate and must stay."""
+        result = self._incremental_run_hitting(
+            files_in_use_error(self.project_path / "metadata.db", index_changed=False)
+        )
+
+        assert result.success is False
+        self.mock_snapshot_manager.delete_snapshot.assert_not_called()
+
+    def _recovery_hitting(self, error: IndexFilesInUseError):
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+        self.mock_indexer.clear_index = Mock(side_effect=error)
+        return indexer._attempt_recovery(
+            "original failure", str(self.project_path), "test_project", time.time()
+        )
+
+    def test_recovery_partial_clear_lock_drops_snapshot(self):
+        """Recovery clears the index first; a lock hit part-way through that
+        clear drops the Merkle snapshot as well."""
+        result = self._recovery_hitting(
+            files_in_use_error(self.project_path / "bm25", index_changed=True)
+        )
+
+        assert result.success is False
+        self.mock_snapshot_manager.delete_snapshot.assert_called_once_with(
+            str(self.project_path)
+        )
+
+    def test_recovery_unchanged_index_lock_keeps_snapshot(self):
+        result = self._recovery_hitting(
+            files_in_use_error(self.project_path / "metadata.db", index_changed=False)
+        )
+
+        assert result.success is False
+        self.mock_snapshot_manager.delete_snapshot.assert_not_called()
 
     def _run_full_index(self, *, success: bool, error: str | None = None):
         """Drive the real _full_index to its return with the write stage mocked.

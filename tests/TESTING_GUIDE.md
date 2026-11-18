@@ -3044,3 +3044,115 @@ Findings beyond the counts:
   Same class elsewhere (Pre-existing): `mcp_server/tools/index_handlers.py:564-570` and
   `:310-348` still report any `PermissionError` / `OSError` as "locked" and surface raw WinError
   text.
+
+### Phase 18 follow-up: production fixes and a working mutation gate (Phase 19 — 2026-11-18)
+
+Scope: items 1-5, 7-8 and 16-17 of `docs/plans/TEST_HARDENING_PHASE18_FOLLOWUP_20261118.md`.
+Measured on Windows 11, Python 3.11, the project `.venv`. Each fix was written test first and
+shown failing; each new test passes under `pytest-randomly` seeds 1, 2 and 3 and fails under a
+hand-mutation of the line it covers.
+
+#### Before / after
+
+| Metric | Phase 18 (Linux) | Phase 19 (Windows) |
+| --- | --- | --- |
+| `tests/unit` | 5,524 passed, 25 skipped | 5,586 passed, 2 skipped (Windows; `-ra` names both skips) |
+| `call_edge_resolver` mutation survival (`cr-rate`) | 35% (44 / 107, on Linux with an overridden test command) | **6.30%** (8 / 127 jobs, 53 skipped by pragma; 8 / 74 = 10.8% of tested mutants) |
+| Mutants a CI run on Windows actually tested | **0**: every job INCOMPETENT (see D below) | all non-skipped jobs |
+| Past-fix recall on this phase's fixes (`replay_fixes.py`) | — | 4 / 4 CAUGHT |
+| Smell total / `real-clock` | 307 / 12 | 307 / 12 |
+| `fail_under` | 87 | 87 |
+
+#### A. Config cache (`search/config.py`) — `24d751f9`, `f4610afb`, `f42018aa`
+
+- The last good config-file layer moved from the `SearchConfigManager` instance to a module-level
+  dict keyed by the resolved config path, so it survives the `_config_manager = None` reset of
+  every `switch_project` / `index_directory`. Keyed by path, a manager for another file never
+  receives this file's settings (`test_kept_settings_are_per_config_file` kills a single-slot
+  mutant).
+- `save_config` stores the written dict as the kept layer.
+- `load_config` reads `search_config.json.example` only when the file has no kept layer, and a
+  `FileNotFoundError` between `exists()` and `stat()` counts as a missing file. The kept layer is
+  stored only when the real file was read: keeping the template would log a false "unreadable"
+  warning on a template-only install (`test_template_only_install_reloads_without_warning`).
+- `replay_fixes.py`: `24d751f` went red through 11 setup *errors* (`setup_method` clears
+  `_last_file_layers`, which the reverted source lacks), not an assertion failure, as Phase 18
+  noted for two older fixes. The assertion itself was shown failing before the fix
+  (`'BAAI/bge-m3' == 'codefuse-ai/F2LLM-v2-0.6B'`).
+- Still open: an unreadable per-project `search_overrides.json` is dropped without a warning.
+
+#### B. Snapshot drop after a partial clear — `33840f78`
+
+Every existing lock test built `IndexFilesInUseError` with the default `index_changed=False`, so no
+test reached the drop branch. Six tests now drive the incremental-run, recovery and full-index call
+sites with `files_in_use_error(..., index_changed=True)` and the unchanged-index controls. All five
+hand mutations (no-op drop, `index_changed` not stored, each of the three call sites removed) fail
+a test.
+
+#### C. Lock errors on delete and clear (`mcp_server/tools/index_handlers.py`) — `aa30809d`
+
+`_delete_failure_reason` names each failure: "locked by another process" only for WinError 32/33
+(`is_lock_violation`), "access denied" for any other `PermissionError`, otherwise the OS text
+without the `[WinError n]` prefix. `_purge_index_dir` returns `failed` as `{name: reason}`;
+`clear_index` says "locked" only when every leftover is a lock. Delete-project still queues every
+failure for retry, because a delete-pending directory can surface as WinError 5 (unverified, see
+the follow-up doc §2.3 item 11). `files_in_use_guard` does not fit here: it raises, and both paths
+continue past a failure. Four hand mutations, all killed.
+
+#### D. Mutation gate — `49df530c`, `fa933de7`
+
+- **Every `cr-*.toml` test command failed to start on Windows.** cosmic-ray passes
+  `shlex.split(test-command)` to `Popen`, and `CreateProcess` cannot start the relative path
+  `.venv/Scripts/python.exe` written with forward slashes (WinError 2). Every job ended
+  INCOMPETENT, and `cr-rate` counts INCOMPETENT as killed: a local run reported **0.00%** survival
+  with nothing tested, and the scheduled `windows-2025` run would have passed the same way. The
+  commands now use a TOML literal string, `'".venv\Scripts\python.exe" -m pytest ...'`: `shlex`
+  keeps backslashes inside double quotes. A bare `python` is not a fix, because the venv's
+  `python.exe` is a redirector and `CreateProcess` searches the base interpreter's directory
+  before `PATH`. **Check the outcome counts, not only `cr-rate`, after every run**: an INCOMPETENT
+  job is never a kill.
+- **How pragmas drift, and where they belong.** `cr-filter-pragma` matches the *last* line of the
+  mutated node, so a pragma on a closing `)` is correct when a multi-line expression ends there.
+  The drift came from long trailing reasons: ruff counts the comment toward the 88-column limit
+  and wraps the code. New pragmas are bare, with the reason on the line above. Four pragmas on
+  closing-bracket lines (`reranker.py` ×3, `centrality_ranker.py` ×1) had no mutation ending on
+  their line and were removed (score-neutral); the three on `):` lines guard one `AddNot` each
+  and stay.
+- Annotation mutants marked equivalent: `call_edge_resolver.py` `list[str] | None` ×3 (33 mutants,
+  PEP 563 postponed) and `metrics.py` L355 local-variable annotation (22 mutants, never evaluated).
+- `cr-call_edge.toml` result: 127 jobs, 66 killed, 8 survived, 53 skipped, 0 incompetent. The 8
+  survivors are the Phase 18 left-alive set: executor `shutdown(wait=..., cancel_futures=...)`
+  flags ×4 (L565, L567), the equal-confidence tie-break at L535 ×2, and the logged file count at
+  L459 ×2.
+
+#### E. Pytest hygiene — `d6282f81`
+
+`-ra` is in `addopts`. `_check_quarantine` enforces the one-re-date rule (`redated=<old
+expires>`; a re-dated quarantine that expires again fails collection with "delete the test") and
+rejects unknown marker arguments; `today` is injectable (`tests/unit/test_conftest_quarantine.py`,
+10 tests, four hand mutations killed).
+
+#### Review follow-up (PR #104, agy gemini-4-carbon-medium) — `6de0bc4d`, `dcd1ea25`, `9ba7cad8`
+
+Five findings, all confirmed against the code and fixed test first:
+
+- `load_config` stats each path once through `_file_mtime`; any `OSError` (not only "not found";
+  `Path.exists()` lets access-denied, I/O and device errors through) reaches the kept layer.
+- The kept-layer key is resolved once in `__init__`, so the cache-hit path is a single `stat()`.
+- The delete-project hint adds "see errors" only for a non-`OSError` failure (it compared a set
+  size with a list length).
+- `test_handle_clear_index_left_locked_files_says_locked` could not fail (the error echoes the
+  per-file reasons); it now checks the stated cause, and a mixed-reasons test pins `all` against
+  `any`.
+- `_check_quarantine` rejects positional marker arguments.
+
+#### Still open
+
+- Re-run the other five targets with the fixed commands (follow-up doc §2.2 item 9) and run
+  `search/hybrid_searcher.py` on a bigger machine (item 10). Their Phase 18 numbers came from
+  Linux with an overridden command.
+- `mutation-testing.yml` has no guard against INCOMPETENT jobs; a future command breakage would
+  pass the gate again.
+- §2.3 (Windows-only checks: the real-handle lock test, `uv.lock` regeneration, coverage),
+  §2.4 (coverage and complexity debt) and §2.5 items 18-21 (real-clock tests, `rank_failures.py`
+  input, `replay_fixes.py` error verdicts, more properties).

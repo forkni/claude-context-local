@@ -352,7 +352,8 @@ def calculate_metrics_from_results(
     primary = expected_primary if expected_primary is not None else expected
     recall_5 = calculate_recall_at_k(retrieved, expected, 5)  # pragma: no mutate
     recall_7 = calculate_recall_at_k(retrieved, expected, 7)  # pragma: no mutate
-    result: dict[str, float | bool | None] = {
+    # Local-variable annotation: never evaluated (PEP 526).
+    result: dict[str, float | bool | None] = {  # pragma: no mutate
         "recall@1": calculate_recall_at_k(retrieved, expected, 1),
         "recall@5": recall_5,
         "recall@7": recall_7,

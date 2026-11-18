@@ -2416,18 +2416,43 @@ class SearchConfig:
         )
 
 
+# Nested file layer from the last successful parse of each config file, keyed
+# by resolved path. Reused when that file becomes unreadable mid-session (e.g. a
+# USB volume drop), so live settings don't silently revert to defaults. Module
+# level so it survives the `_config_manager = None` reset that every
+# switch_project / index_directory performs (mcp_server/state.py
+# invalidate_config_caches); keyed by path so a manager for one file never
+# receives another file's settings.
+_last_file_layers: dict[str, dict[str, Any]] = {}
+
+
+def _layer_key(config_file: str | Path) -> str:
+    return str(Path(config_file).resolve())
+
+
+def _file_mtime(path: Path) -> float | None:
+    """Return *path*'s mtime, or None when it is missing or cannot be read.
+
+    Any OSError counts: Path.exists() lets access-denied, I/O and device
+    errors through, and a drive drop can raise any of them.
+    """
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
 class SearchConfigManager:
     """Manages search configuration from environment variables and config files."""
 
     def __init__(self, config_file: str | None = None):
         self.logger = logging.getLogger(__name__)
         self.config_file = config_file or self._get_default_config_path()
+        # Resolved once: load_config runs per file and per query, and its
+        # cache-hit path must stay a single stat().
+        self._kept_key = _layer_key(self.config_file)
         self._config = None
         self._config_mtime: float | None = None  # Track file modification time
-        # Nested file layer from the last successful parse. Reused when the config
-        # file becomes unreadable mid-session (e.g. a USB volume drop), so live
-        # settings don't silently revert to dataclass defaults.
-        self._last_file_dict: dict[str, Any] | None = None
         # (path, mtime) of the applied per-project overrides file — part of the
         # hot-reload cache key so project switches and hand-edits invalidate.
         self._overrides_key: tuple[str, float] | None = None
@@ -2480,13 +2505,19 @@ class SearchConfigManager:
         # search_config.json.example). When it hasn't been created yet, fall back to
         # the committed template so shared defaults still apply -- read-only: this
         # branch never affects save_config(), which always writes self.config_file.
+        # A real file that was read before and has since vanished is not "not
+        # created yet": its kept layer wins over the template (below).
+        # One stat() per path, and any OSError means "missing or unreadable": a
+        # drive drop can raise access-denied or device errors, not only "not
+        # found", and those must reach the kept-layer fallback below.
         _read_path = _config_path
-        if not _config_path.exists():
+        current_mtime = _file_mtime(_config_path)
+        if current_mtime is None and self._kept_key not in _last_file_layers:
             _example_path = _config_path.with_name(_config_path.name + ".example")
-            if _example_path.exists():
+            _example_mtime = _file_mtime(_example_path)
+            if _example_mtime is not None:
                 _read_path = _example_path
-        if _read_path.exists():
-            current_mtime = _read_path.stat().st_mtime
+                current_mtime = _example_mtime
 
         # Per-project overrides file (ADR-0014) participates in the cache key:
         # switching projects or hand-editing the file must trigger a reload.
@@ -2524,8 +2555,8 @@ class SearchConfigManager:
             # Start with defaults
             config_dict: dict[str, Any] = {}
 
-            # Load from file if exists
-            if _read_path.exists():
+            # Load from file if it could be stat()-ed above
+            if current_mtime is not None:
                 try:
                     with open(_read_path) as f:
                         raw = json.load(f)
@@ -2539,13 +2570,18 @@ class SearchConfigManager:
                     config_dict = (
                         raw if file_is_nested else SearchConfig._flat_to_nested(raw)
                     )
-                    self._last_file_dict = copy.deepcopy(config_dict)
+                    # Keep only what the real file held: the template is not a
+                    # file that can vanish, so it is never kept.
+                    if _read_path == _config_path:
+                        _last_file_layers[self._kept_key] = copy.deepcopy(config_dict)
                 except OSError as e:
                     self._reuse_last_file_layer(config_dict, _read_path, e)
                 except Exception as e:  # noqa: BLE001 - parse-recovery: malformed config file, fall back to defaults
                     self.logger.warning(f"Failed to load config file {_read_path}: {e}")
-            elif self._last_file_dict is not None:
-                self._reuse_last_file_layer(config_dict, _read_path, "file not found")
+            elif self._kept_key in _last_file_layers:
+                self._reuse_last_file_layer(
+                    config_dict, _read_path, "file missing or unreadable"
+                )
 
             # Per-project overrides (ADR-0014): deep-merged over the global file so
             # probe results apply only to the active project.  Env vars are merged
@@ -2607,10 +2643,11 @@ class SearchConfigManager:
         Without a previous parse (first load) nothing is filled, so the caller
         falls back to defaults exactly as before.
         """
-        if self._last_file_dict is None:
+        last_layer = _last_file_layers.get(self._kept_key)
+        if last_layer is None:
             self.logger.warning(f"Failed to load config file {path}: {reason}")
             return
-        config_dict.update(copy.deepcopy(self._last_file_dict))
+        config_dict.update(copy.deepcopy(last_layer))
         self.logger.warning(
             f"Config file {path} is unreadable ({reason}); keeping the last-loaded "
             "settings. Restore the file or restart the server."
@@ -2736,6 +2773,9 @@ class SearchConfigManager:
             config_dict = config.to_dict()  # Serialize BEFORE opening file
             self._prune_active_overrides(config_dict)
             write_json_atomic(self.config_file, config_dict)
+            # The file now holds config_dict: keep it as this file's last good
+            # layer, so a vanish after the save restores the saved settings.
+            _last_file_layers[self._kept_key] = copy.deepcopy(config_dict)
 
             self.logger.info(f"Saved search config to {self.config_file}")
             self._config = config  # Update cached config

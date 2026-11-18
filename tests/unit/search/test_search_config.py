@@ -94,6 +94,11 @@ class TestSearchConfigManager:
 
     def setup_method(self):
         """Set up test fixtures."""
+        import search.config as config_module
+
+        # Kept settings live at module level (they must survive manager
+        # resets), so each test starts without any.
+        config_module._last_file_layers.clear()
         self.temp_dir = tempfile.mkdtemp()
         self.config_file = os.path.join(self.temp_dir, "test_config.json")
 
@@ -224,6 +229,206 @@ class TestSearchConfigManager:
         os.utime(self.config_file, (1_700_000_000, 1_700_000_000))
 
         assert manager.load_config().embedding.model_name == new_model
+
+    def test_vanished_config_survives_manager_reset(self, caplog, monkeypatch):
+        """The kept settings must outlive the singleton reset that every
+        switch_project / index_directory performs (invalidate_config_caches sets
+        search.config._config_manager = None), or a drive drop after any project
+        switch silently reverts the model to the default."""
+        import search.config as config_module
+
+        model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": model}}, f)
+        monkeypatch.setattr(config_module, "_config_manager", None)
+        config_module.get_config_manager(self.config_file).load_config()
+
+        monkeypatch.setattr(config_module, "_config_manager", None)
+        os.remove(self.config_file)
+        with caplog.at_level("WARNING", logger="search.config"):
+            kept = config_module.get_config_manager(self.config_file).load_config()
+
+        assert kept.embedding.model_name == model
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "last-loaded" in warnings[0].getMessage()
+
+    def test_vanished_config_after_save_keeps_saved_settings(self):
+        """A file that vanishes after save_config must restore what was saved,
+        not the settings loaded before the save."""
+        loaded_model = "codefuse-ai/F2LLM-v2-0.6B"
+        saved_model = "BAAI/bge-m3"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": loaded_model}}, f)
+        manager = SearchConfigManager(self.config_file)
+        config = manager.load_config()
+        config.embedding.model_name = saved_model
+        manager.save_config(config)
+
+        os.remove(self.config_file)
+        fresh = SearchConfigManager(self.config_file).load_config()
+
+        assert fresh.embedding.model_name == saved_model
+
+    def test_vanished_config_after_first_save_keeps_saved_settings(self):
+        """With no load before the save, a vanish must still restore the saved
+        settings rather than the defaults."""
+        saved_model = "codefuse-ai/F2LLM-v2-0.6B"
+        config = SearchConfig()
+        config.embedding.model_name = saved_model
+        SearchConfigManager(self.config_file).save_config(config)
+
+        os.remove(self.config_file)
+        fresh = SearchConfigManager(self.config_file).load_config()
+
+        assert fresh.embedding.model_name == saved_model
+
+    def test_vanished_config_prefers_kept_settings_over_template(self, caplog):
+        """When only the real file vanishes, the committed .example template next
+        to it must not replace the kept settings without a word."""
+        kept_model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": kept_model}}, f)
+        with open(self.config_file + ".example", "w") as f:
+            json.dump({"embedding": {"model_name": "BAAI/bge-m3"}}, f)
+        manager = SearchConfigManager(self.config_file)
+        manager.load_config()
+
+        os.remove(self.config_file)
+        with caplog.at_level("WARNING", logger="search.config"):
+            kept = manager.load_config()
+
+        assert kept.embedding.model_name == kept_model
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "last-loaded" in warnings[0].getMessage()
+
+    def test_template_only_install_reloads_without_warning(self, caplog):
+        """With no real file ever written, the template is the config: loading it
+        again must not report a vanished file."""
+        template_model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file + ".example", "w") as f:
+            json.dump({"embedding": {"model_name": template_model}}, f)
+        manager = SearchConfigManager(self.config_file)
+        assert manager.load_config().embedding.model_name == template_model
+
+        fresh = SearchConfigManager(self.config_file)
+        with caplog.at_level("WARNING", logger="search.config"):
+            assert fresh.load_config().embedding.model_name == template_model
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_config_file_vanishing_between_exists_and_stat(self):
+        """A file that disappears after exists() and before stat() must be
+        treated as missing, not raise FileNotFoundError out of load_config."""
+        from pathlib import Path
+
+        model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": model}}, f)
+        manager = SearchConfigManager(self.config_file)
+        manager.load_config()
+        os.remove(self.config_file)
+
+        target = Path(self.config_file)
+        real_exists = Path.exists
+
+        stale_checks = [True, True]
+
+        def stale_exists(path, *args, **kwargs):
+            # The file is gone, but the existence checks made before stat()
+            # (template fallback, then mtime) still saw it.
+            if path == target and stale_checks:
+                return stale_checks.pop()
+            return real_exists(path, *args, **kwargs)
+
+        with patch.object(Path, "exists", stale_exists):
+            kept = manager.load_config()
+
+        assert kept.embedding.model_name == model
+
+    def test_unreadable_config_path_falls_back_to_kept_settings(self):
+        """A drive drop can make exists()/stat() raise errors other than "not
+        found" (access denied, I/O, device not ready). Those must reach the
+        kept-settings fallback, not escape load_config."""
+        from pathlib import Path
+
+        model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": model}}, f)
+        manager = SearchConfigManager(self.config_file)
+        manager.load_config()
+
+        target = Path(self.config_file)
+        real_stat = Path.stat
+
+        def denied_stat(path, *args, **kwargs):
+            if path == target:
+                raise PermissionError(13, "Access is denied", str(path))
+            return real_stat(path, *args, **kwargs)
+
+        with patch.object(Path, "stat", denied_stat):
+            kept = manager.load_config()
+
+        assert kept.embedding.model_name == model
+
+    def test_config_that_stats_but_cannot_be_opened_keeps_settings(self, caplog):
+        """stat() can succeed while open() is refused (a lock or ACL change);
+        the kept settings apply, with one warning."""
+        import builtins
+
+        model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": model}}, f)
+        manager = SearchConfigManager(self.config_file)
+        manager.load_config()
+        os.utime(self.config_file, (1_700_000_000, 1_700_000_000))
+
+        real_open = builtins.open
+        target = os.path.abspath(self.config_file)
+
+        def denied_open(file, *args, **kwargs):
+            if os.path.abspath(str(file)) == target:
+                raise PermissionError(13, "Access is denied", str(file))
+            return real_open(file, *args, **kwargs)
+
+        with (
+            patch.object(builtins, "open", denied_open),
+            caplog.at_level("WARNING", logger="search.config"),
+        ):
+            kept = manager.load_config()
+
+        assert kept.embedding.model_name == model
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "last-loaded" in warnings[0].getMessage()
+
+    def test_cache_hit_does_not_resolve_the_config_path(self):
+        """load_config runs per file and per query; its cache-hit path must stay
+        a stat(), without a Path.resolve() (a CreateFile round trip on Windows)."""
+        from pathlib import Path
+
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": "BAAI/bge-m3"}}, f)
+        manager = SearchConfigManager(self.config_file)
+        first = manager.load_config()
+
+        with patch.object(Path, "resolve", autospec=True) as mock_resolve:
+            assert manager.load_config() is first
+
+        mock_resolve.assert_not_called()
+
+    def test_kept_settings_are_per_config_file(self):
+        """A manager for another config file never receives this file's kept
+        settings: with no previous parse of its own it falls back to defaults."""
+        model = "codefuse-ai/F2LLM-v2-0.6B"
+        with open(self.config_file, "w") as f:
+            json.dump({"embedding": {"model_name": model}}, f)
+        SearchConfigManager(self.config_file).load_config()
+
+        other_file = os.path.join(self.temp_dir, "other_config.json")
+        loaded = SearchConfigManager(other_file).load_config()
+
+        assert loaded.embedding.model_name == SearchConfig().embedding.model_name
 
     def test_auto_mode_detection(self):
         """Test automatic search mode detection."""

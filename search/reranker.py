@@ -444,16 +444,12 @@ class RRFReranker:
         source_counts = {}
         for result in results:  # pragma: no mutate
             source = result.source
-            source_counts[source] = (
-                source_counts.get(source, 0) + 1
-            )  # pragma: no mutate
+            source_counts[source] = source_counts.get(source, 0) + 1
 
         # Diversity score: how evenly distributed are the sources
         total_results = len(results)
         if len(source_counts) > 1:  # pragma: no mutate
-            expected_per_source = total_results / len(
-                source_counts
-            )  # pragma: no mutate
+            expected_per_source = total_results / len(source_counts)
             diversity_score = 1.0 - sum(  # pragma: no mutate
                 abs(count - expected_per_source) / total_results  # pragma: no mutate
                 for count in source_counts.values()
@@ -480,9 +476,7 @@ class RRFReranker:
             "diversity_score": diversity_score,
             "coverage_balance": coverage_balance,
             "source_distribution": source_counts,
-            "avg_rrf_score": sum(
-                r.metadata.get("rrf_score", 0) for r in results
-            )  # pragma: no mutate
+            "avg_rrf_score": sum(r.metadata.get("rrf_score", 0) for r in results)
             / total_results,  # pragma: no mutate
             "rrf_score_std": self._calculate_std(
                 [r.metadata.get("rrf_score", 0) for r in results]  # pragma: no mutate

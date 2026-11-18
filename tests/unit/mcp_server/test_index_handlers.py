@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.fixtures.lock_errors import lock_violation
+
 
 class TestCheckFileAccessibility:
     """Test _check_file_accessibility() function for pre-index file checks."""
@@ -110,7 +112,7 @@ class TestPurgeIndexDirStorageRootGuard:
             return_value=tmp_path / "storage",
         ):
             deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
-            assert failed == []
+            assert failed == {}
 
     def test_path_outside_storage_raises(self, tmp_path: Path) -> None:
         from mcp_server.tools.index_handlers import _purge_index_dir
@@ -352,6 +354,74 @@ class TestPurgeIndexDirFailureReporting:
         assert "chunk_ids.pkl" in deleted
         assert "code.index" not in deleted
 
+    def _purge_with_unlink_error(self, name: str, error: OSError) -> dict[str, str]:
+        from mcp_server.storage_manager import get_storage_dir
+        from mcp_server.tools.index_handlers import _purge_index_dir
+
+        index_dir = get_storage_dir() / "projects" / f"proj_{name}" / "index"
+        shutil.rmtree(index_dir, ignore_errors=True)
+        index_dir.mkdir(parents=True)
+        (index_dir / "metadata.db").write_text("data")
+
+        def _failing_unlink(self, *args, **kwargs):
+            raise error
+
+        with patch.object(Path, "unlink", _failing_unlink):
+            _deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
+        return failed
+
+    def test_held_file_is_reported_as_locked(self):
+        failed = self._purge_with_unlink_error("lock32", lock_violation(winerror=32))
+
+        assert failed == {"metadata.db": "locked by another process"}
+
+    def test_denied_file_is_reported_as_access_denied(self):
+        """WinError 5 is not a lock; the reason must say what it is, without
+        the raw "[WinError 5]" text."""
+        failed = self._purge_with_unlink_error("deny5", lock_violation(winerror=5))
+
+        assert failed == {"metadata.db": "access denied"}
+
+    def test_other_os_error_keeps_its_reason_without_winerror_prefix(self):
+        error = OSError(145, "The directory is not empty")
+        error.winerror = 145
+
+        failed = self._purge_with_unlink_error("other", error)
+
+        assert failed == {"metadata.db": "The directory is not empty"}
+
+    def test_locked_bm25_dir_is_reported_with_its_reason(self):
+        from mcp_server.storage_manager import get_storage_dir
+        from mcp_server.tools.index_handlers import _purge_index_dir
+
+        index_dir = get_storage_dir() / "projects" / "proj_bm25lock" / "index"
+        shutil.rmtree(index_dir, ignore_errors=True)
+        (index_dir / "bm25").mkdir(parents=True)
+
+        with patch("shutil.rmtree", side_effect=lock_violation(winerror=32)):
+            _deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
+
+        assert failed == {"bm25/": "locked by another process"}
+
+    def test_denied_call_graph_file_is_reported_by_bare_name(self):
+        """Call-graph files live one level up and are reported by bare name."""
+        from mcp_server.storage_manager import get_storage_dir
+        from mcp_server.tools.index_handlers import _purge_index_dir
+
+        model_dir = get_storage_dir() / "projects" / "proj_graphdeny"
+        index_dir = model_dir / "index"
+        shutil.rmtree(model_dir, ignore_errors=True)
+        index_dir.mkdir(parents=True)
+        (model_dir / "proj_call_graph.json").write_text("{}")
+
+        def _denied_unlink(self, *args, **kwargs):
+            raise lock_violation(str(self), winerror=5)
+
+        with patch.object(Path, "unlink", _denied_unlink):
+            _deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
+
+        assert failed == {"proj_call_graph.json": "access denied"}
+
     def test_all_files_deletable_reports_empty_failed(self, tmp_path):
         from mcp_server.storage_manager import get_storage_dir
         from mcp_server.tools.index_handlers import _purge_index_dir
@@ -363,7 +433,7 @@ class TestPurgeIndexDirFailureReporting:
 
         deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
 
-        assert failed == []
+        assert failed == {}
         assert "code.index" in deleted
 
 

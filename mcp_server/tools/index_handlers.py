@@ -37,9 +37,28 @@ from search.filters import (
     is_dependency_pattern,
     parse_dir_pattern,
 )
+from search.index_write_lock import is_lock_violation
 
 
 logger = logging.getLogger(__name__)
+
+#: Reason given for a delete that failed because another process holds the file.
+LOCKED_REASON = "locked by another process"
+
+
+def _delete_failure_reason(exc: OSError) -> str:
+    """Name why a delete failed, in words a user can act on.
+
+    Only Windows errors 32/33 (see ``is_lock_violation``) are a lock. Any
+    other ``PermissionError`` (error 5, a read-only file, an ACL) is "access
+    denied": calling it a lock points at the wrong fix. Other errors keep the
+    OS text without the ``[WinError n]`` prefix that ``str(exc)`` adds.
+    """
+    if is_lock_violation(exc):
+        return LOCKED_REASON
+    if isinstance(exc, PermissionError):
+        return "access denied"
+    return exc.strerror or str(exc)
 
 
 # ----------------------------------------------------------------------------
@@ -255,7 +274,7 @@ def _build_index_response(
 
 def _purge_index_dir(
     index_dir: Path, *, keep_chunk_cache: bool
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], dict[str, str]]:
     """Delete every file that makes up one model's index; return what was deleted.
 
     Single source of truth for "what files make up an index" — this repo
@@ -278,9 +297,11 @@ def _purge_index_dir(
 
     Returns:
         ``(deleted, failed)``: names of the files/directories actually
-        deleted, and names that raised ``OSError`` and are still on disk
-        (relative to ``index_dir``, except call-graph/legacy-community files
-        which are bare filenames from the parent directory). A non-empty ``failed``
+        deleted, and a map from each name that raised ``OSError`` and is still
+        on disk to the reason (``_delete_failure_reason``: ``LOCKED_REASON``
+        only for a real lock) (names are relative to ``index_dir``, except
+        call-graph/legacy-community files which are bare filenames from the
+        parent directory). A non-empty ``failed``
         means the purge left a half-cleared index — callers that need this to
         be a hard failure (as opposed to the previous behaviour of only
         logging a warning) must check it explicitly.
@@ -304,7 +325,7 @@ def _purge_index_dir(
         )
 
     deleted: list[str] = []
-    failed: list[str] = []
+    failed: dict[str, str] = {}
 
     bm25_dir = index_dir / "bm25"
     if bm25_dir.exists():
@@ -313,7 +334,7 @@ def _purge_index_dir(
             deleted.append("bm25/")
         except OSError as e:
             logger.warning(f"Could not delete {bm25_dir}: {e}")
-            failed.append("bm25/")
+            failed["bm25/"] = _delete_failure_reason(e)
 
     filenames = [
         "code.index",
@@ -336,7 +357,7 @@ def _purge_index_dir(
                 deleted.append(fname)
             except OSError as e:
                 logger.warning(f"Could not delete {fp}: {e}")
-                failed.append(fname)
+                failed[fname] = _delete_failure_reason(e)
 
     for pattern in ("*_call_graph.json", "*_communities.json"):
         for graph_file in glob.glob(str(index_dir.parent / pattern)):
@@ -345,7 +366,7 @@ def _purge_index_dir(
                 deleted.append(Path(graph_file).name)
             except OSError as e:
                 logger.warning(f"Could not delete {graph_file}: {e}")
-                failed.append(Path(graph_file).name)
+                failed[Path(graph_file).name] = _delete_failure_reason(e)
 
     return deleted, failed
 
@@ -424,7 +445,7 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
         project_path = Path(current_project).resolve()
 
         # File deletion and snapshot removal can block on I/O — offload to thread pool.
-        def _delete_index_files() -> tuple[list[str], int, dict[str, list[str]]]:
+        def _delete_index_files() -> tuple[list[str], int, dict[str, dict[str, str]]]:
             """Delete index files + Merkle snapshots.
 
             Returns (cleared_dirs, snapshots_cleared, failed_by_dir) — a
@@ -435,7 +456,7 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
             unconditional success.
             """
             _cleared: list[str] = []
-            _failed_by_dir: dict[str, list[str]] = {}
+            _failed_by_dir: dict[str, dict[str, str]] = {}
 
             for _model_dir in _iter_project_model_dirs(project_path):
                 _idx_dir = _model_dir / "index"
@@ -466,10 +487,18 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     logger.info(f"Cleared indices for {len(cleared_dirs)} models: {cleared_dirs}")
 
     if failed_by_dir:
+        all_locked = all(
+            reason == LOCKED_REASON
+            for failed in failed_by_dir.values()
+            for reason in failed.values()
+        )
+        cause = (
+            "locked by another process — a running MCP server or open file handle"
+            if all_locked
+            else "see the reason per file"
+        )
         return responses.error(
-            "Clear index left files behind (likely file locks — a running "
-            "MCP server or open file handle): "
-            f"{failed_by_dir}",
+            f"Clear index left files behind ({cause}): {failed_by_dir}",
             cleared_models=cleared_dirs,
         )
 
@@ -555,6 +584,10 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
 
         deleted_dirs = []
         errors = []
+        reasons: set[str] = set()
+        # A non-OSError failure has no reason of its own; the hint then points
+        # at the per-directory errors instead.
+        saw_unexpected_error = False
 
         logger.info(f"Searching for project directories: {project_path_resolved}")
 
@@ -564,13 +597,18 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
                 shutil.rmtree(model_dir)
                 deleted_dirs.append(model_dir.name)
                 logger.info(f"Successfully deleted: {model_dir}")
-            except PermissionError as e:
-                error_msg = f"{model_dir.name}: File locked - {e}"
-                errors.append(error_msg)
-                logger.error(f"Permission error deleting {model_dir}: {e}")
+            except OSError as e:
+                # Every failure is queued for retry below, including access
+                # denied: a delete-pending directory can surface as WinError 5
+                # and a later retry then succeeds.
+                reason = _delete_failure_reason(e)
+                reasons.add(reason)
+                errors.append(f"{model_dir.name}: {reason}")
+                logger.error(f"Could not delete {model_dir}: {e}")
             except Exception as e:  # noqa: BLE001 - cleanup: per-directory delete, must not block remaining directories
                 error_msg = f"{model_dir.name}: {e}"
                 errors.append(error_msg)
+                saw_unexpected_error = True
                 logger.error(f"Unexpected error deleting {model_dir}: {e}")
 
         # 5. Delete Merkle snapshots for this project
@@ -617,9 +655,13 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
         result["errors"] = errors
         # pyrefly: ignore [bad-typed-dict-key]
         result["queued_for_retry"] = len(errors)
+        why = ", ".join(
+            sorted(reasons) + (["see errors"] if saw_unexpected_error else [])
+        )
+        # pyrefly: ignore [bad-typed-dict-key]
         result["hint"] = (
-            # pyrefly: ignore [bad-typed-dict-key]
-            "Some files couldn't be deleted (locked). They'll be retried on next server startup."
+            f"Some directories couldn't be deleted ({why}). "
+            "They'll be retried on next server startup."
         )
 
     if success:
