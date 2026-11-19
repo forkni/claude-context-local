@@ -223,12 +223,17 @@ for /f "tokens=2 delims=." %%i in ("!CUDA_FULL!") do set CUDA_MINOR=%%i
 
 echo [OK] CUDA !CUDA_FULL! detected with !GPU_NAME!
 
-REM Map CUDA version to PyTorch index (PyTorch 2.8.0+ / cu128)
-if "!CUDA_MAJOR!"=="12" (
-    REM PyTorch 2.8.0 provides cu128 builds natively for CUDA 12.x
-    echo [INFO] CUDA 12.!CUDA_MINOR! detected. Using PyTorch CUDA 12.8 build ^(cu128^)
-    set CUDA_VERSION=12.8
-    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu128
+REM Map CUDA version to PyTorch index (PyTorch 2.13 / cu130)
+set "CUDA_NEW=0"
+if "!CUDA_MAJOR!"=="12" set "CUDA_NEW=1"
+if "!CUDA_MAJOR!"=="13" set "CUDA_NEW=1"
+if "!CUDA_NEW!"=="1" (
+    REM PyTorch 2.12+ is published for cu130, not cu128. The wheel bundles the CUDA runtime;
+    REM the NVIDIA driver must support CUDA 13.0 (R580 or newer).
+    echo [INFO] CUDA !CUDA_MAJOR!.!CUDA_MINOR! detected. Using PyTorch CUDA 13.0 build ^(cu130^)
+    echo [INFO] Requires an NVIDIA driver that supports CUDA 13.0 ^(R580 or newer^)
+    set CUDA_VERSION=13.0
+    set PYTORCH_INDEX=https://download.pytorch.org/whl/cu130
     set CUDA_AVAILABLE=1
 ) else if "!CUDA_MAJOR!"=="11" (
     if "!CUDA_MINOR!"=="8" (
@@ -345,7 +350,7 @@ goto :eof
 
 :install_cuda_mode
 call :setup_environment
-echo [INFO] CUDA detected. PyTorch cu128 will be installed via uv sync...
+echo [INFO] CUDA detected. PyTorch cu130 will be installed via uv sync...
 call :install_remaining_deps
 goto :eof
 
