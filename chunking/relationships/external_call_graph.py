@@ -61,6 +61,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from evaluation.chunk_mapping import chunk_id_from_fqn, find_enclosing_chunk
 from utils.progress import heartbeat
@@ -118,8 +119,9 @@ try:
         the real name for any non-module table fixes the registration.
         """
 
-        def __init__(self, table):
-            super().__init__(table)
+        def __init__(self, table: Any, *args: Any, **kwargs: Any) -> None:
+            # pyan 2.9 added a ``marker_prefix`` argument; pass extras through.
+            super().__init__(table, *args, **kwargs)
             # get_type() is a str up to 3.12 and an enum with .value on 3.13+.
             table_type = getattr(self.type, "value", self.type)
             if self.name == "" and str(table_type) != "module":
