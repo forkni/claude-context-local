@@ -814,6 +814,8 @@ python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
+# pytest-asyncio 1.5 warns (an error here) when this is unset; "fixture-scope" keeps 1.4 behaviour.
+asyncio_default_fixture_loop_scope = "fixture-scope"
 strict_markers = true
 strict_config = true
 xfail_strict = true
