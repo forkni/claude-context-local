@@ -310,7 +310,7 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
   - Qwen3-0.6B: ~2.3GB
   - F2LLM-v2-0.6B: ~2.2GB
 - **Windows**: Windows 10/11 with PowerShell
-- **PyTorch**: `>=2.11.0,<2.12.0` (auto-installed with CUDA 12.8 primary / CUDA 12.4 fallback support; ceiling reflects the pinned `cu128` wheel index's current maximum)
+- **PyTorch**: `>=2.13.0,<2.14.0` (auto-installed from the CUDA 13.0 `cu130` wheel index, which needs NVIDIA driver R580+; `cu126` is the manual fallback for drivers R560-R579)
 - **GPU** (optional): NVIDIA GPU with CUDA for 8.6x faster indexing
 
 Everything works on CPU if GPU unavailable.

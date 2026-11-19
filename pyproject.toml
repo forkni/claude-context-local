@@ -627,10 +627,11 @@ name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
-# Legacy CUDA 12.4 index (fallback for older systems)
+# CUDA 12.6 index (manual fallback for drivers R560-R579 without CUDA 13.0 support;
+# cu124 publishes no torch 2.13 build)
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]

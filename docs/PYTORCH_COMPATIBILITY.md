@@ -23,62 +23,62 @@ removed from `MODEL_REGISTRY` in v0.23.0.)
 
 ### Recommended (and Enforced) Versions
 
-- **PyTorch >=2.11.0, <2.12.0** - The only range installed by this project (see
-  "Why `<2.12.0`?" below). Fully tested and supported ✅
+- **PyTorch >=2.13.0, <2.14.0** - The only range installed by this project (see
+  "Why `<2.14.0`?" below). Fully tested and supported ✅
 
 ## CUDA Compatibility
 
 ### CUDA Index Selection (`pyproject.toml`)
 
-Unlike older PyTorch releases (which shipped a single `cu118` build compatible with all CUDA
-12.x drivers), this project pins `torch` to an **explicit CUDA-12.8
-wheel index** via `[tool.uv.sources]`:
+This project pins `torch` to an **explicit CUDA-13.0 wheel index** via `[tool.uv.sources]`:
 
 ```toml
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
-# Legacy CUDA 12.4 index (fallback for older systems)
+# CUDA 12.6 index (fallback for drivers without CUDA 13.0 support)
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 ```
 
-- **`cu128`** is the default and recommended index — required for RTX 50-series GPUs, and works
-  fine on older Ampere/Ada cards (RTX 30/40-series) too as long as the driver is new enough.
-- **`cu124`** is kept in the index list as a fallback for systems with an older NVIDIA driver
-  that can't satisfy `cu128`'s minimum driver requirement, but is not wired into
-  `[tool.uv.sources]` by default — switch to it manually if `cu128` install fails to detect your
-  GPU (see Troubleshooting below).
-- Your GPU driver's CUDA version (shown in `nvidia-smi`) must be >= the wheel's CUDA version;
-  newer drivers are backward compatible with older CUDA runtime wheels, not the reverse.
+- **`cu130`** is the default index. It needs an NVIDIA driver that supports CUDA 13.0
+  (R580 or newer). It works on RTX 30/40/50-series cards.
+- **`cu126`** is kept in the index list as a fallback for an older driver (R560 to R579) that
+  cannot run `cu130` wheels. It is not wired into `[tool.uv.sources]` by default: switch to it
+  manually if the `cu130` install does not detect your GPU (see Troubleshooting below).
+- The `cu128` index used before 2026-11-18 stops at `torch 2.11.0`, and `cu124` publishes no
+  build for this range, so neither can serve the current pin.
+- The wheel bundles its own CUDA runtime and cuDNN; no CUDA Toolkit install is needed. Your
+  driver's CUDA version (shown in `nvidia-smi`) must be >= the wheel's CUDA version; newer
+  drivers are backward compatible with older CUDA runtime wheels, not the reverse.
 
 ### Installation Examples
 
-**Default (CUDA 12.8-capable driver):**
+**Default (driver R580 or newer):**
 
 ```batch
-# uv resolves torch via the pinned pytorch-cu128 index automatically -- no extra needed
+# uv resolves torch via the pinned pytorch-cu130 index automatically -- no extra flags needed
 uv sync
 
-# Result: PyTorch 2.11.x+cu128 (✅ Recommended)
+# Result: PyTorch 2.13.x+cu130 (✅ Recommended)
 ```
 
-**Older driver / cu128 unavailable:**
+**Older driver (R560 to R579):**
 
 ```batch
-# Fall back to the legacy cu124 index
-uv pip install torch==2.11.* --index-url https://download.pytorch.org/whl/cu124
+# Fall back to the cu126 index
+uv pip install torch==2.13.* --index-url https://download.pytorch.org/whl/cu126
 
-# Result: PyTorch 2.11.x+cu124
+# Result: PyTorch 2.13.x+cu126
 ```
 
 ## Version Constraints in pyproject.toml
@@ -88,17 +88,17 @@ uv pip install torch==2.11.* --index-url https://download.pytorch.org/whl/cu124
 ```toml
 [project]
 dependencies = [
-    "torch>=2.11.0,<2.12.0",
+    "torch>=2.13.0,<2.14.0",
 ]
 ```
 
 `torchvision` and `torchaudio` are not project dependencies and are not required by the codebase.
 
-### Why `<2.12.0`?
+### Why `<2.14.0`?
 
-`torch` is **capped** at the next major boundary rather than left floor-only, matching the
-project's index-availability constraint — this is intentional (commit history: `b68cfff8`
-introduced the original `<2.9.0` ceiling, lifted 2026-08-06, see `docs/adr/0033-lift-torch-ceiling.md`):
+`torch` is **capped** at the next minor boundary rather than left floor-only, so a torch move
+always goes through a retrieval A/B. This is intentional (commit history: `b68cfff8` introduced
+the original `<2.9.0` ceiling, lifted 2026-08-06, see `docs/adr/0033-lift-torch-ceiling.md`):
 
 - **The original `<2.9.0` ceiling is gone.** It existed because GTE-ModernBERT's
   `@torch.compile(dynamic=True)` decorator hit a `torch.inductor` `AssertionError` on PyTorch
@@ -109,11 +109,10 @@ introduced the original `<2.9.0` ceiling, lifted 2026-08-06, see `docs/adr/0033-
   package returns nothing). The project itself never calls `torch.compile` — the only `_dynamo`
   hit in the codebase is a log suppressor (`mcp_server/server.py:207`), and nine benchmark logs
   showed TorchDynamo tracing zero frames even before the ceiling was lifted.
-- **Security improvement**: `2.11.0` closes 7 of 8 tracked CVEs, including both CVSS 8.8
+- **Security**: `2.11.0` closed 7 of 8 tracked CVEs, including both CVSS 8.8
   `weights_only` unpickler bypasses (`CVE-2026-24747`; see correction below re: `CVE-2025-3001`)
-  and `CVE-2026-4538` (`PYSEC-2026-139`, a `pt2` loader deserialization issue). See the
-  `pyproject.toml` "Deferred (no upstream fix)" tracking comment for the 1 CVE that remains
-  (`CVE-2025-3000`: fixed in `2.13.0`, which the pinned `cu128` index does not publish).
+  and `CVE-2026-4538` (`PYSEC-2026-139`, a `pt2` loader deserialization issue). `2.13.0` closes
+  the last one, `CVE-2025-3000` (`torch.jit.script` memory corruption).
 
   > **Correction**: an earlier version of this rationale (and of the pre-upgrade audit trail)
   > described `CVE-2025-3001` as a second `weights_only` unpickler bypass alongside
@@ -131,44 +130,40 @@ introduced the original `<2.9.0` ceiling, lifted 2026-08-06, see `docs/adr/0033-
   > was still vulnerable, and `2.11.0` is the version that actually closes it. **Always verify
   > torch CVE claims against the raw OSV API, not just `pip-audit`'s report, when the installed
   > wheel carries a local version suffix.**
-- **New ceiling rationale**: `[tool.uv.sources]` pins `torch` to the explicit `pytorch-cu128`
-  index, which tops out at `2.11.0` (PyPI itself has newer releases, but the CUDA-12.8 wheel
-  index does not publish them) — `<2.12.0` reflects that hard platform limit, not a known
-  regression. There is no known reason to avoid `2.12.0`+ once the index publishes it; re-check
-  each cycle and raise the ceiling opportunistically.
-- **Side effect**: `torch==2.11.0` declares `setuptools<82`, downgrading the venv's installed
-  `setuptools` from `83.0.0` (this project's runtime floor, `CVE-2026-59890`) to `81.0.0`. This
-  is build-time-only exposure — no module in this codebase imports `setuptools`/`pkg_resources`
-  at runtime (verified via grep), and `[build-system].requires` still pins `>=83.0.0` for actual
-  package builds, which run in a PEP 517 isolated environment unaffected by the venv's installed
-  version. `pip check` stays clean because build-system requirements aren't runtime dependency
-  declarations.
+- **2026-11-18 move to `2.13.0` / `cu130`**: the old `<2.12.0` ceiling followed the `cu128`
+  index, which never published `2.12`+. The pin moved to the `cu130` index instead. Retrieval
+  A/B: `evaluation/TORCH213_DEP_BUNDLE_AB_20261118.md` (no ranking change on a shared index,
+  within noise after a reindex, 30-50% lower search latency). `2.14.x` is published on `cu130`
+  too; raise the ceiling only after the same A/B.
+- **setuptools side effect resolved**: `torch==2.11.0` declared `setuptools<82`, which held the
+  venv's `setuptools` at `81.0.0` (`CVE-2026-59890`, `GHSA-xmj3-9gf7-h52w`). `2.13.0` drops
+  that cap, and the lock now resolves `setuptools 84.2.1`.
 
 ### Acceptable Versions
 
 | Version | Status | Notes |
 | --- | --- | --- |
 | 2.4.0-2.5.x | ⚠️ Works | Minimum for Gemma, but lacks BGE-M3 optimizations |
-| 2.6.0-2.10.x | ⚠️ Works | Below the enforced floor; not installed by this project |
-| 2.11.0-2.11.x | ✅ Recommended | The only range `pyproject.toml` allows (`>=2.11.0,<2.12.0`) |
-| 2.12.0+ | ⚠️ Unpublished | Not yet available on the pinned `cu128` index; no known blocker once it lands |
+| 2.6.0-2.12.x | ⚠️ Works | Below the enforced floor; not installed by this project |
+| 2.13.0-2.13.x | ✅ Recommended | The only range `pyproject.toml` allows (`>=2.13.0,<2.14.0`) |
+| 2.14.0+ | ⚠️ Not adopted | Published on `cu130`; needs a retrieval A/B before the ceiling moves |
 
 ## Installation Scenarios
 
-### Scenario 1: Fresh Installation on a CUDA 12.8-Capable System
+### Scenario 1: Fresh Installation on a System with Driver R580+
 
 ```
-Detection: CUDA 12.8-capable driver
-Installation: PyTorch 2.11.x+cu128 (via the pinned pytorch-cu128 index)
+Detection: driver supports CUDA 13.0
+Installation: PyTorch 2.13.x+cu130 (via the pinned pytorch-cu130 index)
 Result: ✅ FULLY COMPATIBLE
 ```
 
-### Scenario 2: Patch Update Within 2.11.x
+### Scenario 2: Patch Update Within 2.13.x
 
 ```
-Before: PyTorch 2.11.0+cu128
-After: PyTorch 2.11.x+cu128 (any later 2.11 patch)
-Action: No index clearing required (same CUDA variant, same <2.12.0 ceiling)
+Before: PyTorch 2.13.0+cu130
+After: PyTorch 2.13.x+cu130 (any later 2.13 patch)
+Action: No index clearing required (same CUDA variant, same <2.14.0 ceiling)
 Result: ✅ Seamless upgrade
 ```
 
@@ -182,24 +177,22 @@ Reason: Different embedding dimensions are incompatible
 
 ## Troubleshooting
 
-### "PyTorch 2.12.x got installed and things broke"
+### "PyTorch 2.14.x got installed and things broke"
 
-**Status:** ⚠️ **This should not happen** — `pyproject.toml` pins `<2.12.0`
+**Status:** ⚠️ **This should not happen** — `pyproject.toml` pins `<2.14.0`
 
 - Check `uv.lock` and `.venv` haven't drifted from the declared constraint
   (`uv sync` should always respect the ceiling)
 - If it did install, downgrade: `uv lock --upgrade-package torch` then `uv sync` (uv will select
-  the highest version satisfying `<2.12.0`)
-- The `<2.12.0` ceiling reflects the pinned `cu128` index's current maximum, not a known
-  regression — if you hit a real 2.12.x incompatibility, document it here before assuming it's
-  just the platform-availability ceiling
+  the highest version satisfying `<2.14.0`)
 
-### "CUDA 12.8 wheel installed but my driver only supports CUDA 12.4"
+### "cu130 wheel installed but my driver does not support CUDA 13.0"
 
-**Fix:** Switch to the legacy `cu124` index for this one dependency:
+**Fix:** Update the NVIDIA driver to R580 or newer, or switch to the `cu126` index for this
+one dependency (driver R560 or newer):
 
 ```batch
-.venv\Scripts\uv.exe pip install torch==2.11.* --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
+.venv\Scripts\uv.exe pip install torch==2.13.* --index-url https://download.pytorch.org/whl/cu126 --force-reinstall
 ```
 
 ### "torch.cuda.is_available() returns False"
@@ -207,8 +200,8 @@ Reason: Different embedding dimensions are incompatible
 **Possible Causes:**
 
 1. CPU-only PyTorch installed
-2. CUDA driver not installed
-3. Wrong PyTorch variant (cpu instead of cu128/cu124)
+2. CUDA driver not installed, or older than R580 for `cu130` wheels
+3. Wrong PyTorch variant (cpu instead of cu130/cu126)
 
 **Fix:**
 
@@ -216,8 +209,8 @@ Reason: Different embedding dimensions are incompatible
 # Check current installation
 .venv\Scripts\python.exe -c "import torch; print(torch.__version__)"
 
-# If shows "2.11.x+cpu", reinstall with CUDA
-.venv\Scripts\uv.exe pip install torch==2.11.* --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
+# If shows "2.13.x+cpu", reinstall with CUDA
+.venv\Scripts\uv.exe pip install torch==2.13.* --index-url https://download.pytorch.org/whl/cu130 --force-reinstall
 ```
 
 ## Verification Commands
@@ -245,16 +238,17 @@ Reason: Different embedding dimensions are incompatible
 - PyTorch Install Guide: <https://pytorch.org/get-started/locally/>
 - CUDA Compatibility: <https://pytorch.org/get-started/previous-versions/>
 - BGE-M3 Requirements: <https://huggingface.co/BAAI/bge-m3>
-- Torch CVE ledger and ceiling history: `pyproject.toml` "Deferred (no upstream fix)" tracking
-  comment, `docs/adr/0033-lift-torch-ceiling.md`
+- Torch CVE ledger and ceiling history: `pyproject.toml` security tracking comment,
+  `docs/adr/0033-lift-torch-ceiling.md`, `evaluation/TORCH213_DEP_BUNDLE_AB_20261118.md`
 
 ## Summary
 
-✅ **PyTorch 2.11.x+cu128 (via the pinned `pytorch-cu128` index) is the correct installation**
-✅ **`torch>=2.11.0,<2.12.0` in pyproject.toml — the `<2.12.0` ceiling reflects the pinned
-`cu128` index's current maximum, not a known regression; the old ModernBERT-inductor rationale
-was disproved and lifted 2026-08-06 (see `docs/adr/0033-lift-torch-ceiling.md`)**
-✅ **No index clearing needed when upgrading within 2.11.x**
+✅ **PyTorch 2.13.x+cu130 (via the pinned `pytorch-cu130` index) is the correct installation**
+✅ **`torch>=2.13.0,<2.14.0` in pyproject.toml — the ceiling holds each torch move to a
+retrieval A/B; the old ModernBERT-inductor rationale was disproved and lifted 2026-08-06 (see
+`docs/adr/0033-lift-torch-ceiling.md`)**
+✅ **Driver R580+ for `cu130`; `cu126` is the fallback for R560 to R579**
+✅ **No index clearing needed when upgrading within 2.13.x**
 ✅ **Always clear indexes when switching embedding models**
 
-**Last Updated:** 2026-08-06
+**Last Updated:** 2026-11-18

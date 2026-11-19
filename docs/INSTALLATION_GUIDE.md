@@ -31,7 +31,7 @@ This guide covers the complete installation process for the Claude Context MCP s
   - PyTorch with CUDA: ~2.4 GB
   - Dependencies and cache: ~500 MB
 - **Memory**: 4GB RAM minimum, 8GB+ recommended
-- **GPU** (optional): NVIDIA GPU with CUDA 12.8 (primary) or CUDA 12.4 (fallback) support
+- **GPU** (optional): NVIDIA GPU with a driver that supports CUDA 13.0 (R580+, primary) or CUDA 12.6 (R560+, fallback)
   - **Startup VRAM (v0.5.17+)**: 0 MB (lazy loading enabled)
   - **After first search**: 1.5-2 GB VRAM (single embedding model, plus ~2GB for the neural reranker if enabled)
   - Single-model mode: 2-4 GB VRAM total
@@ -523,11 +523,11 @@ pip install -e ".[test]"
 
 ### Version Requirements
 
-- **Required range**: `torch>=2.11.0,<2.12.0` — pinned in `pyproject.toml`, installed automatically by `uv sync`
+- **Required range**: `torch>=2.13.0,<2.14.0` — pinned in `pyproject.toml`, installed automatically by `uv sync`
 - **Reason**:
-  - The supported embedding models' own PyTorch floors are far below `>=2.11.0`, which is set by security fixes rather than model support
-  - The `<2.12.0` ceiling reflects the pinned `cu128` wheel index's current maximum, not a known regression — see `docs/PYTORCH_COMPATIBILITY.md` for the full rationale and CVE tracking
-- **CUDA Compatibility**: `pyproject.toml` pins an explicit `cu128` wheel index (default; required for RTX 50-series, also works on older Ampere/Ada cards) with a `cu124` index kept as a manual fallback for older drivers
+  - The supported embedding models' own PyTorch floors are far below `>=2.13.0`, which is set by security fixes rather than model support
+  - The `<2.14.0` ceiling holds each torch move to a retrieval A/B — see `docs/PYTORCH_COMPATIBILITY.md` for the full rationale and CVE tracking
+- **CUDA Compatibility**: `pyproject.toml` pins an explicit `cu130` wheel index (default; needs driver R580+, works on RTX 30/40/50-series) with a `cu126` index kept as a manual fallback for drivers R560-R579
 - **Compatible Versions**: `pyproject.toml` is the source of truth for the supported `torch`,
   `transformers`, and `sentence-transformers` ranges (and `uv.lock` for what is actually resolved);
   they are deliberately not repeated here because they change with every dependency audit
@@ -537,7 +537,7 @@ pip install -e ".[test]"
 #### UV Method (Recommended)
 
 ```bash
-# uv resolves torch via the pinned pytorch-cu128 index automatically -- no extra flags needed
+# uv resolves torch via the pinned pytorch-cu130 index automatically -- no extra flags needed
 uv sync
 ```
 
@@ -546,14 +546,14 @@ uv sync
 #### pip Method (Fallback)
 
 ```bash
-# CUDA 12.8 build (primary index)
-pip install "torch>=2.11.0,<2.12.0" --index-url https://download.pytorch.org/whl/cu128
+# CUDA 13.0 build (primary index, driver R580+)
+pip install "torch>=2.13.0,<2.14.0" --index-url https://download.pytorch.org/whl/cu130
 ```
 
 ### CUDA Index URLs
 
-- **CUDA 12.8**: `https://download.pytorch.org/whl/cu128` (default; required for RTX 50-series, backward compatible with older Ampere/Ada cards)
-- **CUDA 12.4**: `https://download.pytorch.org/whl/cu124` (fallback for systems with an older driver that can't satisfy `cu128`)
+- **CUDA 13.0**: `https://download.pytorch.org/whl/cu130` (default; needs driver R580+, works on RTX 30/40/50-series)
+- **CUDA 12.6**: `https://download.pytorch.org/whl/cu126` (fallback for drivers R560-R579 that can't run `cu130` wheels)
 - **CPU only**: `https://download.pytorch.org/whl/cpu`
 
 > **Note**: See `docs/PYTORCH_COMPATIBILITY.md` for the full CUDA index configuration, the `<2.12.0` ceiling rationale, and troubleshooting steps.
@@ -883,8 +883,8 @@ These utilities are interactive and will show you what will be deleted before pr
 **Solution**:
 
 ```bash
-# Ensure PyTorch is within the pinned range (>=2.11.0,<2.12.0)
-uv pip install --upgrade "torch>=2.11.0,<2.12.0" --index-url https://download.pytorch.org/whl/cu128
+# Ensure PyTorch is within the pinned range (>=2.13.0,<2.14.0)
+uv pip install --upgrade "torch>=2.13.0,<2.14.0" --index-url https://download.pytorch.org/whl/cu130
 ```
 
 **Cause**: Old PyTorch version incompatible with newer transformers
@@ -1221,8 +1221,8 @@ Startup (server starts):              0 MB VRAM (lazy loading)
 
 1. **CUDA Setup**
    - Install NVIDIA drivers (latest)
-   - Verify CUDA toolkit compatibility (CUDA 12.8 primary, CUDA 12.4 fallback)
-   - Use cu128 PyTorch builds (fall back to cu124 on older drivers)
+   - Verify the driver supports CUDA 13.0 (R580+); no CUDA Toolkit is needed, the wheel bundles the runtime
+   - Use cu130 PyTorch builds (fall back to cu126 on drivers R560-R579)
 
 2. **Memory Management**
    - Monitor GPU memory usage during indexing
