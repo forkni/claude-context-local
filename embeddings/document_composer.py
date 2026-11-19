@@ -169,17 +169,16 @@ class EmbeddingDocumentComposer:
                 lines.append(line.rstrip())
                 if len(lines) >= max_imports:
                     break
-            # Stop at first non-import, non-comment, non-blank line
+            # Stop at the first non-import, non-comment, non-blank line once imports
+            # were collected; before that, keep scanning (a docstring may come first).
             elif (
                 stripped
                 and not stripped.startswith("#")
                 and not stripped.startswith('"""')
                 and not stripped.startswith("'''")
+                and lines
             ):
-                # Check if we've already collected imports
-                if lines:
-                    break
-                # Otherwise keep scanning (might have docstring before imports)
+                break
         result = "\n".join(lines)
         self._import_ctx_cache[file_path] = (mtime, max_imports, result)
         return result

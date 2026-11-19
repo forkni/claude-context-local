@@ -304,6 +304,17 @@ def test_func():
         assert len(edges) == 1
         assert edges[0].target_name == "manager"
 
+    def test_builtin_name_only_excluded(self, extractor, chunk_metadata):
+        """A builtin used by bare name (not call) adds no edge."""
+        code = """
+def test_func():
+    with suppress:
+        pass
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert edges == []
+
     def test_multiple_items_in_with(self, extractor, chunk_metadata):
         """Test with statement with multiple items."""
         code = """

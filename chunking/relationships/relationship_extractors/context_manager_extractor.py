@@ -81,14 +81,15 @@ class ContextManagerExtractor(BaseRelationshipExtractor):
                     target_name=func_name,
                     line_number=node.lineno,
                 )
-        elif isinstance(node, ast.Name):
+        elif isinstance(node, ast.Name) and not self._is_builtin_context_manager(
+            node.id
+        ):
             # with existing_manager:
-            if not self._is_builtin_context_manager(node.id):
-                self._add_edge(
-                    source_id=chunk_metadata["chunk_id"],
-                    target_name=node.id,
-                    line_number=node.lineno,
-                )
+            self._add_edge(
+                source_id=chunk_metadata["chunk_id"],
+                target_name=node.id,
+                line_number=node.lineno,
+            )
 
     def _get_call_name(self, node: ast.AST) -> str | None:
         """

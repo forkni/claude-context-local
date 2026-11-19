@@ -52,7 +52,7 @@ dependencies = [
     "sqlitedict>=2.1.0",
     "starlette>=1.6.0",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
     "tiktoken>=0.14.0",
-    "torch>=2.11.0,<2.12.0",  # Security: 2.11.0 closes 7 of 8 tracked CVEs incl. CVE-2025-3001/CVE-2026-24747 weights_only unpickler bypasses and CVE-2026-4538 (pt2 loader deserialization, PYSEC-2026-139, last_affected=2.10.0 per OSV) (2026-08-06). Old <2.9.0 ceiling's "ModernBERT torch.compile" rationale lapsed: the GTE-ModernBERT embedder it protected was deleted in 24f6b8c, and transformers>=5.3.0 removed ModernBERT's reference_compile path entirely.
+    "torch>=2.13.0,<2.14.0",  # Security: 2.13.0 fixes CVE-2025-3000 (torch.jit.script memory corruption) and drops torch's setuptools<82 cap, which unblocks setuptools CVE-2026-59890 / GHSA-xmj3-9gf7-h52w. Wheels come from the cu130 index: cu128 stops at 2.11.0 (checked 2026-11-18). Needs an NVIDIA driver that supports CUDA 13.0 (R580+). Earlier: 2.11.0 closes 7 of 8 tracked CVEs incl. CVE-2025-3001/CVE-2026-24747 weights_only unpickler bypasses and CVE-2026-4538 (pt2 loader deserialization, PYSEC-2026-139, last_affected=2.10.0 per OSV) (2026-08-06). Old <2.9.0 ceiling's "ModernBERT torch.compile" rationale lapsed: the GTE-ModernBERT embedder it protected was deleted in 24f6b8c, and transformers>=5.3.0 removed ModernBERT's reference_compile path entirely.
     "transformers>=5.17.0,<6",  # Security: >=5.3.0 fixes CVE-2026-4372 (config.json RCE) & CVE-2026-1839 (Trainer RCE); <6 pre-major.
     "tree-sitter>=0.25.0,<0.26",  # ABI: no tree-sitter-* grammar package supports the 0.26 ABI yet (max on PyPI is 0.25.0); loading grammars raises OverflowError under 0.26
     "tree-sitter-c>=0.24.2",
@@ -623,20 +623,21 @@ evaluation = ["*.json", "*.md"]
 index-url = "https://pypi.org/simple"
 
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
-# Legacy CUDA 12.4 index (fallback for older systems)
+# CUDA 12.6 index (manual fallback for drivers R560-R579 without CUDA 13.0 support;
+# cu124 publishes no torch 2.13 build)
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]
-# CUDA 12.8 (recommended for RTX 50 series and newer GPUs)
+# CUDA 13.0 build (torch 2.12+ is not published for cu128; needs driver R580+)
 torch = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 # Code quality tools configuration
@@ -814,6 +815,8 @@ python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
+# pytest-asyncio 1.5 warns (an error here) when this is unset; "fixture-scope" keeps 1.4 behaviour.
+asyncio_default_fixture_loop_scope = "fixture-scope"
 strict_markers = true
 strict_config = true
 xfail_strict = true
