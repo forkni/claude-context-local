@@ -1654,6 +1654,10 @@ _PAIRED_CI_METRICS = ("mrr", "recall@5", "recall@10", "recall@20", "ndcg@5", "hi
 # ±0.0000 or divide-by-zero.
 _PAIRED_CI_MIN_N = 2
 
+# Minimum detectable effect multiplier: z(0.975) + z(0.80) = 1.96 + 0.84.
+# MDE = this x SE of the paired mean delta (2026-11-22 power audit).
+_MDE_SE_MULTIPLIER = 2.80
+
 
 def _paired_delta_summary(
     q1: dict[str, dict], q2: dict[str, dict], metric: str
@@ -1764,8 +1768,13 @@ def compare_runs(result_files: list[str], split: str | None = None) -> None:
             f"(n={len(set(q1) & set(q2))} shared queries{split_str}) ---"
         )
         header = (
-            f"{'metric':<12}{'mean_d':>10}{'SE':>9}  {'95% CI (normal)':>19}"
+            f"{'metric':<12}{'mean_d':>10}{'SE':>9}{'MDE':>8}  {'95% CI (normal)':>19}"
             f"{'95% CI (bootstrap)':>21}{'n_moved':>9}{'n':>6}"
+        )
+        print(
+            f"MDE = {_MDE_SE_MULTIPLIER:.2f} x SE: the smallest true delta this pair "
+            "would detect (alpha 0.05 two-sided, power 0.80). A gate band below MDE "
+            "cannot be resolved (evaluation/CANON_20261122_LABEL_AUDIT.md)."
         )
         print(header)
         print("-" * len(header))
@@ -1784,7 +1793,8 @@ def compare_runs(result_files: list[str], split: str | None = None) -> None:
             _, boot_lo, boot_hi = paired_bootstrap_ci(metric_deltas)
             boot_str = f"[{boot_lo:+.4f}, {boot_hi:+.4f}]"
             print(
-                f"{metric:<12}{mean_delta:>+10.4f}{se:>9.4f}  {ci_str:>19}"
+                f"{metric:<12}{mean_delta:>+10.4f}{se:>9.4f}"
+                f"{_MDE_SE_MULTIPLIER * se:>8.4f}  {ci_str:>19}"
                 f"{boot_str:>21}{n_moved:>9}{n:>6}"
             )
 
