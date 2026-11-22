@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   addendum) — on the 63K-vector index, flat matched IVF at p50 (17.1 vs 17.4 ms) and drops the
   2.26 s IVF training from every rebuild. Existing IVF indexes are converted to flat when they
   load (see Removed).
+- **60 commit-mined golden queries added** (H100-H159, `evaluation/golden_dataset_expanded.json`,
+  133 -> 193 scored queries) — labelled against the code at HEAD and worded at symptom level.
+  Canon re-pinned (`evaluation/CANON_20261122B_H_EXPANSION.md`): 63q 0.8425, expanded 0.7054,
+  F-via-similar 0.8935; 63q recall@20 -0.0269 against the first 11-22 pin is recorded as
+  reindex drift.
 - **Golden label audit, canon re-pinned** (`evaluation/CANON_20261122_LABEL_AUDIT.md`) — 9
   rank-1 chunks judged correct were added at grade 3 and 2 wrong labels set to grade 0. Same
   index and result lists; MRR 63q 0.8273 -> 0.8458, 133q 0.6718 -> 0.7162, F-via-similar

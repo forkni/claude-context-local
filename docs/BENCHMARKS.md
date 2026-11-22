@@ -490,7 +490,21 @@ Relevance grades: 3 = primary target, 2 = expected, 1 = acceptable/hard-negative
 
 **Runner**: `scripts/benchmark/run_sscg_benchmark.py` (shell wrapper: `scripts/benchmark/run_benchmark.sh`)
 
-### Results (2026-11-22, label audit — current canon-of-record)
+### Results (2026-11-22b, 60 new commit-mined queries — current canon-of-record)
+
+Provenance: `evaluation/CANON_20261122B_H_EXPANSION.md`, HEAD `a42f1300`, index of 254 files /
+3,402 chunks. The expanded set grows from 133 to 193 scored queries (H100-H159, labelled
+against HEAD, symptom wording). 63q r1 == r2 bit-identical. Drift against the first 11-22 pin:
+MRR inside the band on every view; 63q recall@20 -0.0269 breaches the -0.02 band (reindex
+substrate drift, sibling swaps in two "similar to X" queries; details in the canon doc).
+
+| Dataset | Queries | MRR | Recall@5 | Recall@10 | Recall@20 | NDCG@5 | pool_hit_rate |
+|---|---|---|---|---|---|---|---|
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8425** | 0.6482 | 0.7544 | 0.8270 | — | 1.0000 |
+| Expanded (`golden_dataset_expanded.json`, non-D, 193 queries) | 193 | **0.7054** | 0.6320 | 0.7765 | 0.8214 | — | 0.9585 |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.8935** | 0.6453 | 0.7584 | 0.8255 | — | 1.0000 |
+
+### Results (2026-11-22, label audit — superseded the same day by 2026-11-22b)
 
 Provenance: `evaluation/CANON_20261122_LABEL_AUDIT.md`, HEAD `ae0feb7e`, index of 250 files /
 3,380 chunks, same runner and flags as below, torch 2.13.0+cu130. The only change from the

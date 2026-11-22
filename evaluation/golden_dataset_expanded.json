@@ -2,14 +2,14 @@
   "_meta": {
     "description": "SSCG golden dataset for automated retrieval benchmarking",
     "source": "benchmark_results/sscg_evaluation/ground_truth.md",
-    "labeled_by": "Claude Sonnet 4.5 (Q01-Q35), Claude Opus 4.8 (Q36-Q67), Claude Fable 5 (Q100-Q133, hard-query expansion), Claude Sonnet 5 (H001-H067 subset, commit-mined bug-fix expansion), Claude Sonnet 5 (H035/H068 top-up, ADR-0021 re-grade)",
+    "labeled_by": "Claude Sonnet 4.5 (Q01-Q35), Claude Opus 4.8 (Q36-Q67), Claude Fable 5 (Q100-Q133, hard-query expansion), Claude Sonnet 5 (H001-H067 subset, commit-mined bug-fix expansion), Claude Sonnet 5 (H035/H068 top-up, ADR-0021 re-grade), Claude Opus 5.5 (H100-H159, commit-mined at HEAD, symptom wording, 2026-11-22)",
     "labeled_date": "2026-06-24",
     "label_audit_20261122": "Grade 3 added (rank-1 chunks a reviewer judged correct): Q34, Q55, Q114, Q117, Q128, H003, H032, H064, H066. Grade 0 (wrong labels): Q04 validate_index_consistency, Q117 _encode. See evaluation/CANON_20261122_LABEL_AUDIT.md",
     "normalization": "Chunk IDs have line-range portions stripped (e.g., 'file.py:10-20:type:name' -> 'file.py:type:name') for stability across code churn",
     "relevance_scale": "0=not_relevant, 1=marginal, 2=relevant, 3=highly_relevant",
     "expected": "chunk IDs with label >= 2 (used for Recall@k, NDCG@k)",
     "expected_primary": "chunk IDs with label == 3 (used for MRR)",
-    "total_queries": 147,
+    "total_queries": 207,
     "categories": {
       "A": "Small Function Discovery",
       "B": "Sibling Context (paired operations)",
@@ -20,10 +20,10 @@
       "H": "Bug-fix Localization (commit-mined)"
     },
     "splits": {
-      "train": 86,
-      "val": 28,
-      "test": 33,
-      "note": "Stratified by category: A=9/3/3, B=8/3/3, C=10/3/3, D=8/3/3, E=4/2/3, F=4/2/3. Category D excluded from run_sscg_benchmark.py by default (searcher cannot traverse call graph); include with --category D. H: train 25/val 6/test 6. H top-up: +2 test (H035, H068)."
+      "train": 122,
+      "val": 40,
+      "test": 45,
+      "note": "Stratified by category: A=9/3/3, B=8/3/3, C=10/3/3, D=8/3/3, E=4/2/3, F=4/2/3. Category D excluded from run_sscg_benchmark.py by default (searcher cannot traverse call graph); include with --category D. H: train 25/val 6/test 6. H top-up: +2 test (H035, H068). H100-H159 (2026-11-22 commit-mined, symptom wording): train 36/val 12/test 12."
     },
     "baseline_metrics": {
       "mrr": 0.73,
@@ -201,7 +201,8 @@
           "Q116, H034: embeddings/embedder.py:function:calculate_optimal_batch_size -> embeddings/vram_budget.py:function:calculate_optimal_batch_size (same function, moved with the rest of the VRAM budget in ef596ce7; grades unchanged)."
         ]
       }
-    ]
+    ],
+    "h_expansion_20261122": "60 commit-mined H queries (H100-H159) from fix/feat/perf commits 2026-08-01..11-22, labelled against the code at HEAD, rewritten at symptom level; owner-approved. Source and draft ranks: evaluation/commit_mined_candidates_20261122.json"
   },
   "thresholds": {
     "mrr": 0.5,
@@ -3303,6 +3304,1231 @@
       "relevance_grades": {
         "search/indexer.py:method:CodeIndexManager.get_similar_chunks_batched": 3
       }
+    },
+    {
+      "id": "H100",
+      "query": "why does a function named top crash the call-graph analyzer with a KeyError",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/relationships/external_call_graph.py:class:_ModuleOnlyTopScope",
+        "chunking/relationships/external_call_graph.py:decorated_definition:_module_only_top_scope",
+        "chunking/relationships/external_call_graph.py:method:_ModuleOnlyTopScope.__init__"
+      ],
+      "expected_primary": [
+        "chunking/relationships/external_call_graph.py:class:_ModuleOnlyTopScope",
+        "chunking/relationships/external_call_graph.py:decorated_definition:_module_only_top_scope"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/external_call_graph.py:class:_ModuleOnlyTopScope": 3,
+        "chunking/relationships/external_call_graph.py:decorated_definition:_module_only_top_scope": 3,
+        "chunking/relationships/external_call_graph.py:method:_ModuleOnlyTopScope.__init__": 2,
+        "chunking/relationships/external_call_graph.py:method:PyanResolver.resolve": 1
+      },
+      "source_commit": "3dcecef5"
+    },
+    {
+      "id": "H101",
+      "query": "call-graph analysis crashes on a lambda inside a list comprehension",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/relationships/external_call_graph.py:method:_TrackedVisitor.visit_Lambda",
+        "chunking/relationships/external_call_graph.py:method:_TrackedVisitor.process_one"
+      ],
+      "expected_primary": [
+        "chunking/relationships/external_call_graph.py:method:_TrackedVisitor.visit_Lambda"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/external_call_graph.py:method:_TrackedVisitor.visit_Lambda": 3,
+        "chunking/relationships/external_call_graph.py:method:_TrackedVisitor.process_one": 2,
+        "chunking/relationships/external_call_graph.py:method:PyanResolver.resolve": 1
+      },
+      "source_commit": "f8ce309d"
+    },
+    {
+      "id": "H102",
+      "query": "Python files that start with a byte order mark get no call-graph edges",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "chunking/relationships/external_call_graph.py:decorated_definition:_bom_tolerant_pyan_reader",
+        "chunking/relationships/call_edge_resolver.py:function:validate_py_files",
+        "chunking/relationships/resolvers/import_resolver.py:method:ImportResolver.read_file_imports"
+      ],
+      "expected_primary": [
+        "chunking/relationships/external_call_graph.py:decorated_definition:_bom_tolerant_pyan_reader"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/external_call_graph.py:decorated_definition:_bom_tolerant_pyan_reader": 3,
+        "chunking/relationships/call_edge_resolver.py:function:validate_py_files": 2,
+        "chunking/relationships/resolvers/import_resolver.py:method:ImportResolver.read_file_imports": 2,
+        "chunking/relationships/external_call_graph.py:method:_TrackedVisitor._prescan_one": 1
+      },
+      "source_commit": "9f2bda2d"
+    },
+    {
+      "id": "H103",
+      "query": "default values and type hints are missing for positional-only parameters in relationship extraction",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/relationships/relationship_extractors/default_param_extractor.py:method:DefaultParameterExtractor._extract_defaults",
+        "chunking/relationships/relationship_extractors/type_extractor.py:method:TypeAnnotationExtractor._extract_from_function"
+      ],
+      "expected_primary": [
+        "chunking/relationships/relationship_extractors/default_param_extractor.py:method:DefaultParameterExtractor._extract_defaults",
+        "chunking/relationships/relationship_extractors/type_extractor.py:method:TypeAnnotationExtractor._extract_from_function"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/relationship_extractors/default_param_extractor.py:method:DefaultParameterExtractor._extract_defaults": 3,
+        "chunking/relationships/relationship_extractors/type_extractor.py:method:TypeAnnotationExtractor._extract_from_function": 3
+      },
+      "source_commit": "667d37ae"
+    },
+    {
+      "id": "H104",
+      "query": "the language-server call tier produces zero edges and the log does not say why",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver._session",
+        "chunking/relationships/lsp_call_graph.py:function:lsp_unavailable_reason"
+      ],
+      "expected_primary": [
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver._session"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver._session": 3,
+        "chunking/relationships/lsp_call_graph.py:function:lsp_unavailable_reason": 2,
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver.resolve": 1
+      },
+      "source_commit": "45e1288d"
+    },
+    {
+      "id": "H105",
+      "query": "parse-error warnings in the log are huge and alarming for files that parsed almost fully",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/tree_sitter.py:method:TreeSitterChunker._log_parse_error_outcome",
+        "chunking/tree_sitter.py:function:_uncovered_is_pure_trivia",
+        "chunking/tree_sitter.py:function:_uncovered_line_ranges"
+      ],
+      "expected_primary": [
+        "chunking/tree_sitter.py:method:TreeSitterChunker._log_parse_error_outcome",
+        "chunking/tree_sitter.py:function:_uncovered_is_pure_trivia"
+      ],
+      "relevance_grades": {
+        "chunking/tree_sitter.py:method:TreeSitterChunker._log_parse_error_outcome": 3,
+        "chunking/tree_sitter.py:function:_uncovered_is_pure_trivia": 3,
+        "chunking/tree_sitter.py:function:_uncovered_line_ranges": 2
+      },
+      "source_commit": "64c311cb"
+    },
+    {
+      "id": "H106",
+      "query": "a fully parsed file still gets a parse warning about a line past the end of the file",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/tree_sitter.py:function:_collect_error_line_ranges"
+      ],
+      "expected_primary": [
+        "chunking/tree_sitter.py:function:_collect_error_line_ranges"
+      ],
+      "relevance_grades": {
+        "chunking/tree_sitter.py:function:_collect_error_line_ranges": 3,
+        "chunking/tree_sitter.py:method:TreeSitterChunker._log_parse_error_outcome": 1
+      },
+      "source_commit": "8620d37d"
+    },
+    {
+      "id": "H107",
+      "query": "an incremental reindex throws away cached embeddings and re-embeds chunks that did not change",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache._evict",
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.load"
+      ],
+      "expected_primary": [
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache._evict"
+      ],
+      "relevance_grades": {
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache._evict": 3,
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.load": 2
+      },
+      "source_commit": "8620d37d"
+    },
+    {
+      "id": "H108",
+      "query": "two C++ constructor overloads on one line produce two chunks with the same chunk id",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/languages/base.py:method:LanguageChunker.chunk_parsed"
+      ],
+      "expected_primary": [
+        "chunking/languages/base.py:method:LanguageChunker.chunk_parsed"
+      ],
+      "relevance_grades": {
+        "chunking/languages/base.py:method:LanguageChunker.chunk_parsed": 3
+      },
+      "source_commit": "155ab3b0"
+    },
+    {
+      "id": "H109",
+      "query": "C++ classes declared with an export macro get indexed under the macro's name",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "chunking/languages/_c_family.py:function:repair_export_macro_class_heads",
+        "chunking/languages/_c_family.py:method:_CFamilyChunker.preprocess_source_for_parse"
+      ],
+      "expected_primary": [
+        "chunking/languages/_c_family.py:function:repair_export_macro_class_heads"
+      ],
+      "relevance_grades": {
+        "chunking/languages/_c_family.py:function:repair_export_macro_class_heads": 3,
+        "chunking/languages/_c_family.py:method:_CFamilyChunker.preprocess_source_for_parse": 2
+      },
+      "source_commit": "872e4017"
+    },
+    {
+      "id": "H110",
+      "query": "doc comments above C functions are missing from their indexed chunks",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/languages/_c_family.py:method:_CFamilyChunker._is_boilerplate_run",
+        "chunking/languages/c.py:method:CChunker.extract_metadata",
+        "chunking/languages/cpp.py:method:CppChunker.extract_metadata",
+        "chunking/languages/base.py:method:LanguageChunker._last_row",
+        "chunking/languages/base.py:method:LanguageChunker._extract_sibling_comment_docstring"
+      ],
+      "expected_primary": [
+        "chunking/languages/_c_family.py:method:_CFamilyChunker._is_boilerplate_run",
+        "chunking/languages/c.py:method:CChunker.extract_metadata"
+      ],
+      "relevance_grades": {
+        "chunking/languages/_c_family.py:method:_CFamilyChunker._is_boilerplate_run": 3,
+        "chunking/languages/c.py:method:CChunker.extract_metadata": 3,
+        "chunking/languages/cpp.py:method:CppChunker.extract_metadata": 2,
+        "chunking/languages/base.py:method:LanguageChunker._last_row": 2,
+        "chunking/languages/base.py:method:LanguageChunker._extract_sibling_comment_docstring": 2
+      },
+      "source_commit": "b6eb6ef1"
+    },
+    {
+      "id": "H111",
+      "query": "a #define with a block comment inside it breaks C parsing",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/languages/_c_family.py:function:neutralize_define_comments",
+        "chunking/languages/_c_family.py:function:_blank_splitting_comments"
+      ],
+      "expected_primary": [
+        "chunking/languages/_c_family.py:function:neutralize_define_comments"
+      ],
+      "relevance_grades": {
+        "chunking/languages/_c_family.py:function:neutralize_define_comments": 3,
+        "chunking/languages/_c_family.py:function:_blank_splitting_comments": 2,
+        "chunking/languages/_c_family.py:method:_CFamilyChunker._neutralize": 1
+      },
+      "source_commit": "b6eb6ef1"
+    },
+    {
+      "id": "H112",
+      "query": "where do multi-line C macros become their own chunks",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "chunking/languages/_c_family.py:method:_CFamilyChunker.should_chunk_node"
+      ],
+      "expected_primary": [
+        "chunking/languages/_c_family.py:method:_CFamilyChunker.should_chunk_node"
+      ],
+      "relevance_grades": {
+        "chunking/languages/_c_family.py:method:_CFamilyChunker.should_chunk_node": 3,
+        "chunking/language_registry.py:module_preamble": 1
+      },
+      "source_commit": "e9fececb"
+    },
+    {
+      "id": "H113",
+      "query": "declarations inside extern \"C\" blocks are missing from the index",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/languages/_c_family.py:method:_CFamilyChunker._preamble_descend_children",
+        "chunking/languages/base.py:method:LanguageChunker._collect_module_preamble_chunks",
+        "chunking/languages/base.py:method:LanguageChunker._preamble_descend_children"
+      ],
+      "expected_primary": [
+        "chunking/languages/_c_family.py:method:_CFamilyChunker._preamble_descend_children",
+        "chunking/languages/base.py:method:LanguageChunker._collect_module_preamble_chunks"
+      ],
+      "relevance_grades": {
+        "chunking/languages/_c_family.py:method:_CFamilyChunker._preamble_descend_children": 3,
+        "chunking/languages/base.py:method:LanguageChunker._collect_module_preamble_chunks": 3,
+        "chunking/languages/base.py:method:LanguageChunker._preamble_descend_children": 2,
+        "chunking/languages/base.py:function:merge_line_ranges": 1
+      },
+      "source_commit": "f10c87f1"
+    },
+    {
+      "id": "H114",
+      "query": "CUDA headers with __device__ functions parse as one big error",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "chunking/languages/_c_family.py:function:neutralize_cuda_specifiers",
+        "chunking/languages/_c_family.py:function:_blank_cuda_specifier",
+        "chunking/languages/_c_family.py:method:_CFamilyChunker._neutralize"
+      ],
+      "expected_primary": [
+        "chunking/languages/_c_family.py:function:neutralize_cuda_specifiers"
+      ],
+      "relevance_grades": {
+        "chunking/languages/_c_family.py:function:neutralize_cuda_specifiers": 3,
+        "chunking/languages/_c_family.py:function:_blank_cuda_specifier": 2,
+        "chunking/languages/_c_family.py:method:_CFamilyChunker._neutralize": 2
+      },
+      "source_commit": "535f1028"
+    },
+    {
+      "id": "H115",
+      "query": "namespace-begin macros without a semicolon break parsing of the next C++ declaration",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/languages/_c_family.py:function:repair_bare_macro_lines",
+        "chunking/languages/_c_family.py:function:_is_bare_macro_line",
+        "chunking/languages/_c_family.py:function:_bare_macro_reach",
+        "chunking/languages/_c_family.py:function:bare_macro_line_matches"
+      ],
+      "expected_primary": [
+        "chunking/languages/_c_family.py:function:repair_bare_macro_lines"
+      ],
+      "relevance_grades": {
+        "chunking/languages/_c_family.py:function:repair_bare_macro_lines": 3,
+        "chunking/languages/_c_family.py:function:_is_bare_macro_line": 2,
+        "chunking/languages/_c_family.py:function:_bare_macro_reach": 2,
+        "chunking/languages/_c_family.py:function:bare_macro_line_matches": 2
+      },
+      "source_commit": "535f1028"
+    },
+    {
+      "id": "H116",
+      "query": "where is a very long run of top-level module statements split into several chunks",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/languages/base.py:method:LanguageChunker._preamble_groups",
+        "chunking/languages/base.py:method:LanguageChunker._preamble_may_cut_before",
+        "chunking/languages/base.py:method:LanguageChunker._collect_module_preamble_chunks",
+        "chunking/sizing.py:function:pack_by_size"
+      ],
+      "expected_primary": [
+        "chunking/languages/base.py:method:LanguageChunker._preamble_groups"
+      ],
+      "relevance_grades": {
+        "chunking/languages/base.py:method:LanguageChunker._preamble_groups": 3,
+        "chunking/languages/base.py:method:LanguageChunker._preamble_may_cut_before": 2,
+        "chunking/languages/base.py:method:LanguageChunker._collect_module_preamble_chunks": 2,
+        "chunking/sizing.py:function:pack_by_size": 2,
+        "search/config.py:decorated_definition:ChunkingConfig": 1
+      },
+      "source_commit": "092f14ab"
+    },
+    {
+      "id": "H117",
+      "query": "the embedding text for a long chunk keeps only about thirty lines of its body",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "embeddings/document_composer.py:method:EmbeddingDocumentComposer._fill_budget_truncate",
+        "embeddings/document_composer.py:method:EmbeddingDocumentComposer.compose",
+        "search/config.py:decorated_definition:EmbeddingConfig"
+      ],
+      "expected_primary": [
+        "embeddings/document_composer.py:method:EmbeddingDocumentComposer._fill_budget_truncate"
+      ],
+      "relevance_grades": {
+        "embeddings/document_composer.py:method:EmbeddingDocumentComposer._fill_budget_truncate": 3,
+        "embeddings/document_composer.py:method:EmbeddingDocumentComposer.compose": 2,
+        "search/config.py:decorated_definition:EmbeddingConfig": 2
+      },
+      "source_commit": "cc8c3e98"
+    },
+    {
+      "id": "H118",
+      "query": "search result scores are not in descending order when the neural reranker is skipped",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/reranking_engine.py:method:RerankingEngine.rerank_by_query",
+        "search/reranking_engine.py:decorated_definition:RerankingEngine._rank_scores",
+        "search/reranking_engine.py:method:RerankingEngine._run_rerank"
+      ],
+      "expected_primary": [
+        "search/reranking_engine.py:method:RerankingEngine.rerank_by_query",
+        "search/reranking_engine.py:decorated_definition:RerankingEngine._rank_scores"
+      ],
+      "relevance_grades": {
+        "search/reranking_engine.py:method:RerankingEngine.rerank_by_query": 3,
+        "search/reranking_engine.py:decorated_definition:RerankingEngine._rank_scores": 3,
+        "search/reranking_engine.py:method:RerankingEngine._run_rerank": 2
+      },
+      "source_commit": "a517b073"
+    },
+    {
+      "id": "H119",
+      "query": "where does the listwise reranker choose which attention kernels to allow on CPU versus GPU",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "search/neural_reranker.py:method:JinaRerankerV3._resolve_sdpa_backends",
+        "search/neural_reranker.py:method:JinaRerankerV3._on_cuda",
+        "search/neural_reranker.py:method:JinaRerankerV3._sdpa_context",
+        "search/neural_reranker.py:method:JinaRerankerV3._sdpa_backends"
+      ],
+      "expected_primary": [
+        "search/neural_reranker.py:method:JinaRerankerV3._resolve_sdpa_backends"
+      ],
+      "relevance_grades": {
+        "search/neural_reranker.py:method:JinaRerankerV3._resolve_sdpa_backends": 3,
+        "search/neural_reranker.py:method:JinaRerankerV3._on_cuda": 2,
+        "search/neural_reranker.py:method:JinaRerankerV3._sdpa_context": 2,
+        "search/neural_reranker.py:method:JinaRerankerV3._sdpa_backends": 2
+      },
+      "source_commit": "a283bcaf"
+    },
+    {
+      "id": "H120",
+      "query": "the reranker returns NaN scores with the cuDNN attention kernel; where is that handled",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/neural_reranker.py:method:JinaRerankerV3._attempt_rerank",
+        "search/neural_reranker.py:function:_scores_finite",
+        "search/neural_reranker.py:method:JinaRerankerV3._sdpa_context"
+      ],
+      "expected_primary": [
+        "search/neural_reranker.py:method:JinaRerankerV3._attempt_rerank",
+        "search/neural_reranker.py:function:_scores_finite"
+      ],
+      "relevance_grades": {
+        "search/neural_reranker.py:method:JinaRerankerV3._attempt_rerank": 3,
+        "search/neural_reranker.py:function:_scores_finite": 3,
+        "search/neural_reranker.py:method:JinaRerankerV3._sdpa_context": 2
+      },
+      "source_commit": "e98c9b12"
+    },
+    {
+      "id": "H121",
+      "query": "keyword search should match parts of camelCase identifiers but keep snake_case names whole",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/bm25_index.py:method:TextPreprocessor._tokenize_identifiers",
+        "search/bm25_index.py:method:TextPreprocessor.process",
+        "search/bm25_index.py:class:TextPreprocessor"
+      ],
+      "expected_primary": [
+        "search/bm25_index.py:method:TextPreprocessor._tokenize_identifiers"
+      ],
+      "relevance_grades": {
+        "search/bm25_index.py:method:TextPreprocessor._tokenize_identifiers": 3,
+        "search/bm25_index.py:method:TextPreprocessor.process": 2,
+        "search/bm25_index.py:class:TextPreprocessor": 2
+      },
+      "source_commit": "598669eb"
+    },
+    {
+      "id": "H122",
+      "query": "search results come back larger than the max_context_tokens budget I set",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "mcp_server/tools/search_orchestrator.py:decorated_definition:SearchOrchestrator._apply_source_order_and_budget"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/search_orchestrator.py:decorated_definition:SearchOrchestrator._apply_source_order_and_budget"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/search_orchestrator.py:decorated_definition:SearchOrchestrator._apply_source_order_and_budget": 3
+      },
+      "source_commit": "598669eb"
+    },
+    {
+      "id": "H123",
+      "query": "how does the rerank window choose between first-hop results and graph expansion candidates",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/reranking_engine.py:decorated_definition:RerankingEngine._gar_interleave",
+        "search/reranking_engine.py:decorated_definition:RerankingEngine._order_merged_pool",
+        "search/rerank_window_policy.py:decorated_definition:RerankWindowPolicy"
+      ],
+      "expected_primary": [
+        "search/reranking_engine.py:decorated_definition:RerankingEngine._gar_interleave"
+      ],
+      "relevance_grades": {
+        "search/reranking_engine.py:decorated_definition:RerankingEngine._gar_interleave": 3,
+        "search/reranking_engine.py:decorated_definition:RerankingEngine._order_merged_pool": 2,
+        "search/rerank_window_policy.py:decorated_definition:RerankWindowPolicy": 2
+      },
+      "source_commit": "d5b8ec01"
+    },
+    {
+      "id": "H124",
+      "query": "where is the listwise reranker's input length capped so token-heavy queries fit in GPU memory",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "search/neural_reranker.py:function:derive_listwise_model_max_length",
+        "search/neural_reranker.py:function:_simulate_listwise_blocks",
+        "search/neural_reranker.py:function:_packed_block_length",
+        "search/neural_reranker.py:method:JinaRerankerV3._attempt_rerank"
+      ],
+      "expected_primary": [
+        "search/neural_reranker.py:function:derive_listwise_model_max_length",
+        "search/neural_reranker.py:function:_simulate_listwise_blocks"
+      ],
+      "relevance_grades": {
+        "search/neural_reranker.py:function:derive_listwise_model_max_length": 3,
+        "search/neural_reranker.py:function:_simulate_listwise_blocks": 3,
+        "search/neural_reranker.py:function:_packed_block_length": 2,
+        "search/neural_reranker.py:method:JinaRerankerV3._attempt_rerank": 2
+      },
+      "source_commit": "e33ae6fd"
+    },
+    {
+      "id": "H125",
+      "query": "neural reranking stays off for the whole session after one out-of-memory error",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/neural_reranker.py:method:JinaRerankerV3.rerank",
+        "search/neural_reranker.py:method:JinaRerankerV3._attempt_rerank",
+        "search/reranking_engine.py:method:RerankingEngine._run_rerank",
+        "search/reranking_engine.py:method:RerankingEngine.should_enable_neural_reranking"
+      ],
+      "expected_primary": [
+        "search/neural_reranker.py:method:JinaRerankerV3.rerank"
+      ],
+      "relevance_grades": {
+        "search/neural_reranker.py:method:JinaRerankerV3.rerank": 3,
+        "search/neural_reranker.py:method:JinaRerankerV3._attempt_rerank": 2,
+        "search/reranking_engine.py:method:RerankingEngine._run_rerank": 2,
+        "search/reranking_engine.py:method:RerankingEngine.should_enable_neural_reranking": 2
+      },
+      "source_commit": "e33ae6fd"
+    },
+    {
+      "id": "H126",
+      "query": "the same-file preference for symbol lookup never works with Windows absolute paths",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/relationship_analyzer.py:function:_chunk_id_path_for_hint",
+        "mcp_server/tools/search_handlers.py:function:_chunk_id_path_for_hint",
+        "search/chunk_id.py:function:derive_symbol_hint",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol"
+      ],
+      "expected_primary": [
+        "search/relationship_analyzer.py:function:_chunk_id_path_for_hint",
+        "mcp_server/tools/search_handlers.py:function:_chunk_id_path_for_hint"
+      ],
+      "relevance_grades": {
+        "search/relationship_analyzer.py:function:_chunk_id_path_for_hint": 3,
+        "mcp_server/tools/search_handlers.py:function:_chunk_id_path_for_hint": 3,
+        "search/chunk_id.py:function:derive_symbol_hint": 2,
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol": 2
+      },
+      "source_commit": "62933fc6"
+    },
+    {
+      "id": "H127",
+      "query": "find_connections says chunk not found for a short file:symbol id that is indexed",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target",
+        "search/chunk_id.py:function:derive_symbol_hint",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol"
+      ],
+      "expected_primary": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target",
+        "search/chunk_id.py:function:derive_symbol_hint"
+      ],
+      "relevance_grades": {
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target": 3,
+        "search/chunk_id.py:function:derive_symbol_hint": 3,
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol": 2
+      },
+      "source_commit": "857aa051"
+    },
+    {
+      "id": "H128",
+      "query": "find_path returns no path when the source chunk id is not in the index",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "mcp_server/tools/search_handlers.py:method:handle_find_path",
+        "mcp_server/tools/search_handlers.py:function:_recover_unindexed_chunk_id",
+        "mcp_server/tools/search_handlers.py:function:_resolve_symbol_to_chunk_id"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/search_handlers.py:method:handle_find_path",
+        "mcp_server/tools/search_handlers.py:function:_recover_unindexed_chunk_id"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/search_handlers.py:method:handle_find_path": 3,
+        "mcp_server/tools/search_handlers.py:function:_recover_unindexed_chunk_id": 3,
+        "mcp_server/tools/search_handlers.py:function:_resolve_symbol_to_chunk_id": 2
+      },
+      "source_commit": "857aa051"
+    },
+    {
+      "id": "H129",
+      "query": "find_connections reports an ambiguous call edge as exact when the callee also has an unresolved duplicate edge",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "graph/graph_queries.py:method:GraphQueryEngine._authority_order",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_edge_data",
+        "graph/graph_queries.py:method:GraphQueryEngine._traverse_inbound",
+        "graph/graph_queries.py:method:GraphQueryEngine._traverse_outbound"
+      ],
+      "expected_primary": [
+        "graph/graph_queries.py:method:GraphQueryEngine._authority_order",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_edge_data"
+      ],
+      "relevance_grades": {
+        "graph/graph_queries.py:method:GraphQueryEngine._authority_order": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.get_edge_data": 3,
+        "graph/graph_queries.py:method:GraphQueryEngine._traverse_inbound": 2,
+        "graph/graph_queries.py:method:GraphQueryEngine._traverse_outbound": 2
+      },
+      "source_commit": "f8548812"
+    },
+    {
+      "id": "H130",
+      "query": "find_similar_code returns almost nothing for a big single-class file when excluding the same file",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks",
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks_batched",
+        "search/searcher.py:method:IntelligentSearcher.find_similar_to_chunk"
+      ],
+      "expected_primary": [
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks"
+      ],
+      "relevance_grades": {
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks": 3,
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks_batched": 2,
+        "search/searcher.py:method:IntelligentSearcher.find_similar_to_chunk": 2
+      },
+      "source_commit": "f30494a5"
+    },
+    {
+      "id": "H131",
+      "query": "find_connections lists the same related chunk twice for shared-tag relationships",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._build_graph_relationships",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_reverse"
+      ],
+      "expected_primary": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._build_graph_relationships"
+      ],
+      "relevance_grades": {
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._build_graph_relationships": 3,
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_reverse": 2
+      },
+      "source_commit": "70e95d30"
+    },
+    {
+      "id": "H132",
+      "query": "a relationship-type filtered traversal returns depth-two results reached through other edge types",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "graph/graph_queries.py:method:GraphQueryEngine._traverse_inbound",
+        "graph/graph_queries.py:method:GraphQueryEngine._traverse_outbound",
+        "graph/graph_queries.py:method:GraphQueryEngine.get_relationships"
+      ],
+      "expected_primary": [
+        "graph/graph_queries.py:method:GraphQueryEngine._traverse_inbound",
+        "graph/graph_queries.py:method:GraphQueryEngine._traverse_outbound"
+      ],
+      "relevance_grades": {
+        "graph/graph_queries.py:method:GraphQueryEngine._traverse_inbound": 3,
+        "graph/graph_queries.py:method:GraphQueryEngine._traverse_outbound": 3,
+        "graph/graph_queries.py:method:GraphQueryEngine.get_relationships": 2
+      },
+      "source_commit": "76a4e87b"
+    },
+    {
+      "id": "H133",
+      "query": "a node that started as a placeholder stays out of centrality after its chunk is indexed",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "graph/graph_storage.py:method:CodeGraphStorage.add_node",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge"
+      ],
+      "expected_primary": [
+        "graph/graph_storage.py:method:CodeGraphStorage.add_node"
+      ],
+      "relevance_grades": {
+        "graph/graph_storage.py:method:CodeGraphStorage.add_node": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge": 2
+      },
+      "source_commit": "5d507086"
+    },
+    {
+      "id": "H134",
+      "query": "static_cast shows up as a function call in the C++ call graph",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "chunking/languages/_c_family.py:function:_is_cast_keyword",
+        "chunking/languages/_c_family.py:function:extract_call_sites"
+      ],
+      "expected_primary": [
+        "chunking/languages/_c_family.py:function:_is_cast_keyword",
+        "chunking/languages/_c_family.py:function:extract_call_sites"
+      ],
+      "relevance_grades": {
+        "chunking/languages/_c_family.py:function:_is_cast_keyword": 3,
+        "chunking/languages/_c_family.py:function:extract_call_sites": 3
+      },
+      "source_commit": "09c4a349"
+    },
+    {
+      "id": "H135",
+      "query": "one ambiguous C++ call creates edges to dozens of same-named functions",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/graph_integration.py:method:GraphIntegration._get_ambiguous_candidates",
+        "search/graph_integration.py:method:GraphIntegration._two_pass_build",
+        "search/config.py:decorated_definition:CallGraphConfig"
+      ],
+      "expected_primary": [
+        "search/graph_integration.py:method:GraphIntegration._get_ambiguous_candidates"
+      ],
+      "relevance_grades": {
+        "search/graph_integration.py:method:GraphIntegration._get_ambiguous_candidates": 3,
+        "search/graph_integration.py:method:GraphIntegration._two_pass_build": 2,
+        "search/config.py:decorated_definition:CallGraphConfig": 2
+      },
+      "source_commit": "eff21264"
+    },
+    {
+      "id": "H136",
+      "query": "procedural graph validation accepts nodes that cannot be reached from the entry node",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "graph/procedural_graph.py:function:_validate_structure",
+        "graph/procedural_graph.py:function:_validate_document"
+      ],
+      "expected_primary": [
+        "graph/procedural_graph.py:function:_validate_structure"
+      ],
+      "relevance_grades": {
+        "graph/procedural_graph.py:function:_validate_structure": 3,
+        "graph/procedural_graph.py:function:_validate_document": 2
+      },
+      "source_commit": "2534704d"
+    },
+    {
+      "id": "H137",
+      "query": "the configured BM25 score floor is ignored for find_connections symbol lookups",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "search/types.py:decorated_definition:RetrievalRequest.build",
+        "search/types.py:decorated_definition:RetrievalRequest"
+      ],
+      "expected_primary": [
+        "search/types.py:decorated_definition:RetrievalRequest.build"
+      ],
+      "relevance_grades": {
+        "search/types.py:decorated_definition:RetrievalRequest.build": 3,
+        "search/types.py:decorated_definition:RetrievalRequest": 2
+      },
+      "source_commit": "937c31bf"
+    },
+    {
+      "id": "H138",
+      "query": "setting ego_graph_enabled to false on a search request has no effect",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/effective_config.py:function:build_effective_config",
+        "mcp_server/tools/search_orchestrator.py:method:SearchPlanner.plan",
+        "mcp_server/tools/search_orchestrator.py:decorated_definition:SearchPlan"
+      ],
+      "expected_primary": [
+        "search/effective_config.py:function:build_effective_config",
+        "mcp_server/tools/search_orchestrator.py:method:SearchPlanner.plan"
+      ],
+      "relevance_grades": {
+        "search/effective_config.py:function:build_effective_config": 3,
+        "mcp_server/tools/search_orchestrator.py:method:SearchPlanner.plan": 3,
+        "mcp_server/tools/search_orchestrator.py:decorated_definition:SearchPlan": 2
+      },
+      "source_commit": "bd21c852"
+    },
+    {
+      "id": "H139",
+      "query": "the impact report lists indirect callers with duplicates and in no fixed order",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer.analyze_impact",
+        "search/relationship_analyzer.py:decorated_definition:RelationshipAnalyzer._dedup_and_sort_edges"
+      ],
+      "expected_primary": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer.analyze_impact"
+      ],
+      "relevance_grades": {
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer.analyze_impact": 3,
+        "search/relationship_analyzer.py:decorated_definition:RelationshipAnalyzer._dedup_and_sort_edges": 2
+      },
+      "source_commit": "68e3b182"
+    },
+    {
+      "id": "H140",
+      "query": "a 'what calls Class.method' query loses the class part of the dotted name",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/intent_classifier.py:method:IntentClassifier._extract_symbol_from_query",
+        "search/tokenization.py:function:tokenize_dotted_identifiers",
+        "search/intent_classifier.py:method:IntentClassifier._detect_code_symbols"
+      ],
+      "expected_primary": [
+        "search/intent_classifier.py:method:IntentClassifier._extract_symbol_from_query",
+        "search/tokenization.py:function:tokenize_dotted_identifiers"
+      ],
+      "relevance_grades": {
+        "search/intent_classifier.py:method:IntentClassifier._extract_symbol_from_query": 3,
+        "search/tokenization.py:function:tokenize_dotted_identifiers": 3,
+        "search/intent_classifier.py:method:IntentClassifier._detect_code_symbols": 2
+      },
+      "source_commit": "3f80f2a6"
+    },
+    {
+      "id": "H141",
+      "query": "the delete-project error blames a file lock when it is really access denied",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "mcp_server/tools/index_handlers.py:function:_delete_failure_reason",
+        "mcp_server/tools/index_handlers.py:function:_purge_index_dir",
+        "mcp_server/tools/index_handlers.py:method:handle_clear_index",
+        "mcp_server/tools/index_handlers.py:method:handle_delete_project",
+        "search/index_write_lock.py:function:is_lock_violation"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/index_handlers.py:function:_delete_failure_reason"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/index_handlers.py:function:_delete_failure_reason": 3,
+        "mcp_server/tools/index_handlers.py:function:_purge_index_dir": 2,
+        "mcp_server/tools/index_handlers.py:method:handle_clear_index": 2,
+        "mcp_server/tools/index_handlers.py:method:handle_delete_project": 2,
+        "search/index_write_lock.py:function:is_lock_violation": 2
+      },
+      "source_commit": "aa30809d"
+    },
+    {
+      "id": "H142",
+      "query": "the config file vanishes during a session and the server falls back to default settings",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "search/config.py:method:SearchConfigManager._reuse_last_file_layer",
+        "search/config.py:method:SearchConfigManager.load_config",
+        "search/config.py:function:_layer_key",
+        "search/config.py:function:_file_mtime"
+      ],
+      "expected_primary": [
+        "search/config.py:method:SearchConfigManager._reuse_last_file_layer",
+        "search/config.py:method:SearchConfigManager.load_config"
+      ],
+      "relevance_grades": {
+        "search/config.py:method:SearchConfigManager._reuse_last_file_layer": 3,
+        "search/config.py:method:SearchConfigManager.load_config": 3,
+        "search/config.py:function:_layer_key": 2,
+        "search/config.py:function:_file_mtime": 2
+      },
+      "source_commit": "6fd1be83"
+    },
+    {
+      "id": "H143",
+      "query": "saving the config copies the active project's override values into the global config file",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/config.py:method:SearchConfigManager._prune_active_overrides",
+        "search/config.py:method:SearchConfigManager._read_global_config_dict",
+        "search/config.py:method:SearchConfigManager.save_config"
+      ],
+      "expected_primary": [
+        "search/config.py:method:SearchConfigManager._prune_active_overrides"
+      ],
+      "relevance_grades": {
+        "search/config.py:method:SearchConfigManager._prune_active_overrides": 3,
+        "search/config.py:method:SearchConfigManager._read_global_config_dict": 2,
+        "search/config.py:method:SearchConfigManager.save_config": 2
+      },
+      "source_commit": "f86dced5"
+    },
+    {
+      "id": "H144",
+      "query": "force reindex shows a raw WinError 32 traceback when the database file is open elsewhere",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "search/index_write_lock.py:decorated_definition:files_in_use_guard",
+        "search/index_write_lock.py:class:IndexFilesInUseError",
+        "search/index_write_lock.py:function:files_in_use_error",
+        "search/indexer.py:function:probe_metadata_deletable"
+      ],
+      "expected_primary": [
+        "search/index_write_lock.py:decorated_definition:files_in_use_guard",
+        "search/index_write_lock.py:class:IndexFilesInUseError"
+      ],
+      "relevance_grades": {
+        "search/index_write_lock.py:decorated_definition:files_in_use_guard": 3,
+        "search/index_write_lock.py:class:IndexFilesInUseError": 3,
+        "search/index_write_lock.py:function:files_in_use_error": 2,
+        "search/indexer.py:function:probe_metadata_deletable": 2
+      },
+      "source_commit": "4c5d187e"
+    },
+    {
+      "id": "H145",
+      "query": "clearing the index with a locked metadata database leaves the index half deleted",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/indexer.py:function:probe_metadata_deletable",
+        "search/indexer.py:method:CodeIndexManager.clear_index",
+        "search/index_sync.py:method:IndexSynchronizer.clear_index"
+      ],
+      "expected_primary": [
+        "search/indexer.py:function:probe_metadata_deletable"
+      ],
+      "relevance_grades": {
+        "search/indexer.py:function:probe_metadata_deletable": 3,
+        "search/indexer.py:method:CodeIndexManager.clear_index": 2,
+        "search/index_sync.py:method:IndexSynchronizer.clear_index": 2
+      },
+      "source_commit": "97eb9ce5"
+    },
+    {
+      "id": "H146",
+      "query": "automatic index recovery keeps retrying against the same locked file on every request",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/incremental_indexer.py:method:IncrementalIndexer._attempt_recovery",
+        "search/incremental_indexer.py:method:IncrementalIndexer._recovery_marker_path",
+        "search/incremental_indexer.py:method:IncrementalIndexer._clear_recovery_marker"
+      ],
+      "expected_primary": [
+        "search/incremental_indexer.py:method:IncrementalIndexer._attempt_recovery",
+        "search/incremental_indexer.py:method:IncrementalIndexer._recovery_marker_path"
+      ],
+      "relevance_grades": {
+        "search/incremental_indexer.py:method:IncrementalIndexer._attempt_recovery": 3,
+        "search/incremental_indexer.py:method:IncrementalIndexer._recovery_marker_path": 3,
+        "search/incremental_indexer.py:method:IncrementalIndexer._clear_recovery_marker": 2
+      },
+      "source_commit": "97eb9ce5"
+    },
+    {
+      "id": "H147",
+      "query": "two processes reindexing the same project at the same time corrupt the index storage",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "search/index_write_lock.py:decorated_definition:index_write_lock",
+        "search/index_write_lock.py:function:is_index_write_locked",
+        "search/index_write_lock.py:class:IndexWriteLockHeldError",
+        "search/incremental_indexer.py:method:IncrementalIndexer.incremental_index",
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator._maybe_reindex"
+      ],
+      "expected_primary": [
+        "search/index_write_lock.py:decorated_definition:index_write_lock"
+      ],
+      "relevance_grades": {
+        "search/index_write_lock.py:decorated_definition:index_write_lock": 3,
+        "search/index_write_lock.py:function:is_index_write_locked": 2,
+        "search/index_write_lock.py:class:IndexWriteLockHeldError": 2,
+        "search/incremental_indexer.py:method:IncrementalIndexer.incremental_index": 2,
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator._maybe_reindex": 2
+      },
+      "source_commit": "0754df26"
+    },
+    {
+      "id": "H148",
+      "query": "building the file-hash tree for change detection is slow on large repositories",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "merkle/merkle_dag.py:method:MerkleDAG._dir_node",
+        "merkle/merkle_dag.py:method:MerkleDAG._entry_node",
+        "merkle/merkle_dag.py:method:MerkleDAG._file_node",
+        "merkle/merkle_dag.py:method:MerkleDAG.build"
+      ],
+      "expected_primary": [
+        "merkle/merkle_dag.py:method:MerkleDAG._dir_node",
+        "merkle/merkle_dag.py:method:MerkleDAG._entry_node"
+      ],
+      "relevance_grades": {
+        "merkle/merkle_dag.py:method:MerkleDAG._dir_node": 3,
+        "merkle/merkle_dag.py:method:MerkleDAG._entry_node": 3,
+        "merkle/merkle_dag.py:method:MerkleDAG._file_node": 2,
+        "merkle/merkle_dag.py:method:MerkleDAG.build": 2
+      },
+      "source_commit": "92829129"
+    },
+    {
+      "id": "H149",
+      "query": "full reindex fails a position check because metadata has one row fewer than the vectors",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "search/index_write_stage.py:decorated_definition:IndexWriteStage._drop_duplicate_chunk_ids",
+        "search/index_write_stage.py:method:IndexWriteStage.add_to_index"
+      ],
+      "expected_primary": [
+        "search/index_write_stage.py:decorated_definition:IndexWriteStage._drop_duplicate_chunk_ids"
+      ],
+      "relevance_grades": {
+        "search/index_write_stage.py:decorated_definition:IndexWriteStage._drop_duplicate_chunk_ids": 3,
+        "search/index_write_stage.py:method:IndexWriteStage.add_to_index": 2
+      },
+      "source_commit": "6bf1240a"
+    },
+    {
+      "id": "H150",
+      "query": "the GPU memory cap for embedding collapses on an almost free GPU",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "embeddings/vram_budget.py:function:compute_effective_vram_cap",
+        "embeddings/vram_budget.py:function:_own_cached_vram_gb",
+        "embeddings/vram_budget.py:function:calculate_optimal_batch_size"
+      ],
+      "expected_primary": [
+        "embeddings/vram_budget.py:function:compute_effective_vram_cap",
+        "embeddings/vram_budget.py:function:_own_cached_vram_gb"
+      ],
+      "relevance_grades": {
+        "embeddings/vram_budget.py:function:compute_effective_vram_cap": 3,
+        "embeddings/vram_budget.py:function:_own_cached_vram_gb": 3,
+        "embeddings/vram_budget.py:function:calculate_optimal_batch_size": 2
+      },
+      "source_commit": "8d48ee28"
+    },
+    {
+      "id": "H151",
+      "query": "calling a tool without a required argument gives a bare KeyError",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "mcp_server/server.py:method:handle_call_tool"
+      ],
+      "expected_primary": [
+        "mcp_server/server.py:method:handle_call_tool"
+      ],
+      "relevance_grades": {
+        "mcp_server/server.py:method:handle_call_tool": 3
+      },
+      "source_commit": "6ee57f41"
+    },
+    {
+      "id": "H152",
+      "query": "POST requests to the old SSE endpoint path fail",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "mcp_server/server.py:function:asgi_app",
+        "mcp_server/server.py:function:handle_mcp",
+        "mcp_server/server.py:function:handle_sse"
+      ],
+      "expected_primary": [
+        "mcp_server/server.py:function:asgi_app"
+      ],
+      "relevance_grades": {
+        "mcp_server/server.py:function:asgi_app": 3,
+        "mcp_server/server.py:function:handle_mcp": 2,
+        "mcp_server/server.py:function:handle_sse": 2
+      },
+      "source_commit": "c69e4bd9"
+    },
+    {
+      "id": "H153",
+      "query": "how do I limit which tools the MCP server advertises with an environment variable",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "mcp_server/tool_specs.py:function:_tool_allowlist",
+        "mcp_server/tool_specs.py:function:build_tool_list",
+        "mcp_server/tool_specs.py:function:_advanced_tools_enabled"
+      ],
+      "expected_primary": [
+        "mcp_server/tool_specs.py:function:_tool_allowlist",
+        "mcp_server/tool_specs.py:function:build_tool_list"
+      ],
+      "relevance_grades": {
+        "mcp_server/tool_specs.py:function:_tool_allowlist": 3,
+        "mcp_server/tool_specs.py:function:build_tool_list": 3,
+        "mcp_server/tool_specs.py:function:_advanced_tools_enabled": 2
+      },
+      "source_commit": "756b93de"
+    },
+    {
+      "id": "H154",
+      "query": "the filter-semantics warning appears on every incremental index run for older projects",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "mcp_server/tools/index_handlers.py:function:_is_filter_semantics_stale",
+        "mcp_server/storage_manager.py:function:stamp_filter_semantics_version",
+        "mcp_server/storage_manager.py:function:update_project_filters",
+        "mcp_server/storage_manager.py:function:check_filter_semantics_migration",
+        "mcp_server/tools/index_handlers.py:method:_run_index_directory"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/index_handlers.py:function:_is_filter_semantics_stale",
+        "mcp_server/storage_manager.py:function:stamp_filter_semantics_version"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/index_handlers.py:function:_is_filter_semantics_stale": 3,
+        "mcp_server/storage_manager.py:function:stamp_filter_semantics_version": 3,
+        "mcp_server/storage_manager.py:function:update_project_filters": 2,
+        "mcp_server/storage_manager.py:function:check_filter_semantics_migration": 2,
+        "mcp_server/tools/index_handlers.py:method:_run_index_directory": 2
+      },
+      "source_commit": "3207607f"
+    },
+    {
+      "id": "H155",
+      "query": "deleting the memory-mapped vector file fails on Windows with a file-in-use error",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/mmap_vectors.py:function:_open_shared_delete",
+        "search/mmap_vectors.py:method:MmapVectorStorage.save",
+        "search/mmap_vectors.py:method:MmapVectorStorage.load"
+      ],
+      "expected_primary": [
+        "search/mmap_vectors.py:function:_open_shared_delete",
+        "search/mmap_vectors.py:method:MmapVectorStorage.save"
+      ],
+      "relevance_grades": {
+        "search/mmap_vectors.py:function:_open_shared_delete": 3,
+        "search/mmap_vectors.py:method:MmapVectorStorage.save": 3,
+        "search/mmap_vectors.py:method:MmapVectorStorage.load": 2
+      },
+      "source_commit": "155e09da"
+    },
+    {
+      "id": "H156",
+      "query": "an exclude directory pattern does not win over an include pattern during indexing",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/filters.py:class:PathFilter",
+        "search/filters.py:method:PathFilter.should_index_file",
+        "search/filters.py:method:PathFilter.should_traverse_dir",
+        "search/filters.py:method:PathFilter._classify",
+        "search/filters.py:function:_combine"
+      ],
+      "expected_primary": [
+        "search/filters.py:class:PathFilter",
+        "search/filters.py:method:PathFilter.should_index_file"
+      ],
+      "relevance_grades": {
+        "search/filters.py:class:PathFilter": 3,
+        "search/filters.py:method:PathFilter.should_index_file": 3,
+        "search/filters.py:method:PathFilter.should_traverse_dir": 2,
+        "search/filters.py:method:PathFilter._classify": 2,
+        "search/filters.py:function:_combine": 2
+      },
+      "source_commit": "c95730da"
+    },
+    {
+      "id": "H157",
+      "query": "no warning when an include or exclude directory filter matches no files",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._warn_unmatched_patterns",
+        "search/filters.py:method:PathFilter.unmatched_patterns"
+      ],
+      "expected_primary": [
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._warn_unmatched_patterns",
+        "search/filters.py:method:PathFilter.unmatched_patterns"
+      ],
+      "relevance_grades": {
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._warn_unmatched_patterns": 3,
+        "search/filters.py:method:PathFilter.unmatched_patterns": 3
+      },
+      "source_commit": "c95730da"
+    },
+    {
+      "id": "H158",
+      "query": "metadata access crashes with a NoneType error after the index manager is closed",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/indexer.py:method:CodeIndexManager.close",
+        "search/hybrid_searcher.py:method:HybridSearcher.close_metadata_connections",
+        "search/indexer.py:decorated_definition:CodeIndexManager.metadata_store"
+      ],
+      "expected_primary": [
+        "search/indexer.py:method:CodeIndexManager.close"
+      ],
+      "relevance_grades": {
+        "search/indexer.py:method:CodeIndexManager.close": 3,
+        "search/hybrid_searcher.py:method:HybridSearcher.close_metadata_connections": 2,
+        "search/indexer.py:decorated_definition:CodeIndexManager.metadata_store": 2
+      },
+      "source_commit": "9aeb7a64"
+    },
+    {
+      "id": "H159",
+      "query": "keyword search keeps using a stale BM25 index after it is resynced from the dense index",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense",
+        "search/hybrid_searcher.py:method:HybridSearcher.resync_bm25_from_dense"
+      ],
+      "expected_primary": [
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense"
+      ],
+      "relevance_grades": {
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense": 3,
+        "search/hybrid_searcher.py:method:HybridSearcher.resync_bm25_from_dense": 2
+      },
+      "source_commit": "66e31c0e"
     }
   ]
 }
