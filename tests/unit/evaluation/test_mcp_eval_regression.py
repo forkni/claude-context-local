@@ -54,21 +54,23 @@ GATED_CATEGORIES = {"A", "B", "C", "E"}
 # module docstring and raw_mcp_results_hybrid.json's own known_gaps entry.
 KNOWN_HYBRID_GAPS = {"Q72"}
 
-# Pinned 2026-07-31 baselines. Small tolerance for float noise; not
-# threshold-gated -- this is scoring-path drift detection, not a quality gate.
+# Pinned baselines. Small tolerance for float noise; not threshold-gated --
+# this is scoring-path drift detection, not a quality gate. Re-pinned
+# 2026-11-22 for the golden label audit (evaluation/CANON_20261122_LABEL_AUDIT.md):
+# the frozen snapshots are unchanged, only the labels they are scored against.
 BM25_BASELINE = {
-    "mrr": 0.2275,
-    "recall@5": 0.2356,
-    "recall@10": 0.3505,
-    "hit_rate@5": 0.4805,
-    "ndcg@5": 0.2141,
+    "mrr": 0.2301,
+    "recall@5": 0.2384,
+    "recall@10": 0.3502,
+    "hit_rate@5": 0.4935,
+    "ndcg@5": 0.2160,
 }
 SEMANTIC_BASELINE = {
-    "mrr": 0.7756,
-    "recall@5": 0.6603,
-    "recall@10": 0.7244,
+    "mrr": 0.8141,
+    "recall@5": 0.6808,
+    "recall@10": 0.7385,
     "hit_rate@5": 1.0,
-    "ndcg@5": 0.6715,
+    "ndcg@5": 0.7031,
 }
 TOLERANCE = 0.005
 
