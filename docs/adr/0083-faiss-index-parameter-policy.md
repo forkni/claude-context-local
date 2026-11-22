@@ -126,3 +126,28 @@ IVF on the 17,197-vector real corpus (`-1` padding was 0 everywhere; imbalance 1
 - `docs/adr/0001-faiss-as-vector-index-backend.md`'s 2026-09-30 amendment (10,000 / `nprobe = 16`)
   is superseded by this record; ADR-0082's index-kind invariant (kind frozen by the first batch)
   is unchanged.
+
+## Addendum (2026-11-22): no new IVF indexes
+
+`IVF_MIN_VECTORS` is now `None`: `index_kind_for` returns `"flat"` at every size, so the
+dense leg is always exact. Measured on the largest real index (63,258 x 1024-d, F2LLM-v2-0.6B,
+this workstation, 200 single queries, k = 210):
+
+| Index | 8 threads p50 / p95 | 28 threads p50 / p95 | Build |
+|---|---|---|---|
+| `IndexFlatIP` | 17.1 / 32.6 ms | 19.9 / 33.5 ms | 0.09 s |
+| `IndexIVFFlat`, nlist 1006, nprobe 503 | 17.4 / 20.6 ms | 18.5 / 22.5 ms | 2.26 s |
+
+- At this ADR's own `nprobe` (half the lists) IVF only halves the scan, so its median gain is
+  nil; it keeps a ~12 ms p95 advantage, which is small against the rerank stage.
+- IVF recall@210 against exact search was 0.9997 at the production `nprobe`; flat is 1.0.
+- IVF training ran on every rebuild (`remove_positions`): about 2 s on the two IVF projects.
+  An e-means replacement for that training (arXiv 2611.09501) gave the same recall and time.
+- The 50K "~5 ms flat" figure above does not reproduce on this machine for one query at
+  63K; the measured value is the table.
+
+Existing IVF indexes still load and search through `_configure_ivf`; their next rebuild makes
+them flat. The IVF code path stays until no IVF index is left on disk; then it can be deleted.
+Setting `IVF_MIN_VECTORS` to an int restores the size-based switch. Revisit when one index
+passes ~1M vectors, or if exact search on the GPU (torch fp16 matmul measured 0.33 ms p50 at
+63K) is adopted instead.

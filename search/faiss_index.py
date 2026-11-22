@@ -36,14 +36,19 @@ except ImportError:
 MMAP_THRESHOLD = 10000
 
 # Flat/IVF policy (ADR-0083; measured by scripts/benchmark/probe_faiss_index_params.py,
-# evaluation/FAISS_INDEX_PARAMS_20261005.md). Exact search is preferred until it
-# is genuinely slow: flat IndexFlatIP at 50K x 1024-d vectors is ~5 ms for one
-# query and ~55 ms for a 35-query multi-hop batch; at 17K it is 3-4 ms, which
-# IVF cannot beat at equal recall. Real code embeddings are far less clustered
-# than synthetic data: reaching recall@210 >= 0.99 against exact search needs
-# about half of the inverted lists probed (synthetic needs 3%), so the old
-# fixed nlist=100 / nprobe=16 scored recall@210 = 0.94 on a real corpus.
-IVF_MIN_VECTORS = 50_000
+# evaluation/FAISS_INDEX_PARAMS_20261005.md). Real code embeddings are far less
+# clustered than synthetic data: reaching recall@210 >= 0.99 against exact
+# search needs about half of the inverted lists probed (synthetic needs 3%).
+#
+# ``None`` = new indexes are always flat (exact), whatever their size (ADR-0083
+# addendum, 2026-11-22). At half the lists probed, IVF only halves the scan: on
+# the largest real index (63,258 x 1024-d, 8 threads) single-query p50 was
+# 17.1 ms flat vs 17.4 ms IVF (p95 32.6 vs 20.6 ms), while IVF training added
+# 2.26 s to every rebuild against 0.09 s for flat, and its recall was 0.9997,
+# not 1.0. Existing IVF indexes still load and search; their next rebuild
+# (``remove_positions``) makes them flat. Set an int to restore the old
+# size-based switch (50_000 before the addendum).
+IVF_MIN_VECTORS: int | None = None
 
 # FAISS warns below this many training points per centroid; nlist is capped
 # so that every centroid has at least this many.
@@ -64,8 +69,11 @@ def index_kind_for(vector_count: int) -> str:
     The single owner of the flat/IVF decision. Consulted wherever the dense
     index is (re)created from a known vector set: the first batch into an empty
     index and every rebuild (a removal pass), so the kind follows size rather
-    than the size of whichever batch happened to arrive first.
+    than the size of whichever batch happened to arrive first. Always
+    ``"flat"`` while ``IVF_MIN_VECTORS`` is ``None`` (the default).
     """
+    if IVF_MIN_VECTORS is None:
+        return "flat"
     return "ivf" if vector_count > IVF_MIN_VECTORS else "flat"
 
 

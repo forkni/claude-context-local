@@ -947,13 +947,25 @@ class TestIndexKindFollowsSize:
         assert index_kind_for(self.LIMIT) == "flat"
         assert index_kind_for(self.LIMIT + 1) == "ivf"
 
-    def test_default_threshold_is_fifty_thousand(self, monkeypatch):
+    def test_default_is_always_flat(self, monkeypatch):
+        """ADR-0083 addendum: new indexes are exact at any size by default."""
         from search import faiss_index
 
         monkeypatch.undo()
-        assert faiss_index.IVF_MIN_VECTORS == 50_000
-        assert faiss_index.index_kind_for(50_000) == "flat"
-        assert faiss_index.index_kind_for(50_001) == "ivf"
+        assert faiss_index.IVF_MIN_VECTORS is None
+        assert faiss_index.index_kind_for(50_001) == "flat"
+        assert faiss_index.index_kind_for(10_000_000) == "flat"
+
+    def test_default_rebuild_turns_legacy_ivf_flat(self, tmp_path, monkeypatch):
+        """A legacy on-disk IVF index becomes flat at its next rebuild."""
+        monkeypatch.undo()
+        index = self._built(tmp_path, 200, "ivf")
+
+        assert index.remove_positions({0})
+
+        assert type(index.index).__name__ == "IndexFlatIP"
+        assert index.ntotal == 199
+        index.close()
 
     def test_rebuild_keeps_ivf_when_still_large(self, tmp_path):
         index = self._built(tmp_path, 200, "ivf")
