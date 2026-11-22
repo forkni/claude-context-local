@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **New indexes are always exact flat search** (`IVF_MIN_VECTORS` defaults to `None`, ADR-0083
+  addendum) — on the 63K-vector index, flat matched IVF at p50 (17.1 vs 17.4 ms) and drops the
+  2.26 s IVF training from every rebuild. Existing IVF indexes still load and become flat at
+  their next rebuild.
+- **Golden label audit, canon re-pinned** (`evaluation/CANON_20261122_LABEL_AUDIT.md`) — 9
+  rank-1 chunks judged correct were added at grade 3 and 2 wrong labels set to grade 0. Same
+  index and result lists; MRR 63q 0.8273 -> 0.8458, 133q 0.6718 -> 0.7162, F-via-similar
+  0.8983. Earlier pins are not comparable with the new labels.
 - **License is now GPL-3.0-only** (`LICENSE`, `NOTICE`, `pyproject.toml`, README,
   `CONTRIBUTING.md`) — this project is a modified version of
   [FarhanAliRaza/claude-context-local](https://github.com/FarhanAliRaza/claude-context-local),

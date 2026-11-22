@@ -4,6 +4,7 @@
     "source": "benchmark_results/sscg_evaluation/ground_truth.md",
     "labeled_by": "Claude Sonnet 4.5 (Q01-Q35), Claude Opus 4.8 (Q36-Q67)",
     "labeled_date": "2026-06-24",
+    "label_audit_20261122": "Q34 +FaissVectorIndex.add, Q55 +ChangeDetector (grade 3: rank-1 chunks a reviewer judged correct); Q04 -CodeIndexManager.validate_index_consistency (grade 0: checks counts, not id format). See evaluation/CANON_20261122_LABEL_AUDIT.md",
     "normalization": "Chunk IDs have line-range portions stripped (e.g., 'file.py:10-20:type:name' -> 'file.py:type:name') for stability across code churn",
     "relevance_scale": "0=not_relevant, 1=marginal, 2=relevant, 3=highly_relevant",
     "expected": "chunk IDs with label >= 2 (used for Recall@k, NDCG@k)",
@@ -216,7 +217,6 @@
       "expected": [
         "search/graph_integration.py:function:is_chunk_id",
         "search/chunk_id.py:function:is_chunk_id",
-        "search/indexer.py:method:CodeIndexManager.validate_index_consistency",
         "search/metadata.py:decorated_definition:MetadataStore.normalize_chunk_id",
         "chunking/multi_language_chunker.py:method:MultiLanguageChunker._create_chunk_id"
       ],
@@ -229,7 +229,7 @@
       "relevance_grades": {
         "search/graph_integration.py:function:is_chunk_id": 3,
         "search/chunk_id.py:function:is_chunk_id": 3,
-        "search/indexer.py:method:CodeIndexManager.validate_index_consistency": 2,
+        "search/indexer.py:method:CodeIndexManager.validate_index_consistency": 0,
         "search/metadata.py:decorated_definition:MetadataStore.normalize_chunk_id": 3,
         "search/symbol_cache.py:method:SymbolHashCache.contains": 1,
         "search/symbol_cache.py:method:SymbolHashCache.get_by_chunk_id": 1,
@@ -443,18 +443,21 @@
       "expected": [
         "search/faiss_index.py:method:FaissVectorIndex.__init__",
         "search/faiss_index.py:class:FaissVectorIndex",
-        "search/indexer.py:class:CodeIndexManager"
+        "search/indexer.py:class:CodeIndexManager",
+        "search/faiss_index.py:method:FaissVectorIndex.add"
       ],
       "expected_primary": [
         "search/faiss_index.py:method:FaissVectorIndex.__init__",
-        "search/faiss_index.py:class:FaissVectorIndex"
+        "search/faiss_index.py:class:FaissVectorIndex",
+        "search/faiss_index.py:method:FaissVectorIndex.add"
       ],
       "relevance_grades": {
         "search/faiss_index.py:method:FaissVectorIndex.__init__": 3,
         "search/faiss_index.py:class:FaissVectorIndex": 3,
         "search/indexer.py:class:CodeIndexManager": 2,
         "search/indexer.py:method:CodeIndexManager.get_chunk_by_id": 0,
-        "search/bm25_index.py:method:BM25Index.validate_index_consistency": 0
+        "search/bm25_index.py:method:BM25Index.validate_index_consistency": 0,
+        "search/faiss_index.py:method:FaissVectorIndex.add": 3
       }
     },
     {
@@ -882,16 +885,18 @@
       "expected": [
         "merkle/merkle_dag.py:class:MerkleDAG",
         "merkle/merkle_dag.py:method:MerkleDAG.build",
-        "merkle/merkle_dag.py:method:MerkleDAG.hash_file"
+        "merkle/merkle_dag.py:method:MerkleDAG.hash_file",
+        "merkle/change_detector.py:class:ChangeDetector"
       ],
       "expected_primary": [
-        "merkle/merkle_dag.py:class:MerkleDAG"
+        "merkle/merkle_dag.py:class:MerkleDAG",
+        "merkle/change_detector.py:class:ChangeDetector"
       ],
       "relevance_grades": {
         "merkle/merkle_dag.py:class:MerkleDAG": 3,
         "merkle/merkle_dag.py:method:MerkleDAG.build": 2,
         "merkle/merkle_dag.py:method:MerkleDAG.hash_file": 2,
-        "merkle/change_detector.py:class:ChangeDetector": 1,
+        "merkle/change_detector.py:class:ChangeDetector": 3,
         "merkle/merkle_dag.py:method:MerkleDAG.build_node": 1
       }
     },

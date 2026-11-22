@@ -490,7 +490,24 @@ Relevance grades: 3 = primary target, 2 = expected, 1 = acceptable/hard-negative
 
 **Runner**: `scripts/benchmark/run_sscg_benchmark.py` (shell wrapper: `scripts/benchmark/run_benchmark.sh`)
 
-### Results (2026-10-19, hybrid-only, k=10, deterministic, cuDNN attention for the Jina listwise reranker — current canon-of-record)
+### Results (2026-11-22, label audit — current canon-of-record)
+
+Provenance: `evaluation/CANON_20261122_LABEL_AUDIT.md`, HEAD `ae0feb7e`, index of 250 files /
+3,380 chunks, same runner and flags as below, torch 2.13.0+cu130. The only change from the
+2026-11-18 pin is the golden labels: 9 rank-1 chunks a reviewer judged correct were added at
+grade 3 (Q34, Q55, Q114, Q117, Q128, H003, H032, H064, H066) and 2 wrong labels set to grade 0
+(Q04, Q117). On one index, every result list is identical under the old and new labels; old
+labels score 0.8273 / 0.6718, new labels below. 63q r1 == r2 bit-identical.
+
+| Dataset | Queries | MRR | Recall@5 | Recall@10 | Recall@20 | NDCG@5 | pool_hit_rate |
+|---|---|---|---|---|---|---|---|
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8458** | 0.6509 | 0.7686 | 0.8539 | — | 1.0000 |
+| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.7162** | 0.6702 | 0.7951 | 0.8544 | — | 0.9624 |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.8983** | 0.6479 | 0.7748 | 0.8282 | — | 1.0000 |
+
+Not comparable with earlier pins: compare a new arm against these labels only.
+
+### Results (2026-10-19, hybrid-only, k=10, deterministic, cuDNN attention for the Jina listwise reranker — superseded 2026-11-22)
 
 Provenance: `evaluation/CANON_20261019_CUDNN_ATTN.md` (protocol, gates, label audit and movers in `evaluation/ATTN_BACKEND_AB_20261018.md`, decision in ADR-0088), `scripts/benchmark/run_sscg_benchmark.py --project-path .`, `PYTHONHASHSEED=0`, `CLAUDE_AUTO_REINDEX=0`, HEAD `3bb9d7bad25d82233befb9f5143c4ff10d497e52` index of 3,283 chunks, Jina reranker pinned at `d7d7e73b`. Torch's SDPA dispatch ran the Jina listwise forward on the math kernel (flash absent on Windows, memory-efficient rejects the GQA call), which materialised the full L x L score matrix per layer: 95-99% of search time and a 7-11 GB peak. `reranker.listwise_attention_backend` now defaults to `"cudnn"` (`sdpa_kernel([CUDNN_ATTENTION, MATH], set_priority=True)`): rerank call 1.3 s -> 0.13 s, peak allocation 8.2 -> 2.8 GB. Pre-registered A/B against the math control on one index: adoption CIs **PASS** (no negative-excluding CI on MRR / recall@10 / recall@20 on any view; 133q MRR +0.0105 [+0.0006, +0.0231] excludes 0), `pool_hit_rate` non-decreasing after the H012/H004 label fix (133q 127 -> 128 of 133; 63q and F 1.0 both kernels), 63q r1/r2 bit-identical, no non-finite score, 8 GB cap clean.
 
