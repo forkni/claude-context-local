@@ -16,8 +16,6 @@ from search.faiss_index import (
     FaissVectorIndex,
     estimate_index_memory_usage,
     get_available_memory,
-    ivf_nlist_for,
-    ivf_nprobe_for,
 )
 
 
@@ -88,48 +86,20 @@ class TestFaissVectorIndexBasicOperations:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
 
-            index.create(768, "flat")
+            index.create(768)
 
             assert index.index is not None
             assert index.dimension == 768
             assert index.ntotal == 0
             assert len(index.chunk_ids) == 0
-
-    def test_create_ivf_index(self):
-        """Test creating an IVF index."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            index_path = Path(tmpdir) / "test.index"
-            index = FaissVectorIndex(index_path)
-
-            index.create(768, "ivf", expected_count=60_000)
-
-            assert index.index is not None
-            assert index.dimension == 768
-            assert index.ntotal == 0
-            assert index.index.nlist == ivf_nlist_for(60_000)
-            assert index.index.nprobe == ivf_nprobe_for(index.index.nlist, 60_000)
-            # IndexIVFFlat defaults to METRIC_L2 when the metric is omitted;
-            # scores must be inner products like the flat index.
-            import faiss
-
-            assert index.index.metric_type == faiss.METRIC_INNER_PRODUCT
-            assert index.describe()["metric"] == "ip"
-
-    def test_create_invalid_index_type(self):
-        """Test creating index with invalid type raises ValueError."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            index_path = Path(tmpdir) / "test.index"
-            index = FaissVectorIndex(index_path)
-
-            with pytest.raises(ValueError, match="Unsupported index type"):
-                index.create(768, "invalid_type")
+            assert type(index.index).__name__ == "IndexFlatIP"
 
     def test_add_and_search(self):
         """Test adding vectors and searching."""
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             # Generate deterministic embeddings
             rng = np.random.RandomState(42)
@@ -170,7 +140,7 @@ class TestFaissVectorIndexBasicOperations:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             query = np.random.randn(768).astype(np.float32)
 
@@ -182,7 +152,7 @@ class TestFaissVectorIndexBasicOperations:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             # Add vectors
             rng = np.random.RandomState(42)
@@ -215,7 +185,7 @@ class TestFaissVectorIndexPersistence:
 
             # Create and populate index
             index1 = FaissVectorIndex(index_path)
-            index1.create(768, "flat")
+            index1.create(768)
 
             rng = np.random.RandomState(42)
             embeddings = rng.randn(10, 768).astype(np.float32)
@@ -271,7 +241,7 @@ class TestFaissVectorIndexPersistence:
 
             # Create index with 768 dimensions
             index1 = FaissVectorIndex(index_path)
-            index1.create(768, "flat")
+            index1.create(768)
             rng = np.random.RandomState(42)
             embeddings = rng.randn(5, 768).astype(np.float32)
             chunk_ids = [f"chunk_{i}" for i in range(5)]
@@ -305,7 +275,7 @@ class TestFaissVectorIndexGPU:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             # Mock GPU as unavailable
             with patch.object(FaissVectorIndex, "gpu_is_available", return_value=False):
@@ -318,7 +288,7 @@ class TestFaissVectorIndexGPU:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             # Should be on CPU by default (unless GPU auto-move happened)
             # Force CPU state
@@ -336,7 +306,7 @@ class TestFaissVectorIndexMemory:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             # Add some vectors
             rng = np.random.RandomState(42)
@@ -364,7 +334,7 @@ class TestFaissVectorIndexMemory:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             # Add vectors
             rng = np.random.RandomState(42)
@@ -390,7 +360,7 @@ class TestFaissVectorIndexClear:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             # Add vectors and save
             rng = np.random.RandomState(42)
@@ -429,7 +399,7 @@ class TestFaissVectorIndexClear:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(8, "flat")
+            index.create(8)
 
             rng = np.random.RandomState(42)
             embeddings = rng.randn(3, 8).astype(np.float32)
@@ -487,7 +457,7 @@ class TestFaissVectorIndexClear:
             # save() writes above MMAP_THRESHOLD -- built directly so the
             # test doesn't need 10,000 real vectors.
             seed = FaissVectorIndex(index_path)
-            seed.create(8, "flat")
+            seed.create(8)
             seed.add(embeddings, chunk_ids)
             # pyrefly: ignore [missing-attribute]
             faiss.write_index(seed.index, str(seed.index_path))
@@ -551,7 +521,7 @@ class TestFaissVectorIndexClear:
             chunk_ids = [f"chunk_{i}" for i in range(3)]
 
             seed = FaissVectorIndex(index_path)
-            seed.create(8, "flat")
+            seed.create(8)
             seed.add(embeddings, chunk_ids)
             # pyrefly: ignore [missing-attribute]
             faiss.write_index(seed.index, str(seed.index_path))
@@ -579,20 +549,16 @@ class TestFaissVectorIndexClear:
             instance1.close()
 
 
-class TestFaissVectorIndexIVFReconstruct:
-    """reconstruct() on IVF indexes across the server's save/load lifecycle.
+class TestFaissVectorIndexMmapReattach:
+    """save() at or above MMAP_THRESHOLD re-attaches the instance's own mapping.
 
-    Regression: ``save()`` at or above MMAP_THRESHOLD released this instance's
-    mmap mapping (``close()``) and rewrote the file through a local
-    ``MmapVectorStorage`` without re-attaching it. ``reconstruct()`` then fell
-    through to FAISS ``reconstruct()``, which an ``IndexIVFFlat`` cannot serve
-    without a direct map ("direct map not initialized") -- so multi-hop hop-2
-    expansion failed on every IVF project after any in-process reindex, until
-    the server restarted. Flat indexes were unaffected (no direct map needed).
+    Regression: ``save()`` released this instance's mmap mapping (``close()``)
+    and rewrote the file through a local ``MmapVectorStorage`` without
+    re-attaching it, so ``reconstruct()`` fell back to FAISS until restart.
     """
 
     DIM = 8
-    N = 400  # ivf_nlist_for(400) == 10 centroids; plenty of training points
+    N = 400
 
     @pytest.fixture(autouse=True)
     def _low_mmap_threshold(self, monkeypatch):
@@ -608,46 +574,11 @@ class TestFaissVectorIndexIVFReconstruct:
             [f"chunk_{i}" for i in range(self.N)],
         )
 
-    def _assert_reconstructs(self, index: FaissVectorIndex, source: np.ndarray):
-        """reconstruct() returns the L2-normalized stored vector at any position."""
-        for pos in (0, self.N // 2, self.N - 1):
-            expected = source[pos] / np.linalg.norm(source[pos])
-            np.testing.assert_allclose(index.reconstruct(pos), expected, atol=1e-5)
-
-    def test_reconstruct_after_fresh_ivf_save(self, tmp_path):
-        """create -> add -> save -> reconstruct in the same process."""
-        embeddings, chunk_ids = self._embeddings()
-        index = FaissVectorIndex(tmp_path / "code.index")
-        index.create(self.DIM, "ivf", expected_count=self.N)
-        index.add(embeddings, chunk_ids)
-        index.save()
-
-        self._assert_reconstructs(index, embeddings)
-        index.close()
-
-    def test_reconstruct_after_load_then_save(self, tmp_path):
-        """The live server's lifecycle: load from disk, then a reindex saves."""
-        embeddings, chunk_ids = self._embeddings()
-        seed = FaissVectorIndex(tmp_path / "code.index")
-        seed.create(self.DIM, "ivf", expected_count=self.N)
-        seed.add(embeddings, chunk_ids)
-        seed.save()
-        seed.close()
-
-        server = FaissVectorIndex(tmp_path / "code.index")
-        assert server.load()
-        self._assert_reconstructs(server, embeddings)
-
-        server.save()  # auto-reindex / incremental reindex writes again
-
-        self._assert_reconstructs(server, embeddings)
-        server.close()
-
     def test_save_reattaches_mmap_storage(self, tmp_path):
         """After an at-or-above-threshold save the instance maps its own file."""
         embeddings, chunk_ids = self._embeddings()
         index = FaissVectorIndex(tmp_path / "code.index")
-        index.create(self.DIM, "flat")
+        index.create(self.DIM)
         index.add(embeddings, chunk_ids)
         index.save()
 
@@ -655,46 +586,6 @@ class TestFaissVectorIndexIVFReconstruct:
         assert index._mmap_storage.is_loaded
         assert index._mmap_storage.count == index.ntotal
         index.close()
-
-    def test_ivf_reconstruct_without_mmap_uses_direct_map(self, tmp_path, monkeypatch):
-        """With no mmap (below threshold), IVF still reconstructs via FAISS."""
-        from search import faiss_index
-
-        monkeypatch.setattr(faiss_index, "MMAP_THRESHOLD", 10**9)  # no mmap at all
-        embeddings, chunk_ids = self._embeddings()
-        index = FaissVectorIndex(tmp_path / "code.index")
-        index.create(self.DIM, "ivf", expected_count=self.N)
-        index.add(embeddings, chunk_ids)
-        index.save()
-        assert index._mmap_storage is None
-
-        self._assert_reconstructs(index, embeddings)
-
-        reloaded = FaissVectorIndex(tmp_path / "code.index")
-        assert reloaded.load()
-        assert reloaded._mmap_storage is None
-        self._assert_reconstructs(reloaded, embeddings)
-
-    def test_load_sets_ivf_nprobe(self, tmp_path):
-        """Indexes persisted with nprobe=1 must be searched wider after load()."""
-        import faiss
-
-        from search import faiss_index
-
-        embeddings, chunk_ids = self._embeddings()
-        index = FaissVectorIndex(tmp_path / "code.index")
-        index.create(self.DIM, "ivf", expected_count=self.N)
-        index.add(embeddings, chunk_ids)
-        index.save()
-        index.close()
-
-        reloaded = FaissVectorIndex(tmp_path / "code.index")
-        assert reloaded.load()
-
-        ivf = faiss.try_extract_index_ivf(reloaded.index)
-        assert ivf is not None
-        assert ivf.nprobe == faiss_index.ivf_nprobe_for(ivf.nlist, self.N)
-        reloaded.close()
 
 
 class TestFaissVectorIndexBatchOperations:
@@ -705,7 +596,7 @@ class TestFaissVectorIndexBatchOperations:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             # Add empty array
             index.add(np.array([]).reshape(0, 768).astype(np.float32), [])
@@ -718,7 +609,7 @@ class TestFaissVectorIndexBatchOperations:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             rng = np.random.RandomState(42)
 
@@ -747,7 +638,7 @@ class TestFaissVectorIndexDimensionValidation:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             # Try to add embeddings with wrong dimension (1024 instead of 768)
             rng = np.random.RandomState(42)
@@ -768,7 +659,7 @@ class TestFaissVectorIndexDimensionValidation:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             # Add some vectors
             rng = np.random.RandomState(42)
@@ -790,7 +681,7 @@ class TestFaissVectorIndexDimensionValidation:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             # Add embeddings with correct dimension
             rng = np.random.RandomState(42)
@@ -806,7 +697,7 @@ class TestFaissVectorIndexDimensionValidation:
         with tempfile.TemporaryDirectory() as tmpdir:
             index_path = Path(tmpdir) / "test.index"
             index = FaissVectorIndex(index_path)
-            index.create(768, "flat")
+            index.create(768)
 
             # Add vectors
             rng = np.random.RandomState(42)
@@ -832,7 +723,7 @@ class TestFaissVectorIndexRemovePositions:
         rng = np.random.RandomState(3)
         embeddings = rng.randn(n, self.DIM).astype(np.float32)
         index = FaissVectorIndex(tmp_path / "code.index")
-        index.create(self.DIM, "flat")
+        index.create(self.DIM)
         index.add(embeddings, [f"chunk_{i}" for i in range(n)])
         return index, embeddings
 
@@ -920,97 +811,10 @@ class TestFaissVectorIndexRemovePositions:
         index.close()
 
 
-class TestIndexKindFollowsSize:
-    """The flat/IVF decision has one owner and is re-made at every rebuild."""
-
-    DIM = 8
-    LIMIT = 50  # monkeypatched IVF_MIN_VECTORS so tests stay small and fast
-
-    @pytest.fixture(autouse=True)
-    def _low_ivf_threshold(self, monkeypatch):
-        from search import faiss_index
-
-        monkeypatch.setattr(faiss_index, "IVF_MIN_VECTORS", self.LIMIT)
-
-    def _built(self, tmp_path, n: int, kind: str) -> FaissVectorIndex:
-        rng = np.random.RandomState(5)
-        index = FaissVectorIndex(tmp_path / "code.index")
-        index.create(self.DIM, kind, expected_count=n)
-        index.add(
-            rng.randn(n, self.DIM).astype(np.float32), [f"chunk_{i}" for i in range(n)]
-        )
-        return index
-
-    def test_index_kind_for_boundary(self):
-        from search.faiss_index import index_kind_for
-
-        assert index_kind_for(self.LIMIT) == "flat"
-        assert index_kind_for(self.LIMIT + 1) == "ivf"
-
-    def test_default_is_always_flat(self, monkeypatch):
-        """ADR-0083 addendum: new indexes are exact at any size by default."""
-        from search import faiss_index
-
-        monkeypatch.undo()
-        assert faiss_index.IVF_MIN_VECTORS is None
-        assert faiss_index.index_kind_for(50_001) == "flat"
-        assert faiss_index.index_kind_for(10_000_000) == "flat"
-
-    def test_default_rebuild_turns_legacy_ivf_flat(self, tmp_path, monkeypatch):
-        """A legacy on-disk IVF index becomes flat at its next rebuild."""
-        monkeypatch.undo()
-        index = self._built(tmp_path, 200, "ivf")
-
-        assert index.remove_positions({0})
-
-        assert type(index.index).__name__ == "IndexFlatIP"
-        assert index.ntotal == 199
-        index.close()
-
-    def test_rebuild_keeps_ivf_when_still_large(self, tmp_path):
-        index = self._built(tmp_path, 200, "ivf")
-
-        assert index.remove_positions({0, 1, 2})
-
-        assert type(index.index).__name__ == "IndexIVFFlat"
-        assert index.ntotal == 197
-        assert index.index.nlist == ivf_nlist_for(197)
-        assert index.index.nprobe == ivf_nprobe_for(index.index.nlist, 197)
-        index.reconstruct(0)  # direct map present after the rebuild
-        index.close()
-
-    def test_rebuild_promotes_grown_flat_index_to_ivf(self, tmp_path):
-        index = self._built(tmp_path, 200, "flat")
-
-        assert index.remove_positions({0})
-
-        assert type(index.index).__name__ == "IndexIVFFlat"
-        assert index.ntotal == 199
-        index.close()
-
-    def test_rebuild_demotes_ivf_that_shrank_below_threshold(self, tmp_path):
-        index = self._built(tmp_path, 200, "ivf")
-
-        assert index.remove_positions(set(range(0, 160)))
-
-        assert type(index.index).__name__ == "IndexFlatIP"
-        assert index.ntotal == 40
-        index.close()
-
-
 class TestFaissVectorIndexDescribe:
-    """describe() reports the live kind and IVF search parameters."""
+    """describe() reports the live kind and metric."""
 
     DIM = 8
-
-    def _index(self, tmp_path, kind: str, n: int = 200) -> FaissVectorIndex:
-        rng = np.random.RandomState(9)
-        index = FaissVectorIndex(tmp_path / "code.index")
-        index.create(self.DIM, kind, expected_count=n)
-        index.add(
-            rng.randn(n, self.DIM).astype(np.float32), [f"c{i}" for i in range(n)]
-        )
-        return index
 
     def test_no_index(self, tmp_path):
         assert FaissVectorIndex(tmp_path / "code.index").describe() == {
@@ -1018,24 +822,26 @@ class TestFaissVectorIndexDescribe:
         }
 
     def test_flat(self, tmp_path):
-        assert self._index(tmp_path, "flat").describe() == {
-            "index_kind": "flat",
-            "metric": "ip",
-        }
-
-    def test_ivf_reports_nlist_and_nprobe(self, tmp_path):
-        info = self._index(tmp_path, "ivf").describe()
-
-        assert info["index_kind"] == "ivf"
-        assert info["ivf_nlist"] == ivf_nlist_for(200) == 5  # 200 // 39
-        assert info["ivf_nprobe"] == ivf_nprobe_for(5, 200) == 5
+        rng = np.random.RandomState(9)
+        index = FaissVectorIndex(tmp_path / "code.index")
+        index.create(self.DIM)
+        index.add(
+            rng.randn(20, self.DIM).astype(np.float32), [f"c{i}" for i in range(20)]
+        )
+        assert index.describe() == {"index_kind": "flat", "metric": "ip"}
 
 
-class TestFaissVectorIndexMetric:
-    """IVF scores are inner products (same convention as the flat index)."""
+class TestLegacyIvfLoadMigration:
+    """An IVF index written by an older version loads as an exact IndexFlatIP.
+
+    Older versions built ``IndexIVFFlat`` above 10K vectors, some with the
+    default ``METRIC_L2``. Every stored vector was L2-normalized on add, so
+    the files here are built the same way.
+    """
 
     DIM = 8
     N = 400
+    K = 10
 
     def _vectors(self) -> tuple[np.ndarray, list[str]]:
         rng = np.random.RandomState(11)
@@ -1044,34 +850,8 @@ class TestFaissVectorIndexMetric:
             [f"c{i}" for i in range(self.N)],
         )
 
-    def test_ivf_scores_match_flat_ip(self, tmp_path):
-        import faiss
-
-        vectors, ids = self._vectors()
-        flat = FaissVectorIndex(tmp_path / "flat" / "code.index")
-        flat.index_path.parent.mkdir()
-        flat.create(self.DIM, "flat")
-        flat.add(vectors, ids)
-        ivf = FaissVectorIndex(tmp_path / "ivf" / "code.index")
-        ivf.index_path.parent.mkdir()
-        ivf.create(self.DIM, "ivf", expected_count=self.N)
-        ivf.add(vectors, ids)
-        faiss.try_extract_index_ivf(ivf.index).nprobe = ivf.index.nlist  # exhaustive
-
-        query = vectors[5]
-        flat_scores, flat_ids = flat.search(query, 10)
-        ivf_scores, ivf_ids = ivf.search(query, 10)
-
-        np.testing.assert_array_equal(flat_ids, ivf_ids)
-        np.testing.assert_allclose(flat_scores, ivf_scores, atol=1e-5)
-        assert ivf_scores[0] == pytest.approx(1.0, abs=1e-5)  # self-match is IP 1
-        assert np.all(np.diff(ivf_scores) <= 1e-6)  # descending = larger-is-better
-        flat.close()
-        ivf.close()
-
-    def test_legacy_l2_ivf_shim(self, tmp_path, caplog):
-        """An on-disk IVF built with METRIC_L2 (pre-fix) loads, warns once, and
-        returns inner-product scores converted from its squared L2 distances."""
+    def _write_ivf(self, tmp_path, metric) -> tuple[np.ndarray, list[str]]:
+        """Write an on-disk IVF index + chunk ids as an older version did."""
         import pickle
 
         import faiss
@@ -1079,48 +859,101 @@ class TestFaissVectorIndexMetric:
         vectors, ids = self._vectors()
         unit = vectors.copy()
         faiss.normalize_L2(unit)
-        legacy = faiss.IndexIVFFlat(faiss.IndexFlatIP(self.DIM), self.DIM, 10)
-        assert legacy.metric_type == faiss.METRIC_L2
-        legacy.train(unit)
-        legacy.add(unit)
-        faiss.write_index(legacy, str(tmp_path / "code.index"))
+        ivf = faiss.IndexIVFFlat(faiss.IndexFlatIP(self.DIM), self.DIM, 10, metric)
+        ivf.train(unit)
+        ivf.add(unit)
+        faiss.write_index(ivf, str(tmp_path / "code.index"))
         with open(tmp_path / "chunk_ids.pkl", "wb") as f:
             pickle.dump(ids, f)
+        return unit, ids
+
+    @pytest.mark.parametrize("metric_name", ["METRIC_INNER_PRODUCT", "METRIC_L2"])
+    def test_ivf_loads_as_exact_flat_ip(self, tmp_path, caplog, metric_name):
+        import faiss
+
+        unit, ids = self._write_ivf(tmp_path, getattr(faiss, metric_name))
 
         index = FaissVectorIndex(tmp_path / "code.index")
         with caplog.at_level("WARNING", logger="search.faiss_index"):
             assert index.load()
-        warnings = [r for r in caplog.records if "Legacy L2-metric" in r.message]
+
+        warnings = [r for r in caplog.records if "exact flat search" in r.message]
         assert len(warnings) == 1
-        assert index.describe()["metric"] == "l2"
+        assert type(index.index).__name__ == "IndexFlatIP"
+        assert index.index.metric_type == faiss.METRIC_INNER_PRODUCT
+        assert index.describe() == {"index_kind": "flat", "metric": "ip"}
+        assert index.ntotal == self.N
+        assert index.chunk_ids == ids
+        assert index.position_of("c123") == 123
 
-        faiss.try_extract_index_ivf(index.index).nprobe = 10
-        scores, found = index.search(vectors[3], 5)
+        # Same vectors at the same positions.
+        np.testing.assert_allclose(
+            index.index.reconstruct_n(0, self.N), unit, atol=1e-6
+        )
 
-        assert found[0] == 3
-        assert scores[0] == pytest.approx(1.0, abs=1e-5)
-        expected = unit[found] @ unit[3]
-        np.testing.assert_allclose(scores, expected, atol=1e-5)
-        assert np.all(np.diff(scores) <= 1e-6)
+        exact = faiss.IndexFlatIP(self.DIM)
+        exact.add(unit)
+        queries = unit[[0, 3, 199, 399]]
+        exact_scores, exact_ids = exact.search(queries, self.K)
+        scores, found = index.search(queries, self.K)
 
-        # Batched path converts too, and -1 padding maps to the IP floor.
-        batch_scores, batch_ids = index.search(vectors[:2], 5)
-        assert batch_scores.shape == (2, 5)
-        assert batch_scores[0, 0] == pytest.approx(1.0, abs=1e-5)
+        np.testing.assert_array_equal(found, exact_ids)
+        np.testing.assert_allclose(scores, exact_scores, atol=1e-5)
+        # Scores are inner products: self-match is 1, values match q . x.
+        np.testing.assert_allclose(scores[:, 0], 1.0, atol=1e-5)
+        for row, q in enumerate(queries):
+            np.testing.assert_allclose(scores[row], unit[found[row]] @ q, atol=1e-5)
         index.close()
 
-    def test_fresh_ivf_is_not_flagged_legacy(self, tmp_path):
+    def test_migrated_index_is_saved_flat(self, tmp_path):
+        import faiss
+
+        self._write_ivf(tmp_path, faiss.METRIC_L2)
+        index = FaissVectorIndex(tmp_path / "code.index")
+        assert index.load()
+        index.save()
+        index.close()
+
+        on_disk = faiss.read_index(str(tmp_path / "code.index"))
+        assert faiss.try_extract_index_ivf(on_disk) is None
+        assert type(on_disk).__name__ == "IndexFlatIP"
+
+    def test_mmap_storage_stays_consistent(self, tmp_path, monkeypatch):
+        """An mmap vector file written beside the IVF index still matches."""
+        import faiss
+
+        from search import faiss_index
+        from search.mmap_vectors import MmapVectorStorage
+
+        monkeypatch.setattr(faiss_index, "MMAP_THRESHOLD", 100)
+        unit, ids = self._write_ivf(tmp_path, faiss.METRIC_INNER_PRODUCT)
+        storage = MmapVectorStorage(tmp_path / "code_vectors.mmap", self.DIM)
+        storage.save(unit, ids)
+        storage.close()
+
+        index = FaissVectorIndex(tmp_path / "code.index")
+        assert index.load()
+
+        assert index._mmap_storage is not None
+        assert index._mmap_storage.count == index.ntotal
+        for pos in (0, 200, 399):
+            np.testing.assert_allclose(
+                index.reconstruct(pos), index.index.reconstruct(pos), atol=1e-6
+            )
+        index.close()
+
+    def test_flat_index_is_not_migrated(self, tmp_path, caplog):
         vectors, ids = self._vectors()
         index = FaissVectorIndex(tmp_path / "code.index")
-        index.create(self.DIM, "ivf", expected_count=self.N)
+        index.create(self.DIM)
         index.add(vectors, ids)
         index.save()
         index.close()
 
         reloaded = FaissVectorIndex(tmp_path / "code.index")
-        assert reloaded.load()
-        assert reloaded._legacy_l2 is False
-        assert reloaded.describe()["metric"] == "ip"
+        with caplog.at_level("WARNING", logger="search.faiss_index"):
+            assert reloaded.load()
+        assert not [r for r in caplog.records if "exact flat search" in r.message]
         reloaded.close()
 
 
@@ -1129,10 +962,10 @@ class TestFaissVectorIndexPositionLookup:
 
     DIM = 8
 
-    def _built(self, tmp_path, n: int = 6, kind: str = "flat") -> FaissVectorIndex:
+    def _built(self, tmp_path, n: int = 6) -> FaissVectorIndex:
         rng = np.random.RandomState(5)
         index = FaissVectorIndex(tmp_path / "code.index")
-        index.create(self.DIM, kind, expected_count=n)
+        index.create(self.DIM)
         index.add(
             rng.randn(n, self.DIM).astype(np.float32), [f"c{i}" for i in range(n)]
         )
@@ -1184,15 +1017,6 @@ class TestFaissVectorIndexPositionLookup:
         assert index.reconstruct_batch([]).shape == (0, self.DIM)
         index.close()
 
-    def test_reconstruct_batch_ivf_uses_direct_map(self, tmp_path):
-        index = self._built(tmp_path, n=400, kind="ivf")
-
-        matrix = index.reconstruct_batch(np.array([399, 7]))
-
-        np.testing.assert_array_equal(matrix[0], index.reconstruct(399))
-        np.testing.assert_array_equal(matrix[1], index.reconstruct(7))
-        index.close()
-
     def test_reconstruct_batch_prefers_mmap(self, tmp_path, monkeypatch):
         from search import faiss_index
 
@@ -1210,87 +1034,3 @@ class TestFaissVectorIndexPositionLookup:
         np.testing.assert_array_equal(matrix[0], index.reconstruct(1))
         np.testing.assert_array_equal(matrix[1], index.reconstruct(3))
         index.close()
-
-
-class TestIvfPolicy:
-    """ADR-0083: nlist/nprobe follow the vector count, never a fixed value."""
-
-    DIM = 8
-
-    @pytest.mark.parametrize(
-        ("n", "nlist"),
-        [
-            (1, 1),  # never zero lists
-            (200, 5),  # 200 // 39 training cap wins over round(4 * sqrt(200)) == 57
-            (400, 10),
-            (17_197, 440),  # the measured 17K real corpus: 4 * sqrt(N)
-            (50_001, 894),
-            (100_000, 1265),
-        ],
-        ids=["n=1", "n=200", "n=400", "n=17197", "n=50001", "n=100000"],
-    )
-    def test_nlist_rule(self, n, nlist):
-        assert ivf_nlist_for(n) == nlist
-
-    def test_nlist_never_exceeds_training_cap(self):
-        from search.faiss_index import IVF_MIN_TRAIN_PER_CENTROID
-
-        for n in (39, 100, 1_000, 10_000, 50_001, 1_000_000):
-            assert ivf_nlist_for(n) * IVF_MIN_TRAIN_PER_CENTROID <= max(
-                n, IVF_MIN_TRAIN_PER_CENTROID
-            )
-
-    @pytest.mark.parametrize(
-        ("nlist", "n", "nprobe"),
-        [
-            (894, 50_001, 447),  # half the lists
-            (100, 21_910, 50),  # legacy on-disk nlist=100 gets re-probed at load
-            (10, 400, 10),  # 420 * 10 / 400 > 10 -> capped at nlist
-            (5, 200, 5),
-            (1, 1, 1),
-        ],
-        ids=["nlist=894", "nlist=100", "nlist=10", "nlist=5", "nlist=1"],
-    )
-    def test_nprobe_rule(self, nlist, n, nprobe):
-        assert ivf_nprobe_for(nlist, n) == nprobe
-
-    def test_nprobe_can_visit_leg_depth_ceiling(self):
-        from search.faiss_index import IVF_MIN_VISITED
-
-        for n in (50_001, 75_000, 100_000, 500_000):
-            nlist = ivf_nlist_for(n)
-            nprobe = ivf_nprobe_for(nlist, n)
-            assert nprobe * n / nlist >= IVF_MIN_VISITED
-
-    def test_create_ivf_requires_expected_count(self, tmp_path):
-        index = FaissVectorIndex(tmp_path / "code.index")
-
-        with pytest.raises(ValueError, match="expected_count"):
-            index.create(self.DIM, "ivf")
-
-    def test_flat_ignores_expected_count(self, tmp_path):
-        index = FaissVectorIndex(tmp_path / "code.index")
-        index.create(self.DIM, "flat")
-        index.create(self.DIM, "flat", expected_count=10)
-        assert type(index.index).__name__ == "IndexFlatIP"
-
-    def test_load_reapplies_nprobe_from_ntotal(self, tmp_path):
-        """A persisted nprobe is ignored; the policy is re-derived from ntotal."""
-        import faiss
-
-        rng = np.random.RandomState(2)
-        n = 400
-        index = FaissVectorIndex(tmp_path / "code.index")
-        index.create(self.DIM, "ivf", expected_count=n)
-        index.add(
-            rng.randn(n, self.DIM).astype(np.float32), [f"c{i}" for i in range(n)]
-        )
-        faiss.try_extract_index_ivf(index.index).nprobe = 1  # stale on-disk value
-        index.save()
-        index.close()
-
-        reloaded = FaissVectorIndex(tmp_path / "code.index")
-        assert reloaded.load()
-        ivf = faiss.try_extract_index_ivf(reloaded.index)
-        assert ivf.nprobe == ivf_nprobe_for(ivf.nlist, n)
-        reloaded.close()

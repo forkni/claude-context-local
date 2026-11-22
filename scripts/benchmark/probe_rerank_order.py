@@ -13,7 +13,7 @@ order-noise floor; an arm beating identity by >= +0.02 MRR on 133q with a
 paired CI excluding 0 would justify an order change or score averaging.
 
 Run (MCP server may stay up; nothing is written to the index):
-    CLAUDE_AUTO_REINDEX=0 .venv/Scripts/python.exe scripts/benchmark/probe_rerank_order.py \
+    CLAUDE_AUTO_REINDEX=0 .venv/Scripts/python.exe -m scripts.benchmark.probe_rerank_order \
         --dataset evaluation/golden_dataset_expanded.json --json tmp/order_133q.json
 
 Result 2026-11-22 (evaluation/CANON_20261122_LABEL_AUDIT.md): no order beats fused order;
@@ -28,15 +28,12 @@ import os
 import random
 import statistics as st
 import sys
-from pathlib import Path
+
+from evaluation import probe_harness
+from evaluation.metrics import normalize_chunk_id
 
 
 os.environ.setdefault("CLAUDE_AUTO_REINDEX", "0")
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-
-from evaluation import probe_harness  # noqa: E402
-from evaluation.metrics import normalize_chunk_id  # noqa: E402
 
 
 def _first_gold(ids: list[str], gold: set[str]) -> int | None:

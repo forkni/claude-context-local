@@ -1767,7 +1767,7 @@ class TestFullIndexOrphanSelfHeal:
         manager = CodeIndexManager(storage_dir=str(storage_dir))
 
         embeddings = np.random.RandomState(0).randn(1, 8).astype(np.float32)
-        manager._faiss_index.create(8, "flat")
+        manager._faiss_index.create(8)
         manager._faiss_index.add(embeddings, ["a.py:1-2:function:f"])
         manager.metadata_store.set("a.py:1-2:function:f", 0, {"relative_path": "a.py"})
         # Orphan from a previous generation — no corresponding chunk_id,
@@ -1799,7 +1799,7 @@ class TestFullIndexOrphanSelfHeal:
         manager = CodeIndexManager(storage_dir=str(storage_dir))
 
         embeddings = np.random.RandomState(0).randn(2, 8).astype(np.float32)
-        manager._faiss_index.create(8, "flat")
+        manager._faiss_index.create(8)
         manager._faiss_index.add(
             embeddings, ["a.py:1-2:function:f", "b.py:1-2:function:g"]
         )

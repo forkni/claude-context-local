@@ -488,7 +488,7 @@ class TestCloseReleasesFaissMmapHandle:
         chunk_ids = [f"chunk_{i}" for i in range(3)]
 
         seed = FaissVectorIndex(storage_dir / "code.index")
-        seed.create(8, "flat")
+        seed.create(8)
         seed.add(embeddings, chunk_ids)
         # pyrefly: ignore [missing-attribute]
         faiss.write_index(seed.index, str(seed.index_path))

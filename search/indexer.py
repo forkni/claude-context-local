@@ -29,7 +29,7 @@ import contextlib
 
 from embeddings.embedder import EmbeddingResult
 from search.batch_operations import BatchOperations
-from search.faiss_index import FaissVectorIndex, index_kind_for
+from search.faiss_index import FaissVectorIndex
 from search.filters import FilterEngine
 from search.graph_integration import GraphIntegration
 from search.index_write_lock import files_in_use_guard
@@ -193,31 +193,19 @@ class CodeIndexManager:
         """
         return self._metadata_store
 
-    def create_index(
-        self,
-        embedding_dimension: int,
-        index_type: str = "flat",
-        expected_count: int | None = None,
-    ) -> None:
-        """Create a new FAISS index.
+    def create_index(self, embedding_dimension: int) -> None:
+        """Create a new, empty exact-search FAISS index.
 
         Args:
             embedding_dimension: Dimension of embedding vectors
-            index_type: Type of index to create ("flat" or "ivf")
-            expected_count: Vectors the index will hold (required for "ivf")
         """
-        self._faiss_index.create(embedding_dimension, index_type, expected_count)
+        self._faiss_index.create(embedding_dimension)
 
     def add_embeddings(self, embedding_results: list[EmbeddingResult]) -> None:
         """Add embeddings to the index and metadata to the database.
 
-        Invariant (index kind): when the index does not exist yet, its kind
-        (flat/IVF, ``index_kind_for``) is chosen from the size of *this call's*
-        batch. A caller building a fresh index (a force reindex) must therefore
-        pass the whole vector set in ONE call -- ``IndexWriteStage.add_to_index``
-        is that single owner. Splitting a large first build across calls would
-        freeze the kind at the first (small) batch; a later removal pass
-        re-decides the kind from the real size (``FaissVectorIndex``'s rebuild).
+        Creates the (flat) index from the first batch's dimension when no
+        index exists yet.
 
         Args:
             embedding_results: List of EmbeddingResult objects containing embeddings
@@ -263,9 +251,7 @@ class CodeIndexManager:
 
         # Initialize index if needed
         if self.index is None:
-            self.create_index(
-                embedding_dim, index_kind_for(num_new_vectors), num_new_vectors
-            )
+            self.create_index(embedding_dim)
 
         # Prepare embeddings and metadata
         embeddings = np.array([result.embedding for result in embedding_results])
@@ -825,8 +811,8 @@ class CodeIndexManager:
     def get_stats(self) -> dict[str, Any]:
         """Get index statistics.
 
-        The snapshot on disk is overlaid with the live index kind and IVF
-        parameters when the index is already loaded (never forces a load), so
+        The snapshot on disk is overlaid with the live index kind and metric
+        when the index is already loaded (never forces a load), so
         indexes saved before those fields existed still report them.
         """
         if self.stats_path.exists():

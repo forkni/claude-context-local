@@ -55,7 +55,7 @@ class TestFullSearchFlow:
 
         # Create and populate index once
         index_manager = CodeIndexManager(str(storage_dir))
-        index_manager.create_index(768, "flat")
+        index_manager.create_index(768)
         index_manager.add_embeddings(embeddings)
 
         yield {
@@ -416,7 +416,7 @@ class TestFullSearchFlow:
 
         # Create initial index
         index_manager = CodeIndexManager(str(mock_storage_dir))
-        index_manager.create_index(768, "flat")
+        index_manager.create_index(768)
         index_manager.add_embeddings(initial_embeddings)
 
         initial_count = len(index_manager.chunk_ids)
@@ -535,7 +535,7 @@ class TestFullSearchFlow:
 
         embeddings = create_test_embeddings(large_chunks)
         index_manager = CodeIndexManager(str(mock_storage_dir))
-        index_manager.create_index(768, "flat")
+        index_manager.create_index(768)
         index_manager.add_embeddings(embeddings)
 
         indexing_time = time.time() - start_time
@@ -580,7 +580,7 @@ class TestFullSearchFlow:
         assert results == [], "Should return empty results for empty index"
 
         # Test recovery from corrupted index
-        index_manager.create_index(768, "flat")
+        index_manager.create_index(768)
 
         # Add some embeddings
         chunks = []
@@ -616,7 +616,7 @@ class TestFullSearchFlow:
         # Should handle corruption gracefully
         if not loaded:
             # Should be able to recreate index
-            new_manager.create_index(768, "flat")
+            new_manager.create_index(768)
             assert new_manager.index is not None
 
     def test_search_modes_and_filtering(self, indexed_project_data):
@@ -680,7 +680,7 @@ class TestFullSearchFlow:
         embeddings = create_test_embeddings(all_chunks)
 
         index_manager = CodeIndexManager(str(mock_storage_dir))
-        index_manager.create_index(768, "flat")
+        index_manager.create_index(768)
         index_manager.add_embeddings(embeddings)
 
         # Step 3: Test searching across languages

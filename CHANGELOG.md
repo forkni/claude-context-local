@@ -22,8 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **New indexes are always exact flat search** (`IVF_MIN_VECTORS` defaults to `None`, ADR-0083
   addendum) — on the 63K-vector index, flat matched IVF at p50 (17.1 vs 17.4 ms) and drops the
-  2.26 s IVF training from every rebuild. Existing IVF indexes still load and become flat at
-  their next rebuild.
+  2.26 s IVF training from every rebuild. Existing IVF indexes are converted to flat when they
+  load (see Removed).
 - **Golden label audit, canon re-pinned** (`evaluation/CANON_20261122_LABEL_AUDIT.md`) — 9
   rank-1 chunks judged correct were added at grade 3 and 2 wrong labels set to grade 0. Same
   index and result lists; MRR 63q 0.8273 -> 0.8458, 133q 0.6718 -> 0.7162, F-via-similar
@@ -48,6 +48,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A/B's label audit found H012's grade-3 target (`_configure_logging`) untouched by its source
   commit and the real answer (`_drop_benign_uvicorn_errors`) unlabeled; H004 lacked
   `ParallelChunker._is_empty_file`. 133q numbers from this date on use the corrected set.
+
+### Removed
+
+- **IVF index code path** (ADR-0083 addendum) — `IVF_MIN_VECTORS`, `index_kind_for`,
+  `ivf_nlist_for`, `ivf_nprobe_for`, the IVF branch of `FaissVectorIndex.create()` and the legacy
+  L2 score conversion are deleted. `FaissVectorIndex.create(dimension)` and
+  `CodeIndexManager.create_index(embedding_dimension)` no longer take `index_type` or
+  `expected_count`. An IVF index left on disk by an older version is converted to exact
+  `IndexFlatIP` when it loads (chunk order unchanged, one warning) and is saved as flat.
 
 ### Security
 

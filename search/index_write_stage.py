@@ -210,10 +210,7 @@ class IndexWriteStage:
 
         Owns the single ``add_embeddings`` write for both index passes: the
         full path (:meth:`run`) and the incremental path
-        (``IncrementalIndexer._add_new_chunks``). The single call is
-        load-bearing on a fresh index: ``CodeIndexManager`` sizes the flat/IVF
-        kind from the first batch it receives, so a force reindex must hand
-        over every vector here at once. The empty-input warning is
+        (``IncrementalIndexer._add_new_chunks``). The empty-input warning is
         full-path semantics — an incremental pass with nothing new to add
         guards at the call site instead of calling this with an empty list.
 

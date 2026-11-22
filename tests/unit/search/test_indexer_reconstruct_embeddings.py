@@ -13,7 +13,7 @@ def _manager(tmp_path, chunk_ids, vectors) -> CodeIndexManager:
     storage_dir = tmp_path / "index"
     storage_dir.mkdir()
     manager = CodeIndexManager(storage_dir=str(storage_dir))
-    manager._faiss_index.create(DIM, "flat")
+    manager._faiss_index.create(DIM)
     manager._faiss_index.add(np.asarray(vectors, dtype=np.float32), list(chunk_ids))
     return manager
 

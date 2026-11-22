@@ -20,7 +20,7 @@ def test_mmap_cleanup_on_clear():
         faiss_index = FaissVectorIndex(index_path)
 
         # Create and populate index
-        faiss_index.create(dimension=768, index_type="flat")
+        faiss_index.create(dimension=768)
         embeddings = np.random.rand(100, 768).astype(np.float32)
         chunk_ids = [f"chunk_{i}" for i in range(100)]
         faiss_index.add(embeddings, chunk_ids)
@@ -55,7 +55,7 @@ def test_mmap_threshold_management():
         faiss_index = FaissVectorIndex(index_path)
 
         # Create index with few vectors (below 10K threshold)
-        faiss_index.create(dimension=768, index_type="flat")
+        faiss_index.create(dimension=768)
         embeddings = np.random.rand(100, 768).astype(np.float32)
         chunk_ids = [f"chunk_{i}" for i in range(100)]
         faiss_index.add(embeddings, chunk_ids)

@@ -151,3 +151,11 @@ them flat. The IVF code path stays until no IVF index is left on disk; then it c
 Setting `IVF_MIN_VECTORS` to an int restores the size-based switch. Revisit when one index
 passes ~1M vectors, or if exact search on the GPU (torch fp16 matmul measured 0.33 ms p50 at
 63K) is adopted instead.
+
+Update (2026-11-22): the IVF code path is removed. `IVF_MIN_VECTORS`, `index_kind_for`,
+`ivf_nlist_for`, `ivf_nprobe_for`, `_configure_ivf` and the legacy L2 score conversion are
+deleted, and `create()` takes only the dimension. The only IVF-aware code left is a load-time
+migration (`FaissVectorIndex._migrate_ivf_to_flat`): an IVF index on disk is read back in
+position order, re-normalized, and loaded as `IndexFlatIP`, with one warning. The next save
+writes it as flat. The two sentences above about `_configure_ivf` and `IVF_MIN_VECTORS` describe
+the state before this update. To use IVF again, restore it from git history.
