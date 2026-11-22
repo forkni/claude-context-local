@@ -216,6 +216,8 @@ class FaissVectorIndex:
         not change, so the chunk-id list and the mmap vector file stay valid.
         The flat index replaces the IVF file at the next ``save()``.
         """
+        if faiss is None:
+            return index
         ivf = faiss.try_extract_index_ivf(index)
         if ivf is None:
             return index
