@@ -867,7 +867,9 @@ class TestLegacyIvfLoadMigration:
             pickle.dump(ids, f)
         return unit, ids
 
-    @pytest.mark.parametrize("metric_name", ["METRIC_INNER_PRODUCT", "METRIC_L2"])
+    @pytest.mark.parametrize(
+        "metric_name", ["METRIC_INNER_PRODUCT", "METRIC_L2"], ids=["ip", "legacy_l2"]
+    )
     def test_ivf_loads_as_exact_flat_ip(self, tmp_path, caplog, metric_name):
         import faiss
 
