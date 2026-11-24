@@ -9,6 +9,7 @@ alias and a renamed dependency.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from textwrap import dedent
 
@@ -342,3 +343,164 @@ def test_file_outside_any_crate_is_unknown(tmp_path, index) -> None:
     stray = tmp_path / "loose.rs"
     stray.write_text("fn f() { g(); }\n", encoding="utf-8")
     assert index.resolve(stray, 1, ["g"]).kind == "unknown"
+
+
+# Review findings on rust_module_index.py (2026-11-24): one workspace per rule.
+_EDGE_FILES = {
+    "Cargo.toml": """
+        [workspace]
+        members = ["crates/*"]
+        exclude = ["crates/excluded"]
+    """,
+    # A workspace crate named like a sysroot crate.
+    "crates/core/Cargo.toml": '[package]\nname = "core"\n',
+    "crates/core/src/lib.rs": "pub fn mix() {}\n",
+    "crates/app/Cargo.toml": """
+        [package]
+        name = "app"
+
+        [dependencies]
+        core = { path = "../core" }
+        log = "0.4"
+    """,
+    "crates/app/src/lib.rs": """
+        mod x;
+        pub use x::x;
+        mod config;
+        pub use config::config;
+        #[path = "weird/y.rs"]
+        // the comment between the attribute and the module
+        mod y;
+        #[path = "shared.rs"]
+        mod shared;
+        mod util;
+        #[cfg(unix)]
+        use crate::x::open;
+        #[cfg(windows)]
+        use crate::config::open;
+        use log::log;
+
+        pub fn calls() {
+            x(); // MARK self-import
+            log(); // MARK log-import
+            crate::x(); // MARK final-import
+            crate::config::config(); // MARK same-name
+            core::mix(); // MARK core-crate
+            y::why(); // MARK path-comment
+            open(); // MARK cfg-twin
+        }
+    """,
+    "crates/app/src/x.rs": "pub fn x() {}\npub fn open() {}\n",
+    "crates/app/src/config.rs": "pub fn config() {}\npub fn open() {}\n",
+    "crates/app/src/weird/y.rs": "pub fn why() {}\n",
+    "crates/app/src/util.rs": "pub fn f() {}\n",
+    "crates/app/src/bin_util.rs": "pub fn f() {}\n",
+    "crates/app/src/shared.rs": "pub fn s() {\n    crate::util::f(); // MARK shared-util\n}\n",
+    "crates/app/src/main.rs": """
+        #[path = "shared.rs"]
+        mod shared;
+        #[path = "bin_util.rs"]
+        mod util;
+
+        fn main() {}
+    """,
+    "crates/excluded/Cargo.toml": """
+        [package]
+        name = "excluded"
+
+        [dependencies]
+        tempfile = "3"
+    """,
+    "crates/excluded/src/lib.rs": "pub fn e() {\n    tempfile::tempdir(); // MARK excluded-dep\n}\n",
+    # A package with its own [workspace], below the outer workspace root.
+    "vendor/nested/Cargo.toml": """
+        [package]
+        name = "nested"
+
+        [workspace]
+        members = ["helper"]
+
+        [dependencies]
+        helper = { path = "helper" }
+    """,
+    "vendor/nested/src/lib.rs": "pub fn v() {\n    helper::h(); // MARK nested-ws\n}\n",
+    "vendor/nested/helper/Cargo.toml": '[package]\nname = "helper"\n',
+    "vendor/nested/helper/src/lib.rs": "pub fn h() {}\n",
+}
+
+APP_LIB = "crates/app/src/lib.rs"
+
+
+@pytest.fixture(scope="module")
+def edge_ws(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    root = tmp_path_factory.mktemp("rustedge")
+    for rel, text in _EDGE_FILES.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(dedent(text).lstrip("\n"), encoding="utf-8")
+    return root
+
+
+def _resolve(ws: Path, rel: str, mark: str, segments: list[str]):
+    file, line = _at(ws, rel, mark)
+    return RustModuleIndex().resolve(file, line, segments)
+
+
+def test_use_importing_its_own_name_reaches_the_child_module(edge_ws) -> None:
+    r = _resolve(edge_ws, APP_LIB, "self-import", ["x"])
+    assert (r.kind, r.module, r.item) == ("internal", ("x",), "x")
+
+
+def test_use_importing_its_own_name_from_a_dependency_is_external(edge_ws) -> None:
+    r = _resolve(edge_ws, APP_LIB, "log-import", ["log"])
+    assert (r.kind, r.crate) == ("external", "log")
+
+
+def test_final_segment_prefers_the_function_over_the_module(edge_ws) -> None:
+    r = _resolve(edge_ws, APP_LIB, "final-import", ["crate", "x"])
+    assert (r.kind, r.module, r.item) == ("internal", ("x",), "x")
+    r = _resolve(edge_ws, APP_LIB, "same-name", ["crate", "config", "config"])
+    assert (r.kind, r.module, r.item) == ("internal", ("config",), "config")
+
+
+def test_workspace_crate_named_core_is_internal(edge_ws) -> None:
+    r = _resolve(edge_ws, APP_LIB, "core-crate", ["core", "mix"])
+    assert (r.kind, r.crate, r.item) == ("internal", "core", "mix")
+
+
+def test_package_with_its_own_workspace_uses_it(edge_ws) -> None:
+    r = _resolve(edge_ws, "vendor/nested/src/lib.rs", "nested-ws", ["helper", "h"])
+    assert (r.kind, r.crate, r.item) == ("internal", "helper", "h")
+
+
+def test_excluded_package_still_reads_its_dependencies(edge_ws) -> None:
+    r = _resolve(
+        edge_ws, "crates/excluded/src/lib.rs", "excluded-dep", ["tempfile", "tempdir"]
+    )
+    assert (r.kind, r.crate) == ("external", "tempfile")
+
+
+def test_mounts_in_different_crates_must_agree_on_files(edge_ws) -> None:
+    # shared.rs is mounted by the lib and the bin; crate::util is util.rs in
+    # one and bin_util.rs in the other, so the call cannot be decided.
+    r = _resolve(
+        edge_ws, "crates/app/src/shared.rs", "shared-util", ["crate", "util", "f"]
+    )
+    assert r.kind == "unknown"
+
+
+def test_comment_between_path_attribute_and_mod_keeps_the_path(edge_ws) -> None:
+    r = _resolve(edge_ws, APP_LIB, "path-comment", ["y", "why"])
+    assert (r.kind, r.module, r.item) == ("internal", ("y",), "why")
+
+
+def test_cfg_twin_imports_of_one_name_are_unknown(edge_ws) -> None:
+    assert _resolve(edge_ws, APP_LIB, "cfg-twin", ["open"]).kind == "unknown"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows path case only")
+def test_caller_path_case_does_not_matter_on_windows(ws) -> None:
+    file, line = _at(ws, MAIN, "main-mix")
+    flipped = Path(str(file).swapcase())
+    r = RustModuleIndex().resolve(flipped, line, ["mix"])
+    assert (r.kind, r.module, r.item) == ("internal", ("audio",), "mix")

@@ -126,6 +126,8 @@ class _Module:
     imports: dict[str, Segs] = field(default_factory=dict)
     aliases: dict[str, Segs] = field(default_factory=dict)
     globs: list[Segs] = field(default_factory=list)
+    # Names imported twice from different paths (``#[cfg]`` twins): undecidable.
+    conflicts: set[str] = field(default_factory=set)
 
 
 @dataclass(eq=False)
@@ -232,13 +234,18 @@ class RustModuleIndex:
             return UNKNOWN
         results = [self._resolve_path(m, segs, line, 0) for m in modules]
         first = results[0]
-        if all(
-            (r.kind, r.module, r.item, r.rest)
-            == (first.kind, first.module, first.item, first.rest)
-            for r in results[1:]
-        ):
+        if len(results) == 1:
             return first
-        return UNKNOWN
+        # A file mounted by several targets agrees only if every mount points
+        # at the same code: same module files for internal, same crate for
+        # external (crate::util can be a different file in each target).
+        keys = {self._agreement_key(r) for r in results}
+        return first if len(keys) == 1 else UNKNOWN
+
+    def _agreement_key(self, r: Resolution) -> tuple[Any, ...]:
+        if r.kind == "internal":
+            return (r.kind, r.module, r.item, r.rest, tuple(self.module_spans(r)))
+        return (r.kind, r.crate, r.module, r.item, r.rest)
 
     def normalize(self, path: str | Path) -> Path:
         """The path form :class:`Span` and the file sets use (cached)."""
@@ -281,8 +288,19 @@ class RustModuleIndex:
     # ------------------------------------------------------------ resolving
 
     def _resolve_path(
-        self, mod: _Module, segs: Segs, line: int | None, depth: int
+        self,
+        mod: _Module,
+        segs: Segs,
+        line: int | None,
+        depth: int,
+        skip: str | None = None,
     ) -> Resolution:
+        """Resolve ``segs`` from the scope of ``mod``.
+
+        ``skip`` is the name of the import being resolved: ``use x::x;`` reads
+        its first ``x`` from the child modules and the extern crates, never
+        from the import itself.
+        """
         if depth > _MAX_DEPTH or not segs:
             return UNKNOWN
         head, rest = segs[0], segs[1:]
@@ -301,22 +319,25 @@ class RustModuleIndex:
         if head == "Self":
             return UNKNOWN
 
-        hit = self._lookup(mod, head, line, depth)
+        hit = self._lookup(mod, head, line, depth, skip=skip, final=not rest)
         if hit is not None:
             kind, value = hit
+            if kind == "unknown":
+                return UNKNOWN
             if kind == "module":
                 return self._walk(value, rest, depth)
             if kind == "item":
                 return self._internal(value, head, rest)
             ctx, target = value
-            return self._resolve_path(ctx, target + rest, None, depth + 1)
+            own = kind == "import" and target[:1] == (head,)
+            return self._resolve_path(
+                ctx, target + rest, None, depth + 1, skip=head if own else None
+            )
         return self._extern(mod, segs, depth)
 
     def _extern(self, mod: _Module, segs: Segs, depth: int) -> Resolution:
         head, rest = segs[0], segs[1:]
         package = mod.unit.package
-        if head in _STD_CRATES:
-            return Resolution("external", crate=head)
         lib_unit: _Unit | None = None
         own_lib = package.lib
         if own_lib is not None and own_lib is not mod.unit and own_lib.crate == head:
@@ -326,7 +347,9 @@ class RustModuleIndex:
             lib_unit = dep.lib if dep is not None else None
             if lib_unit is None:
                 return UNKNOWN
-        elif head in package.external_deps:
+        elif head in package.external_deps or head in _STD_CRATES:
+            # Checked after the project crates: a dependency named `core` is
+            # the project crate, not the sysroot one.
             return Resolution("external", crate=head)
         elif head in _STD_PRELUDE:
             return Resolution("external", crate="std")
@@ -340,12 +363,20 @@ class RustModuleIndex:
     def _walk(self, cur: _Module, rest: Segs, depth: int) -> Resolution:
         while rest:
             seg = rest[0]
-            if seg in cur.children:
+            if seg in cur.conflicts:
+                return UNKNOWN
+            target = cur.aliases.get(seg) or cur.imports.get(seg)
+            # A module and a function can share a name (`mod x; pub use x::x;`):
+            # the last segment of a call names the function.
+            last_is_value = len(rest) == 1 and (target is not None or seg in cur.items)
+            if seg in cur.children and not last_is_value:
                 cur, rest = cur.children[seg], rest[1:]
                 continue
-            target = cur.aliases.get(seg) or cur.imports.get(seg)
             if target is not None:
-                return self._resolve_path(cur, target + rest[1:], None, depth + 1)
+                own = target[:1] == (seg,)
+                return self._resolve_path(
+                    cur, target + rest[1:], None, depth + 1, skip=seg if own else None
+                )
             if seg not in cur.items:
                 via_glob = self._glob_hit(cur, seg, depth)
                 if via_glob is not None:
@@ -354,13 +385,24 @@ class RustModuleIndex:
         return UNKNOWN  # the path names a module, not something callable
 
     def _lookup(
-        self, mod: _Module, name: str, line: int | None, depth: int
+        self,
+        mod: _Module,
+        name: str,
+        line: int | None,
+        depth: int,
+        *,
+        skip: str | None = None,
+        final: bool = False,
     ) -> tuple[str, Any] | None:
-        """Find ``name`` in ``mod``'s scope, by Rust precedence.
+        """Find ``name`` in the scope of ``mod``, by Rust precedence.
 
-        Returns ``("module", m)``, ``("item", m)`` or ``("path", (ctx, segs))``
-        for an import to resolve from ``ctx``; ``None`` when only the extern
-        or std prelude could still supply it.
+        Returns ``("module", m)``, ``("item", m)``, ``("import", (ctx, segs))``
+        for an import of ``mod`` itself, ``("path", (ctx, segs))`` for a name a
+        glob supplies, or ``("unknown", None)`` for a name imported twice from
+        different paths; ``None`` when only the extern or std prelude could
+        still supply it. ``skip`` hides one import name (see
+        :meth:`_resolve_path`). ``final`` means ``name`` is the last segment
+        of a call, so a function wins over a module of the same name.
         """
         if line is not None:
             scoped = [
@@ -370,11 +412,16 @@ class RustModuleIndex:
             ]
             if scoped:
                 innermost = min(scoped, key=lambda b: b[1] - b[0])
-                return "path", (mod, innermost[2][name])
-        if name in mod.aliases:
-            return "path", (mod, mod.aliases[name])
-        if name in mod.imports:
-            return "path", (mod, mod.imports[name])
+                return "import", (mod, innermost[2][name])
+        if name != skip:
+            if name in mod.conflicts:
+                return "unknown", None
+            if name in mod.aliases:
+                return "import", (mod, mod.aliases[name])
+            if name in mod.imports:
+                return "import", (mod, mod.imports[name])
+        if final and name in mod.items:
+            return "item", mod
         if name in mod.children:
             return "module", mod.children[name]
         if name in mod.items:
@@ -538,11 +585,22 @@ class RustModuleIndex:
         package = self._package_by_manifest.get(manifest)
         if package is None:  # not listed as a member: index it on its own
             package = self._load_package(manifest, workspace)
+            if package is not None:
+                # Not a member, so no `workspace = true` inheritance; path
+                # dependencies can still point at members.
+                member_dirs = {
+                    p.manifest.parent: p.name for p in workspace.packages.values()
+                }
+                self._load_deps(manifest, workspace, member_dirs, {})
         return package
 
     def _workspace_for(self, manifest: Path) -> _Workspace:
         root_manifest = manifest
-        for parent in manifest.parent.parents:
+        own = _read_toml(manifest) or {}
+        # A package that declares its own [workspace] is that workspace root,
+        # even below another workspace (vendored crates, samples).
+        parents = () if "workspace" in own else manifest.parent.parents
+        for parent in parents:
             candidate = parent / "Cargo.toml"
             if candidate.is_file():
                 data = _read_toml(candidate)
@@ -753,6 +811,8 @@ class RustModuleIndex:
             if kind == "attribute_item":
                 pending_path = _path_attribute(node, src) or pending_path
                 continue
+            if kind in ("line_comment", "block_comment"):
+                continue  # a comment between `#[path]` and `mod x;` keeps the path
             if kind == "mod_item":
                 self._child_module(
                     module, node, src, pending_path, file_level, stack, holes
@@ -760,7 +820,13 @@ class RustModuleIndex:
             elif kind == "use_declaration":
                 argument = node.child_by_field_name("argument")
                 if argument is not None:
-                    _flatten_use(argument, src, (), module.imports, module.globs)
+                    found: dict[str, Segs] = {}
+                    _flatten_use(argument, src, (), found, module.globs)
+                    for name, target in found.items():
+                        previous = module.imports.get(name)
+                        if previous is not None and previous != target:
+                            module.conflicts.add(name)
+                        module.imports[name] = target
             elif kind in _ITEM_NODES:
                 name_node = node.child_by_field_name("name")
                 if name_node is not None:
