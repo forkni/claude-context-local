@@ -890,10 +890,11 @@ echo   4. List Indexed Projects
 echo   5. Switch to Project
 echo   6. Clear Project Indexes
 echo   7. View Storage Statistics
+echo   8. Make SCIP Index ^(Rust, rust-analyzer^)
 echo   0. Back to Main Menu
 echo.
 set "pm_choice="
-set /p pm_choice="Select option (0-7): "
+set /p pm_choice="Select option (0-8): "
 
 REM Handle empty input gracefully
 if not defined pm_choice (
@@ -912,9 +913,10 @@ if "!pm_choice!"=="4" goto list_projects_menu
 if "!pm_choice!"=="5" goto switch_to_project
 if "!pm_choice!"=="6" goto clear_project_indexes
 if "!pm_choice!"=="7" goto storage_stats
+if "!pm_choice!"=="8" goto make_scip_index
 if "!pm_choice!"=="0" goto menu_restart
 
-echo [ERROR] Invalid choice. Please select 0-7.
+echo [ERROR] Invalid choice. Please select 0-8.
 pause
 cls
 goto project_management_menu
@@ -1184,6 +1186,51 @@ if errorlevel 1 (
 )
 echo.
 goto menu_restart
+
+:make_scip_index
+echo.
+echo === Make SCIP Index (Rust) ===
+echo.
+echo Runs rust-analyzer scip on an indexed Cargo workspace and stores the result
+echo with a hash of every .rs file in the project's storage folder.
+echo Large workspaces take about 10 minutes and up to 16 GB of RAM ^(hyprzero^).
+echo Close memory-heavy apps first. The graph build does not read this index yet.
+echo.
+
+REM Get project selection
+call :select_indexed_project "make a SCIP index for"
+if errorlevel 1 goto project_management_menu
+
+if not exist "%SELECTED_PROJECT_PATH%\Cargo.toml" goto scip_no_cargo
+
+set "scip_confirm="
+set /p scip_confirm="Start rust-analyzer now? (y/N): "
+if /i not "!scip_confirm!"=="y" goto project_management_menu
+
+REM Release resources from running MCP server (if any) to free RAM first
+netstat -an 2>nul | findstr ":8765" | findstr "LISTENING" >nul 2>&1
+if not errorlevel 1 (
+    echo [INFO] MCP Server detected on port 8765 - releasing resources first...
+    powershell -Command "try { $r = Invoke-WebRequest -Uri 'http://localhost:8765/cleanup' -Method POST -TimeoutSec 10 -UseBasicParsing; Write-Host '[OK] Server resources released' } catch { Write-Host '[WARNING] Could not release server resources:' $_.Exception.Message }"
+    echo.
+)
+
+".\.venv\Scripts\python.exe" tools\scip_index.py --path "%SELECTED_PROJECT_PATH%"
+if errorlevel 1 (
+    echo.
+    echo [ERROR] SCIP index failed with exit code: !ERRORLEVEL!
+)
+echo.
+pause
+goto menu_restart
+
+:scip_no_cargo
+echo.
+echo [ERROR] No Cargo.toml in the selected project - SCIP needs a Cargo workspace root.
+echo         Path: "%SELECTED_PROJECT_PATH%"
+echo.
+pause
+goto project_management_menu
 
 :list_projects_menu
 echo.
