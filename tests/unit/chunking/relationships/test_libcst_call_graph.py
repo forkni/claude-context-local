@@ -717,3 +717,47 @@ class TestLibCSTProgressTicks:
         assert skip_lines, (
             "Expected a '[LIBCST] Skipping ...' warning for the failing file"
         )
+
+
+class TestLibCSTCallSiteLine:
+    """Real libcst run: an edge carries the file line of its first call site."""
+
+    def test_edge_line_is_first_call_site(self, tmp_path: Path) -> None:
+        """Before PositionProvider was requested, every libcst edge had line 0.
+
+        ``g`` calls ``runner.f()`` (module-attribute call) at lines 5 and 7 and
+        ``h()`` at line 6. Expect one edge per pair, at the first call line.
+        """
+        if not libcst_available():
+            pytest.skip("libcst not installed")
+
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "runner.py").write_text(
+            "def f():\n    pass\n\ndef h():\n    pass\n", encoding="utf-8"
+        )
+        (pkg / "t.py").write_text(
+            "from pkg import runner\n"
+            "from pkg.runner import h\n"
+            "\n"
+            "def g():\n"
+            "    runner.f()\n"
+            "    h()\n"
+            "    runner.f()\n",
+            encoding="utf-8",
+        )
+        raw_line_map = {
+            "pkg/runner.py": [
+                (1, 2, "pkg/runner.py:1-2:function:f"),
+                (4, 5, "pkg/runner.py:4-5:function:h"),
+            ],
+            "pkg/t.py": [(4, 7, "pkg/t.py:4-7:function:g")],
+        }
+
+        edges = LibCSTResolver().resolve(tmp_path, raw_line_map, _LOG)
+
+        assert sorted((e.callee_id.rsplit(":", 1)[-1], e.line) for e in edges) == [
+            ("f", 5),
+            ("h", 6),
+        ]

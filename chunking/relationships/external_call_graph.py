@@ -822,9 +822,12 @@ class PyanResolver:
                     skipped += 1
                     continue
 
-                # Line number: callee definition line (best effort).
-                callee_ast = getattr(callee_node, "ast_node", None)
-                line_num: int = getattr(callee_ast, "lineno", 0) if callee_ast else 0
+                # pyan's uses edges are node pairs with no call-site location,
+                # so the line is unknown (0). The callee's definition line is
+                # not a call site: an upgrade would overwrite the AST tier's
+                # correct line with it (call_edge_injection keeps the existing
+                # line when the resolver reports 0).
+                line_num = 0
 
                 # Assign lower confidence to edges added by wildcard fan-out.
                 confidence = (

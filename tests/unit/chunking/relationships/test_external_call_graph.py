@@ -354,6 +354,35 @@ def test_pyan_resolver_direct_edge_confidence(
 
 
 @requires_pyan
+def test_pyan_edge_line_is_unknown_not_callee_definition(
+    two_module_project: dict,
+) -> None:
+    """pyan records no call site, so its edges must report line 0.
+
+    ``helper`` is defined at a.py:1 and called at b.py:4. pyan's uses edges
+    carry no location; reporting the callee's definition line (1) made the
+    edge's ``line`` point into another file, and an upgrade overwrote the
+    AST tier's correct call-site line with it. ``line=0`` means unknown, so
+    the injection upgrade keeps the existing line.
+    """
+    import logging
+
+    edges = PyanResolver().resolve(
+        two_module_project["project_root"],
+        two_module_project["raw_line_map"],
+        logging.getLogger("test_external_call_graph"),
+    )
+    direct = [
+        e
+        for e in edges
+        if e.caller_id == two_module_project["b_raw_id"]
+        and e.callee_id == two_module_project["a_raw_id"]
+    ]
+    assert direct, f"expected b.caller -> a.helper edge, got {edges}"
+    assert [e.line for e in direct] == [0]
+
+
+@requires_pyan
 def test_tracked_visitor_has_expanded_edges_attribute(
     two_module_project: dict,
 ) -> None:

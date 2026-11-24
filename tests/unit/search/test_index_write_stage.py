@@ -3,6 +3,8 @@
 import time
 from unittest.mock import Mock, patch
 
+import pytest
+
 from search.call_edge_injection import InjectionStats
 from search.index_write_stage import IncrementalIndexResult, IndexWriteStage
 
@@ -932,6 +934,50 @@ class TestInjectCallEdgesMultiGraph:
         # The "calls" edge did NOT exist → add_call_edge must be called, not upgrade.
         storage.add_call_edge.assert_called_once()
         storage.upgrade_call_edge.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("resolver_line", "expected_line"),
+        [(0, None), (7, 7)],
+        ids=["unknown-line-keeps-ast-line", "known-line-overwrites"],
+    )
+    def test_upgrade_keeps_existing_line_when_resolver_has_none(
+        self, resolver_line: int, expected_line: int | None
+    ) -> None:
+        """An upgrade with line=0 (pyan: no call-site location) keeps the AST line."""
+        from chunking.relationships.call_edge_resolver import ResolvedEdge
+        from search.config import CallGraphConfig
+
+        caller = "src/a.py:1:function:foo"
+        callee = "src/b.py:1:function:bar"
+        stage, storage, g = self._make_stage_with_real_graph()
+        g.add_edge(caller, callee, key="calls", line=4, resolver_confidence=0.5)
+
+        edge = ResolvedEdge(
+            caller_id=caller,
+            callee_id=callee,
+            line=resolver_line,
+            is_method=False,
+            source="pyan",
+            confidence=0.75,
+        )
+        mock_cfg = Mock()
+        mock_cfg.call_graph = CallGraphConfig(min_confidence=0.0)
+
+        with (
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers",
+                return_value={(caller, callee): edge},
+            ),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
+        ):
+            stage.inject_call_edges("/fake/project")
+
+        storage.upgrade_call_edge.assert_called_once()
+        assert storage.upgrade_call_edge.call_args.kwargs.get("line") == expected_line
 
 
 class TestIndexWriteStageEmbeddingFailure:

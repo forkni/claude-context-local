@@ -4,12 +4,10 @@ Uses LibCST's ``FullyQualifiedNameProvider`` (FQN) to resolve call-sites to
 fully-qualified callee names, then maps both endpoints to graph chunk_ids via
 the shared helpers in ``evaluation/chunk_mapping.py``.
 
-``PositionProvider`` is intentionally *not* requested: it drives its own
-whole-tree ``visit_batched`` pass per file (measured ~10% marginal cost on
-top of FQN resolution) and is only used to populate ``ResolvedEdge.line``,
-which the injection seam treats as optional (a falsy/zero line is simply
-omitted from the output payload — see ``subgraph_extractor.py``). Call-site
-lines for libcst-only edges are therefore always ``0``.
+``PositionProvider`` supplies ``ResolvedEdge.line``: the file line of the
+first call from the caller to the callee. Without it, every libcst edge had
+``line=0``, so an edge found by the resolvers alone (no AST edge underneath
+to keep a line through the upgrade) had no call site.
 
 Why LibCST?
 -----------
@@ -58,6 +56,7 @@ try:
         FullRepoManager,
         FullyQualifiedNameProvider,
         MetadataWrapper,
+        PositionProvider,
     )
 
     _LIBCST_AVAILABLE = True
@@ -88,6 +87,7 @@ if _LIBCST_AVAILABLE:
 
         METADATA_DEPENDENCIES = (
             FullyQualifiedNameProvider,  # type: ignore[name-defined]
+            PositionProvider,  # type: ignore[name-defined]
         )
 
         def __init__(self) -> None:
@@ -190,10 +190,10 @@ if _LIBCST_AVAILABLE:
             if callee_fqn is None:
                 return
 
-            # Line number: PositionProvider is not requested (see module
-            # docstring) — libcst-only edges always report line=0, which the
-            # injection seam treats as "unknown" and omits from the payload.
-            line = 0
+            # Call-site file line (the call's first line). 0 only if the
+            # position is missing, which the injection seam treats as unknown.
+            pos = self.get_metadata(PositionProvider, node, None)
+            line = pos.start.line if pos is not None else 0
 
             self.edges.append((caller_fqn, callee_fqn, line))
 
@@ -300,7 +300,7 @@ class LibCSTResolver:
             logger.warning("[LIBCST] No files relative to project root — skipping")
             return []
 
-        raw_edges: set[tuple[str, str, int, bool]] = set()
+        raw_edges: dict[tuple[str, str, bool], int] = {}
         skipped = 0
 
         try:
@@ -380,7 +380,12 @@ class LibCSTResolver:
                         # Infer whether the caller is a method from its FQN depth.
                         is_method = caller_fqn.count(".") >= 2
 
-                        raw_edges.add((caller_id, callee_id, lineno, is_method))
+                        # One edge per pair: keep the first call site, as
+                        # the merge keys on (caller, callee) anyway.
+                        pair = (caller_id, callee_id, is_method)
+                        prev = raw_edges.get(pair)
+                        if prev is None or 0 < lineno < prev:
+                            raw_edges[pair] = lineno
                 finally:
                     tick()
 
@@ -393,7 +398,7 @@ class LibCSTResolver:
                 source="libcst",
                 confidence=self.base_confidence,
             )
-            for c, t, ln, im in sorted(raw_edges)
+            for (c, t, im), ln in sorted(raw_edges.items())
         ]
 
         logger.info(

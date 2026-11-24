@@ -248,8 +248,8 @@ def inject_call_edges(
                         "is_resolved": True,
                     }
                     # Only overwrite the existing line if this edge actually
-                    # has one — a resolver that doesn't track lines (e.g.
-                    # libcst with PositionProvider dropped) reports line=0,
+                    # has one — a resolver that doesn't know the call site
+                    # (pyan: its uses edges carry no location) reports line=0,
                     # which must not clobber a good AST-sourced line number.
                     if edge.line > 0:
                         upgrade_attrs["line"] = edge.line
