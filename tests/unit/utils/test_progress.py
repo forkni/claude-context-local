@@ -86,6 +86,56 @@ class TestConfigureChildLogging:
         assert root.level == logging.INFO
 
 
+_DYNAMO_CHILD_SCRIPT = """
+import torch._dynamo  # noqa: F401
+from utils.progress import silence_torch_dynamo_logs
+if {silence}:
+    silence_torch_dynamo_logs()
+"""
+
+
+class TestSilenceTorchDynamoLogs:
+    """``TORCH_LOGS=dynamo`` makes torch's atexit hook print empty
+    "TorchDynamo ..." dumps when a resolver worker exits (2026-11-24 hyprzero
+    index log). Runs a real interpreter so the atexit hook actually fires."""
+
+    @staticmethod
+    def _child_stderr(silence: bool) -> str:
+        import os
+        import subprocess
+        from pathlib import Path
+
+        pytest.importorskip("torch")
+        repo_root = Path(__file__).resolve().parents[3]
+        env = {**os.environ, "TORCH_LOGS": "dynamo", "PYTHONPATH": str(repo_root)}
+        proc = subprocess.run(
+            [sys.executable, "-c", _DYNAMO_CHILD_SCRIPT.format(silence=silence)],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=True,
+        )
+        return proc.stderr
+
+    def test_control_child_prints_dynamo_dump(self) -> None:
+        """Proves the probe can go red: without the call, the dump appears."""
+        assert "TorchDynamo" in self._child_stderr(silence=False)
+
+    def test_silenced_child_prints_no_dynamo_dump(self) -> None:
+        assert "TorchDynamo" not in self._child_stderr(silence=True)
+
+    def test_no_op_without_torch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from utils.progress import silence_torch_dynamo_logs
+
+        monkeypatch.delitem(sys.modules, "torch", raising=False)
+        dynamo_logger = logging.getLogger("torch._dynamo")
+        monkeypatch.setattr(dynamo_logger, "level", logging.INFO)
+        silence_torch_dynamo_logs()
+        assert dynamo_logger.level == logging.INFO
+
+
 class _FakeClock:
     """Deterministic stand-in for time.monotonic(), advanced by the test."""
 

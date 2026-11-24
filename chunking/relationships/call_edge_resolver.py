@@ -374,11 +374,16 @@ def _resolve_in_subprocess(
     """
     import logging
 
-    from utils.progress import configure_child_logging
+    from utils.progress import configure_child_logging, silence_torch_dynamo_logs
 
     configure_child_logging(log_level)
     child_logger = logging.getLogger(f"{__name__}.subprocess.{resolver.name}")
-    return resolver.resolve(project_root, raw_line_map, child_logger, py_files)
+    try:
+        return resolver.resolve(project_root, raw_line_map, child_logger, py_files)
+    finally:
+        # After the work: torch (if the worker imported it) is loaded by now,
+        # so the level sticks until the worker's atexit hooks run.
+        silence_torch_dynamo_logs()
 
 
 def run_resolvers(

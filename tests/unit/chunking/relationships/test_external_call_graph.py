@@ -842,6 +842,66 @@ class TestPrescanFileIsolation:
         assert skip_lines, "Expected a '[PYAN] skipping ...' warning for b.py"
         assert any("b.py" in line for line in skip_lines)
 
+    @requires_pyan
+    def test_scope_error_fragment_is_skipped_once_without_traceback(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        """A function-body fragment (module-level ``def`` holding ``nonlocal``)
+        passes ``ast.parse`` but fails pyan's ``symtable`` pass. It must cost
+        one warning line with the SyntaxError text, no traceback, and no
+        retries in pass 1 and pass 2 (2026-11-24 hyprzero ``*.body.py`` files:
+        3 lines + a traceback per file before this)."""
+        import logging
+
+        import chunking.relationships.external_call_graph as ecg
+
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        (pkg / "a.py").write_text(
+            dedent("""\
+            def helper():
+                pass
+            """)
+        )
+        (pkg / "b.py").write_text(
+            dedent("""\
+            from pkg.a import helper
+
+            def caller():
+                helper()
+            """)
+        )
+        (pkg / "frag.py").write_text(
+            dedent("""\
+            cached = None
+            def status():
+                nonlocal cached
+                return cached
+            """)
+        )
+
+        raw_line_map = {
+            "pkg/a.py": [(1, 2, "pkg/a.py:1-2:function:helper")],
+            "pkg/b.py": [(3, 4, "pkg/b.py:3-4:function:caller")],
+            "pkg/frag.py": [(2, 4, "pkg/frag.py:2-4:function:status")],
+        }
+        log = logging.getLogger("test_ecg_prescan_scope_error")
+
+        with caplog.at_level(logging.WARNING):
+            edges = ecg.build_call_edges(tmp_path, raw_line_map, log)
+
+        callers = {edge[0] for edge in edges}
+        assert "pkg/b.py:3-4:function:caller" in callers
+        frag_records = [
+            r
+            for r in caplog.records
+            if "[PYAN] skipping" in r.getMessage() and "frag.py" in r.getMessage()
+        ]
+        assert len(frag_records) == 1, [r.getMessage() for r in frag_records]
+        assert frag_records[0].exc_info is None
+        assert "no binding for nonlocal 'cached'" in frag_records[0].getMessage()
+
 
 class TestBomTolerantPyanReader:
     """Direct tests of the _bom_tolerant_pyan_reader context manager, isolated

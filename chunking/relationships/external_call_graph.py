@@ -168,6 +168,12 @@ try:
             self._aborted = False
             self._seen_files: set[str] = set()
             self._failed_files: set[str] = set()
+            # Files whose prescan raised SyntaxError (e.g. a function-body
+            # fragment whose module-level def holds `nonlocal x`: ast.parse
+            # accepts it, symtable rejects it). The same check repeats in
+            # process_one, so pass 1/2 skip these files instead of failing
+            # and logging them twice more.
+            self._prescan_syntax_failed: set[str] = set()
             self.call_position_names = {}
             super().__init__(filenames, root=root, logger=logger)
 
@@ -282,6 +288,17 @@ try:
                 return
             try:
                 super()._prescan_one(filename)
+            except SyntaxError as exc:
+                # A file-content error, not a pyan defect: one line, no
+                # traceback (the message and line say everything).
+                self._failed_files.add(filename)
+                self._prescan_syntax_failed.add(filename)
+                self.logger.warning(
+                    "[PYAN] skipping %s: %s (line %s) -- fails Python's scope check",
+                    filename,
+                    exc.msg,
+                    exc.lineno,
+                )
             except Exception:  # noqa: BLE001 - resilience: one bad file must not cost the whole pyan tier
                 first_sight = filename not in self._failed_files
                 self._failed_files.add(filename)
@@ -303,6 +320,11 @@ try:
             pass_no = 2 if filename in self._seen_files else 1
             self._seen_files.add(filename)
             if self._past_deadline():
+                return
+            if filename in self._prescan_syntax_failed:
+                # Already reported by _prescan_one; the same symtable check
+                # would fail here again in both passes.
+                self._tick(phase=f"pass {pass_no}")
                 return
             # pyan's scope context managers push these stacks BEFORE they look
             # the scope up (analyzer.py _function_scope/_class_scope) and do

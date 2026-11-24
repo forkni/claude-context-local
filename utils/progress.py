@@ -61,6 +61,21 @@ def configure_child_logging(level: int) -> None:
     root._code_search_child_logging_configured = True  # type: ignore[attr-defined]
 
 
+def silence_torch_dynamo_logs() -> None:
+    """Raise ``torch._dynamo`` to WARNING in this process, if torch is loaded.
+
+    With ``TORCH_LOGS`` naming ``dynamo`` (set machine-wide on the dev box
+    2026-11-24), ``import torch`` sets ``torch._dynamo`` to INFO, and its
+    atexit hook then prints empty "TorchDynamo attempted to trace" dumps when a
+    resolver worker exits. ``import torch`` resets the level, so a level set
+    before the import is lost: call this after the worker's work, once torch
+    is in ``sys.modules``. ``mcp_server/server.py`` does the same for the
+    parent. No-op when torch was never imported.
+    """
+    if "torch" in sys.modules:
+        logging.getLogger("torch._dynamo").setLevel(logging.WARNING)
+
+
 def _format_duration(seconds: float) -> str:
     total_seconds = int(seconds)
     if total_seconds < 60:
