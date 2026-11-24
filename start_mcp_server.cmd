@@ -1194,7 +1194,7 @@ echo.
 echo Runs rust-analyzer scip on an indexed Cargo workspace and stores the result
 echo with a hash of every .rs file in the project's storage folder.
 echo Large workspaces take about 10 minutes and up to 16 GB of RAM ^(hyprzero^).
-echo Close memory-heavy apps first. The graph build does not read this index yet.
+echo Close memory-heavy apps first. Set call_graph.rust_scip to true, then reindex, to use it.
 echo.
 
 REM Get project selection

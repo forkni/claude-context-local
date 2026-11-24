@@ -106,18 +106,28 @@ def make_scip_index(
         version: rust-analyzer version text; None asks the executable.
         decode: Also write the reference table (``refs.sqlite``) from the index.
 
+    The three output files are written under temporary names and renamed only
+    after all of them exist: index, then table, then the manifest last, so the
+    manifest's hashes never describe files from an older run. On any failure the
+    temporary files are removed and the previous output stays.
+
     Returns:
         The manifest that was written.
 
     Raises:
         FileNotFoundError: ``project`` has no ``Cargo.toml``.
         RuntimeError: rust-analyzer failed or wrote no index.
+        ValueError, IndexError: the index could not be decoded.
     """
     if not (project / "Cargo.toml").is_file():
         raise FileNotFoundError(f"no Cargo.toml in {project}")
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp_index = out_dir / f"{INDEX_NAME}.tmp"
-    tmp_index.unlink(missing_ok=True)
+    tmp_refs = out_dir / f"{REFS_NAME}.new"
+    tmp_manifest = out_dir / f"{MANIFEST_NAME}.tmp"
+    temporaries = (tmp_index, tmp_refs, tmp_manifest)
+    for tmp in temporaries:
+        tmp.unlink(missing_ok=True)
 
     before = hash_rust_files(project)
     env = dict(os.environ)
@@ -130,13 +140,36 @@ def make_scip_index(
     if code != 0 or not tmp_index.is_file():
         tmp_index.unlink(missing_ok=True)
         raise RuntimeError(f"rust-analyzer scip exited {code} after {wall:.0f} s")
+    try:
+        manifest = _finish(
+            project, out_dir, rust_analyzer, before, wall, version, decode, temporaries
+        )
+    except BaseException:
+        for tmp in temporaries:
+            tmp.unlink(missing_ok=True)
+        raise
+    return manifest
+
+
+def _finish(
+    project: Path,
+    out_dir: Path,
+    rust_analyzer: str,
+    before: dict[str, str],
+    wall: float,
+    version: str | None,
+    decode: bool,
+    temporaries: tuple[Path, Path, Path],
+) -> dict:
+    """Hash again, decode, write the manifest, then rename all outputs into place."""
+    tmp_index, tmp_refs, tmp_manifest = temporaries
     after = hash_rust_files(project)
 
     changed = sorted(
         p for p in before.keys() | after.keys() if before.get(p) != after.get(p)
     )
     files = {p: h for p, h in sorted(after.items()) if p not in changed}
-    refs = write_refs_table(tmp_index, out_dir / REFS_NAME) if decode else None
+    refs = write_refs_table(tmp_index, tmp_refs) if decode else None
     manifest = {
         "format": MANIFEST_FORMAT,
         "created": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -148,9 +181,10 @@ def make_scip_index(
         "refs": refs,
         "files": files,
     }
-    tmp_manifest = out_dir / f"{MANIFEST_NAME}.tmp"
     tmp_manifest.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     os.replace(tmp_index, out_dir / INDEX_NAME)
+    if decode:
+        os.replace(tmp_refs, out_dir / REFS_NAME)
     os.replace(tmp_manifest, out_dir / MANIFEST_NAME)
     return manifest
 
@@ -210,6 +244,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.digest_only:
         return _digest_only(project)
     rust_analyzer = find_rust_analyzer(args.rust_analyzer)
+    if rust_analyzer is None and args.rust_analyzer:
+        print(
+            f"[ERROR] --rust-analyzer {args.rust_analyzer} is not a file or a command on PATH."
+        )
+        return 2
     if rust_analyzer is None:
         print(
             "[ERROR] rust-analyzer not found. Install it: rustup component add rust-analyzer"
@@ -233,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest = make_scip_index(
             project, out_dir, rust_analyzer, target_dir=target_dir
         )
-    except (FileNotFoundError, RuntimeError, OSError) as exc:
+    except (FileNotFoundError, RuntimeError, OSError, ValueError, IndexError) as exc:
         print(f"[ERROR] {exc}")
         return 1
     print(
@@ -257,13 +296,31 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _digest_only(project: Path) -> int:
+    """Rebuild ``refs.sqlite`` from the stored index and record it in the manifest.
+
+    Refuses without a manifest: the table is only usable with the hashes of the
+    run that made the index.
+    """
     out_dir = _storage_scip_dir(project)
-    if out_dir is None or not (out_dir / INDEX_NAME).is_file():
-        print(f"[ERROR] No SCIP index for {project}. Run without --digest-only first.")
+    if (
+        out_dir is None
+        or not (out_dir / INDEX_NAME).is_file()
+        or not (out_dir / MANIFEST_NAME).is_file()
+    ):
+        print(
+            f"[ERROR] No SCIP index and manifest for {project}. "
+            "Run without --digest-only first."
+        )
         return 2
+    tmp_manifest = out_dir / f"{MANIFEST_NAME}.tmp"
     try:
+        manifest = json.loads((out_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
         refs = write_refs_table(out_dir / INDEX_NAME, out_dir / REFS_NAME)
-    except (OSError, ValueError) as exc:
+        manifest["refs"] = refs
+        tmp_manifest.write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+        os.replace(tmp_manifest, out_dir / MANIFEST_NAME)
+    except (OSError, ValueError, IndexError) as exc:
+        tmp_manifest.unlink(missing_ok=True)
         print(f"[ERROR] {exc}")
         return 1
     print(

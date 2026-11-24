@@ -152,14 +152,62 @@ def test_writes_reference_table(workspace: Path, tmp_path: Path) -> None:
     assert json.loads((out / "manifest.json").read_text(encoding="utf-8")) == manifest
 
 
-def test_digest_only_rebuilds_the_table(
+def test_digest_only_rebuilds_the_table_and_manifest_counts(
+    workspace: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    out = tmp_path / "scip"
+    make_scip_index(
+        workspace, out, "ra", runner=_index_runner, version="v", decode=False
+    )
+    assert (
+        json.loads((out / "manifest.json").read_text(encoding="utf-8"))["refs"] is None
+    )
+    monkeypatch.setattr(scip_index, "_storage_scip_dir", lambda project: out)
+    assert scip_index.main(["--path", str(workspace), "--digest-only"]) == 0
+    assert (out / "refs.sqlite").is_file()
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["refs"]["refs"] == 1
+    assert sorted(manifest["files"]) == ["src/b.rs", "src/lib.rs"]
+    assert "1 references" in capsys.readouterr().out
+    assert not list(out.glob("*.tmp"))
+
+
+def test_digest_only_refuses_without_manifest(
     workspace: Path, tmp_path: Path, monkeypatch, capsys
 ) -> None:
     out = tmp_path / "scip"
     out.mkdir()
     (out / "index.scip").write_bytes(_INDEX)
     monkeypatch.setattr(scip_index, "_storage_scip_dir", lambda project: out)
-    monkeypatch.setattr(scip_index, "find_rust_analyzer", lambda explicit=None: None)
-    assert scip_index.main(["--path", str(workspace), "--digest-only"]) == 0
-    assert (out / "refs.sqlite").is_file()
-    assert "1 references" in capsys.readouterr().out
+    assert scip_index.main(["--path", str(workspace), "--digest-only"]) == 2
+    assert not (out / "refs.sqlite").exists()
+    assert "manifest" in capsys.readouterr().out
+
+
+def test_undecodable_index_keeps_previous_output(
+    workspace: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "scip"
+    first = make_scip_index(workspace, out, "ra", runner=_index_runner, version="v")
+    table = (out / "refs.sqlite").read_bytes()
+
+    def garbage(cmd: list[str], env: dict[str, str]) -> int:
+        # Field 2, length 5, but only 1 byte follows: a truncated document.
+        Path(cmd[cmd.index("--output") + 1]).write_bytes(bytes([0x12, 0x05, 0x0A]))
+        return 0
+
+    with pytest.raises((ValueError, IndexError)):
+        make_scip_index(workspace, out, "ra", runner=garbage, version="v")
+    assert (out / "index.scip").read_bytes() == _INDEX
+    assert (out / "refs.sqlite").read_bytes() == table
+    assert json.loads((out / "manifest.json").read_text(encoding="utf-8")) == first
+    leftovers = [p.name for p in out.iterdir() if p.suffix in {".tmp", ".new"}]
+    assert leftovers == []
+
+
+def test_cli_reports_a_bad_rust_analyzer_path(workspace: Path, capsys) -> None:
+    bad = str(workspace / "no-such-ra.exe")
+    assert scip_index.main(["--path", str(workspace), "--rust-analyzer", bad]) == 2
+    out = capsys.readouterr().out
+    assert "is not a file or a command" in out
+    assert "rustup" not in out

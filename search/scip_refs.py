@@ -164,7 +164,17 @@ def write_refs_table(index_path: Path, out_path: Path) -> dict[str, int]:
         ``{"symbols": n, "external": n, "multi_def": n, "refs": n}``; ``multi_def``
         counts symbols with more than one definition.
     """
-    data = index_path.read_bytes()
+    tmp = out_path.with_name(out_path.name + ".tmp")
+    try:
+        stats = _write_refs_table(index_path.read_bytes(), tmp)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    os.replace(tmp, out_path)
+    return stats
+
+
+def _write_refs_table(data: bytes, tmp: Path) -> dict[str, int]:
     ids: dict[bytes, int] = {}
     names: dict[int, str] = {}
     definitions: dict[int, set[tuple[str, int]]] = {}
@@ -185,7 +195,6 @@ def write_refs_table(index_path: Path, out_path: Path) -> dict[str, int]:
         else:
             refs.append((path, line, symbol_id))
 
-    tmp = out_path.with_name(out_path.name + ".tmp")
     tmp.unlink(missing_ok=True)
     con = sqlite3.connect(tmp)
     try:
@@ -217,7 +226,6 @@ def write_refs_table(index_path: Path, out_path: Path) -> dict[str, int]:
         con.commit()
     finally:
         con.close()
-    os.replace(tmp, out_path)
     return {
         "symbols": len(ids),
         "external": sum(1 for sid in names if sid not in definitions),
