@@ -173,6 +173,30 @@ def smart_dedent(code: str) -> str:
         return wrap_with_if_true(dedented)
 
 
+def smart_dedent_with_line_shift(code: str) -> tuple[str, int]:
+    """Run :func:`smart_dedent` and report how its line numbers map back to *code*.
+
+    ``smart_dedent`` strips leading blank lines and may prepend an
+    ``if True:`` wrapper line, so a line number parsed from its output is not
+    the same line of *code*. Line ``p`` (1-based) of the returned text is line
+    ``p + shift`` of *code*.
+
+    Args:
+        code: Source code string, as given to ``smart_dedent``.
+
+    Returns:
+        ``(dedented, shift)``: the ``smart_dedent`` result and the line shift.
+    """
+    dedented = smart_dedent(code)
+    lines = code.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    stripped = 0
+    while stripped < len(lines) and not lines[stripped].strip():
+        stripped += 1
+    first = lines[stripped].strip() if stripped < len(lines) else ""
+    wrapped = dedented.startswith("if True:\n") and not first.startswith("if True:")
+    return dedented, stripped - (1 if wrapped else 0)
+
+
 def wrap_with_if_true(code: str) -> str:
     """Wrap code with 'if True:' block as fallback for flush-left content.
 

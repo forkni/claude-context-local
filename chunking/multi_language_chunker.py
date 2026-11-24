@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 # Import utilities from new modules
 from .dedent_utils import smart_dedent as _smart_dedent
+from .dedent_utils import smart_dedent_with_line_shift as _smart_dedent_with_line_shift
 from .language_registry import (
     DEFAULT_IGNORED_DIRS,
     LANGUAGE_NODE_TYPE_OVERRIDES,
@@ -52,6 +53,56 @@ except ImportError:
     CALL_GRAPH_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+_SPLIT_BLOCK_MARKER = "# ... (split block)"
+
+
+def _python_edge_file_line(
+    parsed_line: int,
+    chunk_start_line: int,
+    line_shift: int,
+    split_marker_line: int | None,
+) -> int:
+    """Map a line parsed from a dedented Python chunk to its file line.
+
+    Args:
+        parsed_line: 1-based line in the dedented chunk text (``ast`` ``lineno``).
+            ``0`` means unknown and is returned unchanged.
+        chunk_start_line: File line where the chunk starts.
+        line_shift: Shift from :func:`smart_dedent_with_line_shift`.
+        split_marker_line: For a split_block, the 1-based line of the split
+            marker in the dedented text, else ``None``. A split_block's text is
+            the function signature, the marker, then body lines that start at
+            ``chunk_start_line``; a line in the signature or marker region has
+            no file line of its own inside this chunk, so it maps to
+            ``chunk_start_line``.
+
+    Returns:
+        The 1-based file line.
+    """
+    if parsed_line <= 0:
+        return parsed_line
+    if split_marker_line is not None:
+        if parsed_line <= split_marker_line:
+            return chunk_start_line
+        return chunk_start_line + parsed_line - split_marker_line - 1
+    return chunk_start_line + parsed_line + line_shift - 1
+
+
+def _python_edges_to_file_lines(
+    chunk: CodeChunk, dedented_content: str, line_shift: int, chunk_start_line: int
+) -> None:
+    """Rewrite ``chunk.calls`` and ``chunk.relationships`` lines to file lines, in place."""
+    split_marker_line: int | None = None
+    if chunk.chunk_type == "split_block":
+        for index, text in enumerate(dedented_content.split("\n"), start=1):
+            if _SPLIT_BLOCK_MARKER in text:
+                split_marker_line = index
+                break
+    for edge in [*(chunk.calls or []), *(chunk.relationships or [])]:
+        edge.line_number = _python_edge_file_line(
+            edge.line_number, chunk_start_line, line_shift, split_marker_line
+        )
 
 
 @dataclass
@@ -992,9 +1043,12 @@ class MultiLanguageChunker:
 
             # Dedent once and share between call-graph and phase-3 relationship
             # extraction — both operate on identical Python source (perf: dedent-once).
-            dedented_content = (
-                _smart_dedent(tchunk.content) if tchunk.language == "python" else None
-            )
+            dedented_content: str | None = None
+            line_shift = 0
+            if tchunk.language == "python":
+                dedented_content, line_shift = _smart_dedent_with_line_shift(
+                    tchunk.content
+                )
 
             # Extract call graph relationships
             self._extract_call_relationships(chunk, tchunk, chunk_id, dedented_content)
@@ -1003,6 +1057,14 @@ class MultiLanguageChunker:
             self._extract_phase3_relationships(
                 chunk, tchunk, chunk_id, dedented_content
             )
+
+            # Python extractors parse the dedented chunk, so their line numbers
+            # count from the chunk; every other language's edges come from a
+            # whole-file tree-sitter parse and are already file lines.
+            if dedented_content is not None:
+                _python_edges_to_file_lines(
+                    chunk, dedented_content, line_shift, tchunk.start_line
+                )
 
             # chunk.imports (for languages whose spec row sets
             # imports_from_relationships) is populated inside

@@ -2288,6 +2288,114 @@ class TestNameResolutionFence(TestCase):
         self.assertEqual(kwargs["callee_name"], "views.py:1-5:function:view")
 
 
+class TestLanguageGroupFence(TestCase):
+    """A call edge links two chunks only inside one language group
+    (CONTEXT.md "Language group"). hyprzero 2026-11-24: Python `Path(...)`
+    resolved uniquely to a Rust `struct Path`; `.process()` fanned out to every
+    Rust `process` (evaluation/LANGUAGE_FENCE_A1_SAMPLE_20261124.md)."""
+
+    def _build(self, specs):
+        storage = Mock()
+        storage.__len__ = Mock(return_value=0)
+        graph = GraphIntegration.from_storage(storage)
+        stats = graph._two_pass_build(specs, clear=False)
+        targets = [
+            c.kwargs["callee_name"] for c in storage.add_call_edge.call_args_list
+        ]
+        return stats, targets
+
+    @staticmethod
+    def _call(name, *, method=False):
+        return [{"callee_name": name, "line_number": 3, "is_method_call": method}]
+
+    def test_python_call_does_not_resolve_to_unique_rust_item(self):
+        stats, targets = self._build(
+            [
+                _spec(
+                    "g.rs:1-4:struct:Path", "Path", language="rust", chunk_type="struct"
+                ),
+                _spec("tool.py:1-5:function:main", "main", calls=self._call("Path")),
+            ]
+        )
+        self.assertEqual(targets, ["Path"])
+        self.assertEqual(stats["phantom_edges"], 1)
+        self.assertEqual(stats["resolved_edges"], 0)
+
+    def test_python_call_does_not_fan_out_to_rust_methods(self):
+        stats, targets = self._build(
+            [
+                _spec(
+                    "a.rs:1-3:method:A.process",
+                    "process",
+                    language="rust",
+                    chunk_type="method",
+                ),
+                _spec(
+                    "b.rs:1-3:method:B.process",
+                    "process",
+                    language="rust",
+                    chunk_type="method",
+                ),
+                _spec(
+                    "qa.py:1-5:function:run",
+                    "run",
+                    calls=self._call("process", method=True),
+                ),
+            ]
+        )
+        self.assertEqual(targets, ["process"])
+        self.assertEqual(stats["ambiguous_edges"], 0)
+
+    def test_rust_call_does_not_resolve_to_python_function(self):
+        _, targets = self._build(
+            [
+                _spec("qa.py:1-3:function:expect", "expect"),
+                _spec(
+                    "lib.rs:1-5:function:load",
+                    "load",
+                    language="rust",
+                    calls=self._call("expect", method=True),
+                ),
+            ]
+        )
+        self.assertNotIn("qa.py:1-3:function:expect", targets)
+
+    def test_same_group_still_resolves(self):
+        """C and C++ share a group; TypeScript and JavaScript share a group."""
+        _, targets = self._build(
+            [
+                _spec("u.c:1-3:function:helper", "helper", language="c"),
+                _spec(
+                    "m.cpp:1-5:function:main",
+                    "main",
+                    language="cpp",
+                    calls=self._call("helper"),
+                ),
+                _spec("w.js:1-3:function:render", "render", language="javascript"),
+                _spec(
+                    "v.ts:1-5:function:draw",
+                    "draw",
+                    language="typescript",
+                    calls=self._call("render"),
+                ),
+            ]
+        )
+        self.assertIn("u.c:1-3:function:helper", targets)
+        self.assertIn("w.js:1-3:function:render", targets)
+
+    def test_own_group_definition_wins_over_other_language(self):
+        _, targets = self._build(
+            [
+                _spec(
+                    "g.rs:1-4:struct:Path", "Path", language="rust", chunk_type="struct"
+                ),
+                _spec("paths.py:1-4:class:Path", "Path", chunk_type="class"),
+                _spec("tool.py:1-5:function:main", "main", calls=self._call("Path")),
+            ]
+        )
+        self.assertEqual(targets, ["paths.py:1-4:class:Path"])
+
+
 class TestPseudoLanguageHelpers(TestCase):
     def test_is_pseudo_language_node_and_ordering(self):
         from search.graph_integration import (

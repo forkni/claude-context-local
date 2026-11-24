@@ -95,6 +95,7 @@ for avoiding re-litigating settled questions.
 | [0087](0087-recover-dropped-c-family-regions.md) | Recover dropped C-family regions: parse-only repairs, preamble descent, doc-comment adoption | accepted | 2026-10-14 |
 | [0088](0088-cudnn-attention-for-listwise-reranker.md) | Run the Jina listwise reranker on cuDNN fused attention by default | accepted | 2026-10-19 |
 | [0089](0089-relicense-gpl-3-0-only.md) | Relicense the project as GPL-3.0-only | accepted | 2026-10-22 |
+| [0090](0090-language-group-fence-for-call-edges.md) | Resolve call targets only inside the caller's language group | accepted | 2026-11-24 |
 
 ## Adding a new ADR
 

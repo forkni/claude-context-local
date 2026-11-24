@@ -261,6 +261,51 @@ _C_FAMILY_LANGUAGES: frozenset[str] = frozenset({"c", "cpp"})
 # to be identical (e.g. separator-agnostic indexing, the fan-out cap).
 _RUST_LANGUAGES: frozenset[str] = frozenset({"rust"})
 
+# Language groups (CONTEXT.md "Language group"): languages whose code can call
+# each other directly. A language not listed here is a group of its own.
+_LANGUAGE_GROUPS: dict[str, str] = {
+    "c": "c_family",
+    "cpp": "c_family",
+    "javascript": "js_ts",
+    "typescript": "js_ts",
+    "tsx": "js_ts",
+}
+
+# Real cross-group call pairs (caller group, callee group) to keep, e.g. a
+# Python package that loads a Rust extension through pyo3. Empty on purpose:
+# no measured case exists yet (hyprzero and twozero-dev 2026-11-24 had 0 real
+# edges in 427 checked). Adding a pair needs that kind of evidence.
+_CROSS_GROUP_CALL_ALLOWLIST: frozenset[tuple[str, str]] = frozenset()
+
+
+def _language_group(language: str | None) -> str:
+    """Return the language group of *language* (itself when not grouped)."""
+    lang = language or ""
+    return _LANGUAGE_GROUPS.get(lang, lang)
+
+
+def _call_target_map(
+    name_maps: dict[str, defaultdict[str, list[str]]], caller_language: str | None
+) -> dict[str, list[str]]:
+    """Return the name map a call from *caller_language* may resolve against.
+
+    The caller's own group map, plus any allowlisted callee groups. A read-only
+    lookup view: the per-group maps themselves are never mutated here.
+    """
+    group = _language_group(caller_language)
+    extra = [
+        callee for caller, callee in _CROSS_GROUP_CALL_ALLOWLIST if caller == group
+    ]
+    own: dict[str, list[str]] = name_maps.get(group) or {}
+    if not extra:
+        return own
+    merged: dict[str, list[str]] = {name: list(ids) for name, ids in own.items()}
+    for callee_group in extra:
+        for name, ids in (name_maps.get(callee_group) or {}).items():
+            merged.setdefault(name, []).extend(ids)
+    return merged
+
+
 # C-family sibling of `_COMMON_METHODS`: STL container/smart-pointer/idiom
 # member names that are almost certainly library targets (std::vector,
 # std::string, std::unique_ptr, std::atomic, std::map, ...) when the
@@ -606,10 +651,17 @@ class GraphIntegration:
                 method_src,
                 {"chunk_id": fake_chunk_id, "parent_class": parent_name},
             )
+            # method_src starts at the def line, so the extractor's lines
+            # count from it; shift them to file lines like every other edge.
+            def_line = best_func.lineno
             result = [
                 {
                     "callee_name": ce.callee_name,
-                    "line_number": ce.line_number,
+                    "line_number": (
+                        ce.line_number + def_line - 1
+                        if ce.line_number > 0
+                        else ce.line_number
+                    ),
                     "is_method_call": ce.is_method_call,
                     "callee_qualified": ce.callee_qualified,
                 }
@@ -839,11 +891,19 @@ class GraphIntegration:
         if not specs:
             return {}
 
-        # === PASS 1: add nodes + build symbol-resolution map ===
-        name_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
+        # === PASS 1: add nodes + build symbol-resolution maps ===
+        # One map per language group (CONTEXT.md "Language group"): a call
+        # only resolves among chunks of its own group, so a Python
+        # `Path(...)` or `.pop()` never lands on a Rust `Path`/`pop`
+        # (hyprzero 2026-11-24: 0/80 sampled python->rust edges real,
+        # evaluation/LANGUAGE_FENCE_A1_SAMPLE_20261124.md).
+        name_maps: dict[str, defaultdict[str, list[str]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
         nodes_added = 0
 
         for spec in specs:
+            group_map = name_maps[_language_group(spec.language)]
             try:
                 self.storage.add_node(
                     chunk_id=spec.chunk_id,
@@ -861,13 +921,11 @@ class GraphIntegration:
 
                 # Index names for call-target resolution (skip "unknown" placeholder)
                 if spec.name and spec.name != "unknown":
-                    name_to_chunk_ids[spec.name].append(spec.chunk_id)
+                    group_map[spec.name].append(spec.chunk_id)
                     if "." in spec.name:
-                        name_to_chunk_ids[spec.name.split(".")[-1]].append(
-                            spec.chunk_id
-                        )
+                        group_map[spec.name.split(".")[-1]].append(spec.chunk_id)
                     if spec.parent_name:
-                        name_to_chunk_ids[f"{spec.parent_name}.{spec.name}"].append(
+                        group_map[f"{spec.parent_name}.{spec.name}"].append(
                             spec.chunk_id
                         )
 
@@ -906,17 +964,13 @@ class GraphIntegration:
                         spec.language in _C_FAMILY_LANGUAGES
                         or spec.language in _RUST_LANGUAGES
                     ) and ("::" in spec.name):
-                        name_to_chunk_ids[spec.name.split("::")[-1]].append(
-                            spec.chunk_id
-                        )
-                        name_to_chunk_ids[spec.name.replace("::", ".")].append(
-                            spec.chunk_id
-                        )
+                        group_map[spec.name.split("::")[-1]].append(spec.chunk_id)
+                        group_map[spec.name.replace("::", ".")].append(spec.chunk_id)
                     if (
                         spec.language in _C_FAMILY_LANGUAGES
                         or spec.language in _RUST_LANGUAGES
                     ) and spec.parent_name:
-                        name_to_chunk_ids[f"{spec.parent_name}::{spec.name}"].append(
+                        group_map[f"{spec.parent_name}::{spec.name}"].append(
                             spec.chunk_id
                         )
             except (AttributeError, KeyError, TypeError) as e:
@@ -942,6 +996,7 @@ class GraphIntegration:
         file_scripted_by_edges = 0
 
         for spec in specs:
+            name_to_chunk_ids = _call_target_map(name_maps, spec.language)
             try:
                 for call in spec.calls:
                     callee_name = call["callee_name"]
