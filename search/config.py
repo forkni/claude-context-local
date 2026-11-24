@@ -1672,7 +1672,7 @@ class QueryExpansionConfig:
 
 @dataclass
 class CallGraphConfig:
-    """Call-graph resolver pipeline settings (13 fields).
+    """Call-graph resolver pipeline settings (14 fields).
 
     Controls which static-analysis backends run at full-index time to inject
     cross-module ``calls`` edges into the code graph.
@@ -1952,6 +1952,23 @@ class CallGraphConfig:
     ambiguous stratum's own 0.375 precision -- that stratum is hidden by
     default (``hide_ambiguous_edges_default``) regardless of this cap's
     value, see ADR-0070 for the failure-mode breakdown.
+    """
+
+    rust_use_paths: bool = field(
+        default=True,
+        metadata=spec(reader="search/graph_integration.py"),
+    )
+    """Resolve Rust call paths through ``use`` imports and the module tree.
+
+    When on, ``GraphIntegration._two_pass_build`` reads each Rust caller's
+    Cargo workspace from disk (``search.rust_module_index.RustModuleIndex``)
+    and, for plain and path calls (not ``x.m()`` receiver calls), narrows the
+    candidates to the module the path names, or writes no resolved edge when
+    the path leads to ``std``/``core``/``alloc`` or a declared outside
+    dependency. Paths it cannot decide keep today's resolution. Rust only:
+    other languages stay byte-identical. On since the ADR-0091 hand-label gate
+    passed (40/40 rows on hyprzero, +10.3 s graph build); set False to get the
+    ADR-0070 name-only tier back.
     """
 
     def __post_init__(self) -> None:

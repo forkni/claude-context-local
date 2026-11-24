@@ -2685,3 +2685,42 @@ class TestClassContainsMethodEdge(TestCase):
         self.graph.add_chunk(self.CLS, meta)
 
         self.assertEqual(self._contains_edges(), [])
+
+
+class TestRustUsePathsKnob(TestCase):
+    """ADR-0091: the rust_use_paths knob never touches non-Rust call sites."""
+
+    def _edges(self, enabled: bool) -> list:
+        from search.config import SearchConfig
+
+        config = SearchConfig()
+        config.call_graph.rust_use_paths = enabled
+        storage = Mock()
+        storage.__len__ = Mock(return_value=0)
+        graph = GraphIntegration.from_storage(storage)
+        results = [
+            _make_result("f.py:1-5:function:helper", name="helper"),
+            _make_result("g.py:1-5:function:helper", name="helper", file_path="g.py"),
+            _make_result(
+                "f.py:10-20:function:main",
+                name="main",
+                calls=[
+                    {
+                        "callee_name": "helper",
+                        "line_number": 12,
+                        "is_method_call": False,
+                    },
+                    {
+                        "callee_name": "Arc.new",
+                        "line_number": 13,
+                        "is_method_call": False,
+                    },
+                ],
+            ),
+        ]
+        with patch("search.graph_integration.get_search_config", return_value=config):
+            graph.populate_from_embeddings(results)
+        return storage.add_call_edge.call_args_list
+
+    def test_python_build_is_identical_with_knob_on(self):
+        self.assertEqual(self._edges(True), self._edges(False))

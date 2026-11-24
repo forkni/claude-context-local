@@ -2,6 +2,7 @@
 
 import ast
 import logging
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -29,6 +30,169 @@ from search.chunk_id import is_chunk_id as _is_chunk_id
 from search.config import get_search_config
 from search.graph_view import GraphView
 from utils.path_utils import normalize_path
+
+
+def _chunk_line_span(chunk_id: str) -> tuple[int, int] | None:
+    """``(start, end)`` from a chunk id's ``"start-end"`` segment, or None."""
+    parts = chunk_id.split(":")
+    if len(parts) >= 2:
+        start, _, end = parts[1].partition("-")
+        try:
+            return int(start), int(end or start)
+        except ValueError:
+            return None
+    return None
+
+
+def _rust_call_segments(
+    callee_name: str, callee_qualified: str | None
+) -> list[str] | None:
+    """A Rust plain or path call's ``::`` segments, generic arguments removed.
+
+    ``Vec::<u8>::new`` -> ``["Vec", "new"]``. None for a qualified-self path
+    (``<T as Trait>::m``), which only type information can resolve.
+    """
+    if not callee_qualified:
+        return [callee_name]
+    if callee_qualified.startswith("<"):
+        return None
+    text, depth, out = callee_qualified, 0, []
+    for ch in text:
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth -= 1
+        elif depth == 0:
+            out.append(ch)
+    segments = [s.strip() for s in "".join(out).split("::")]
+    return [s for s in segments if s] or None
+
+
+class _RustUsePass:
+    """One build's Rust use-path decisions (ADR-0091 "D").
+
+    :meth:`decide` returns None to leave a call to today's resolution, or
+    ``(resolution, targets)``: an empty ``targets`` refuses the call (only the
+    bare-name phantom edge stays), one target is an exact edge, several are
+    ambiguous edges among the module-narrowed candidates only.
+    """
+
+    def __init__(
+        self, fanout_cap: int, rust_chunks: dict[str, tuple[str, int, int, str]]
+    ) -> None:
+        from search.rust_module_index import RustModuleIndex
+
+        self.index = RustModuleIndex()
+        self.rust_chunks = rust_chunks
+        self.fanout_cap = fanout_cap
+        self.counts = dict.fromkeys(
+            ("resolved", "fallback", "refused_external", "internal_missing", "unknown"),
+            0,
+        )
+        self._started = time.perf_counter()
+
+    def decide(
+        self,
+        caller_file: str,
+        line: int,
+        callee_name: str,
+        callee_qualified: str | None,
+        name_to_chunk_ids: dict[str, list[str]],
+    ) -> tuple[str, list[str]] | None:
+        rust_chunks = self.rust_chunks
+        segments = _rust_call_segments(callee_name, callee_qualified)
+        if segments is None or not line:
+            self.counts["unknown"] += 1
+            return None
+        resolution = self.index.resolve(caller_file, line, segments)
+        if resolution.kind == "external":
+            self.counts["refused_external"] += 1
+            return "rust_use", []
+        if resolution.kind != "internal" or resolution.item is None:
+            self.counts["unknown"] += 1
+            return None
+        if not resolution.rest:
+            return self._free_item(resolution, name_to_chunk_ids, rust_chunks)
+        if len(resolution.rest) == 1:
+            return self._type_member(resolution, name_to_chunk_ids, rust_chunks)
+        self.counts["unknown"] += 1
+        return None
+
+    def _free_item(self, resolution, name_to_chunk_ids, rust_chunks):
+        candidates = [
+            cid
+            for cid in name_to_chunk_ids.get(resolution.item, ())
+            if cid in rust_chunks and rust_chunks[cid][3] != "method"
+        ]
+        spans = self.index.module_spans(resolution)
+        in_module = [
+            cid for cid in candidates if self._in_spans(rust_chunks[cid], spans)
+        ]
+        if in_module:
+            return self._pick("resolved", "rust_use", in_module)
+        crate_files = self.index.crate_files(resolution)
+        in_crate = [
+            cid
+            for cid in candidates
+            if self.index.normalize(rust_chunks[cid][0]) in crate_files
+        ]
+        if len(in_crate) == 1:
+            self.counts["fallback"] += 1
+            return "rust_use_fallback", in_crate
+        self.counts["internal_missing"] += 1
+        return "rust_use", []
+
+    def _type_member(self, resolution, name_to_chunk_ids, rust_chunks):
+        key = f"{resolution.item}::{resolution.rest[0]}"
+        candidates = [
+            cid for cid in name_to_chunk_ids.get(key, ()) if cid in rust_chunks
+        ]
+        for files in (
+            self.index.crate_files(resolution),
+            self.index.impl_crate_files(resolution),
+        ):
+            hits = [
+                c
+                for c in candidates
+                if self.index.normalize(rust_chunks[c][0]) in files
+            ]
+            if hits:
+                return self._pick("resolved", "rust_use", hits)
+        self.counts["internal_missing"] += 1
+        return "rust_use", []
+
+    def _pick(
+        self, counter: str, resolution: str, ids: list[str]
+    ) -> tuple[str, list[str]]:
+        self.counts[counter] += 1
+        unique = sorted(set(ids))
+        return resolution, unique[: self.fanout_cap]
+
+    def _in_spans(self, chunk: tuple[str, int, int, str], spans) -> bool:
+        file = self.index.normalize(chunk[0])
+        start = chunk[1]
+        for span in spans:
+            if (
+                span.file == file
+                and span.start <= start <= span.end
+                and not any(lo <= start <= hi for lo, hi in span.holes)
+            ):
+                return True
+        return False
+
+    def log(self, logger: logging.Logger) -> None:
+        c = self.counts
+        logger.info(
+            "[RUST_USE] resolved=%d fallback=%d refused_external=%d "
+            "internal_missing=%d unknown=%d files_parsed=%d secs=%.1f",
+            c["resolved"],
+            c["fallback"],
+            c["refused_external"],
+            c["internal_missing"],
+            c["unknown"],
+            self.index.files_parsed,
+            time.perf_counter() - self._started,
+        )
 
 
 def _chunk_start_line(chunk_id: str) -> int:
@@ -901,6 +1065,15 @@ class GraphIntegration:
             lambda: defaultdict(list)
         )
         nodes_added = 0
+        # Read once per build, not per call site -- get_search_config() does a
+        # cheap stat() each call (documented as intentional in
+        # SearchConfigManager.load_config), but one value covers the build.
+        call_graph_config = get_search_config().call_graph
+        # ADR-0091: Rust chunk locations for use-path narrowing, filled only
+        # when the knob is on, so knob-off builds do no extra work.
+        rust_chunks: dict[str, tuple[str, int, int, str]] | None = (
+            {} if call_graph_config.rust_use_paths is True else None
+        )
 
         for spec in specs:
             group_map = name_maps[_language_group(spec.language)]
@@ -913,6 +1086,15 @@ class GraphIntegration:
                     language=spec.language,
                 )
                 nodes_added += 1
+                if rust_chunks is not None and spec.language in _RUST_LANGUAGES:
+                    span = _chunk_line_span(spec.chunk_id)
+                    if span is not None:
+                        rust_chunks[spec.chunk_id] = (
+                            spec.file_path,
+                            span[0],
+                            span[1],
+                            spec.chunk_type,
+                        )
 
                 # Name-resolution fence: pseudo-language chunks are nodes but
                 # never call targets (see method docstring / ADR-0062).
@@ -979,12 +1161,11 @@ class GraphIntegration:
                 )
 
         # === PASS 2: add call + relationship edges ===
-        # Build-time ambiguous fan-out cap (Wall-2 item 5, C-family only).
-        # Read once per build, not per ambiguous call-site -- get_search_config()
-        # does a cheap stat() each call (documented as intentional in
-        # SearchConfigManager.load_config), but there is no reason to pay it
-        # per-callsite when one value covers the whole pass.
-        fanout_cap = get_search_config().call_graph.ambiguous_fanout_cap
+        # Build-time ambiguous fan-out cap (Wall-2 item 5, C-family and Rust).
+        fanout_cap = call_graph_config.ambiguous_fanout_cap
+        rust_use = (
+            _RustUsePass(fanout_cap, rust_chunks) if rust_chunks else None
+        )  # None when the knob is off or the batch has no Rust chunk
         self._file_ast_cache = {}
         self._seen_split_methods = set()
         call_edges = 0
@@ -1003,6 +1184,50 @@ class GraphIntegration:
                     line_number = call["line_number"]
                     is_method_call = call["is_method_call"]
                     callee_qualified = call.get("callee_qualified")
+                    decision = (
+                        rust_use.decide(
+                            spec.file_path,
+                            line_number,
+                            callee_name,
+                            callee_qualified,
+                            name_to_chunk_ids,
+                        )
+                        if rust_use is not None
+                        and not is_method_call
+                        and spec.language in _RUST_LANGUAGES
+                        else None
+                    )
+                    if decision is not None:
+                        resolution, targets = decision
+                        if not targets:
+                            # Refused: keep only the bare-name phantom edge,
+                            # the same one add_chunk already wrote.
+                            self.storage.add_call_edge(
+                                caller_id=spec.chunk_id,
+                                callee_name=callee_name,
+                                line_number=line_number,
+                                is_method_call=is_method_call,
+                                is_resolved=False,
+                            )
+                            phantom_edges += 1
+                        else:
+                            confidence = "exact" if len(targets) == 1 else "ambiguous"
+                            for target in targets:
+                                self.storage.add_call_edge(
+                                    caller_id=spec.chunk_id,
+                                    callee_name=target,
+                                    line_number=line_number,
+                                    is_method_call=is_method_call,
+                                    is_resolved=True,
+                                    confidence=confidence,
+                                    resolution=resolution,
+                                )
+                            if confidence == "exact":
+                                resolved_edges += 1
+                            else:
+                                ambiguous_edges += 1
+                        call_edges += 1
+                        continue
                     # C-family method-call resolution is type-blind (no receiver
                     # type info from tree-sitter), so even a uniquely-resolved
                     # candidate is frequently the wrong class -- measured
@@ -1109,6 +1334,9 @@ class GraphIntegration:
 
             except Exception as e:  # noqa: BLE001 - resilience: per-spec edge failure, continue with remaining specs
                 self._logger.warning(f"Failed to add edges for {spec.chunk_id}: {e}")
+
+        if rust_use is not None:
+            rust_use.log(self._logger)
 
         # Only pay the storage-wide scan when this batch actually carried a
         # via=file scripted_by edge (keeps Mock-storage builds untouched).

@@ -237,6 +237,8 @@ them. Spending a multi-leg benchmark run to measure a guaranteed-flat delta was 
   is frequently wrong. A real fix needs either an external-crate/std-type denylist checked before
   the bare-name fallback, or threading receiver-type information further than tree-sitter alone
   provides — left for future work, tracked here rather than re-discovered from scratch.
+  **Closed by ADR-0091** for plain and path calls: use-path resolution refuses external and
+  derive-only targets before any bare-name match; receiver calls stay open.
 - **Calls inside macro token trees** (~1,100 sites in `openheizenberg`, and the entire reason
   `voro-engine`'s new Rust chunks produced zero `calls` edges) — tree-sitter does not expand macros,
   so calls written inside a macro invocation's token tree are invisible to Wall 1's extraction.
@@ -246,7 +248,7 @@ them. Spending a multi-leg benchmark run to measure a guaranteed-flat delta was 
 - Rust function splitting for oversized chunks — a 2,000+ line `impl Graph` chunk still exceeds the
   2,048-token embedding contract and is truncated, since Wall 1 declares no `split_block` support
   (see Wall 1 above).
-- Grouped/glob `use` imports are not specially resolved.
+- Grouped/glob `use` imports are not specially resolved. (Resolved since by ADR-0091.)
 - rust-analyzer LSP tier — no toolchain on PATH in this environment; `lsp_call_graph.py` is
   hardcoded to basedpyright and discards the progress notifications rust-analyzer uses to signal
   readiness. Needs its own ADR.

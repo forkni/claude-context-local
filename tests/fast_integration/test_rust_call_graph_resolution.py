@@ -268,6 +268,114 @@ class TestModQualifiedFreeFunctionFallsThroughToBareName:
             h.teardown()
 
 
+_WS_FILES = {
+    "Cargo.toml": '[workspace]\nmembers = ["lib", "app"]\n',
+    "lib/Cargo.toml": '[package]\nname = "lib"\n',
+    "lib/src/lib.rs": (
+        "pub mod a;\npub mod b;\npub mod c;\n\n"
+        "pub struct Arc;\n\nimpl Arc {\n    pub fn new() -> Self {\n        Arc\n    }\n}\n\n"
+        "pub struct NodeState;\n"
+    ),
+    "lib/src/a.rs": "pub fn mix() {}\n",
+    "lib/src/b.rs": "pub fn mix() {}\n",
+    "lib/src/c.rs": "pub fn mix() {}\n\npub fn solo() {}\n",
+    "app/Cargo.toml": '[package]\nname = "app"\n\n[dependencies]\nlib = { path = "../lib" }\n',
+    "app/src/main.rs": (
+        "use lib::b::mix;\nuse lib::NodeState;\nuse std::sync::Arc;\n\n"
+        "fn run() {\n"
+        "    mix();\n"
+        "    Arc::new();\n"
+        "    NodeState::default();\n"
+        "    lib::a::solo();\n"
+        "}\n\n"
+        "fn main() {\n    run();\n}\n"
+    ),
+}
+
+
+def _use_path_graph(tmp_path: Path, monkeypatch, *, enabled: bool) -> _RustGraphHarness:
+    from search import graph_integration
+    from search.config import SearchConfig
+
+    config = SearchConfig()
+    config.call_graph.rust_use_paths = enabled
+    monkeypatch.setattr(graph_integration, "get_search_config", lambda: config)
+    root = tmp_path / "ws"
+    for rel, text in _WS_FILES.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    h = _RustGraphHarness(root)
+    for rel in (
+        "lib/src/lib.rs",
+        "lib/src/a.rs",
+        "lib/src/b.rs",
+        "lib/src/c.rs",
+        "app/src/main.rs",
+    ):
+        h.index_file(rel)
+    h.build_graph_from_persisted()
+    return h
+
+
+def _calls_of(h: _RustGraphHarness, caller_id: str) -> dict[str, dict]:
+    graph = h.graph_storage.graph
+    return {
+        target: dict(data)
+        for _, target, key, data in graph.out_edges(caller_id, keys=True, data=True)
+        if key == "calls"
+    }
+
+
+class TestRustUsePathResolution:
+    """ADR-0091 "D": `use` imports and the module tree pick or refuse targets."""
+
+    def test_imported_free_function_picks_the_imported_module(
+        self, tmp_path, monkeypatch
+    ):
+        h = _use_path_graph(tmp_path, monkeypatch, enabled=True)
+        try:
+            run_id = h.resolved_chunk_id("app/src/main.rs", "function", "run")
+            b_mix = h.resolved_chunk_id("lib/src/b.rs", "function", "mix")
+            calls = _calls_of(h, run_id)
+            mixes = sorted(t for t in calls if t.endswith(":mix"))
+            assert mixes == [b_mix], f"only lib::b::mix may be linked, got {mixes}"
+            assert calls[b_mix]["confidence"] == "exact"
+            assert calls[b_mix]["resolution"] == "rust_use"
+        finally:
+            h.teardown()
+
+    def test_std_import_gets_no_edge_to_a_project_symbol(self, tmp_path, monkeypatch):
+        h = _use_path_graph(tmp_path, monkeypatch, enabled=True)
+        try:
+            run_id = h.resolved_chunk_id("app/src/main.rs", "function", "run")
+            arc_new = h.resolved_chunk_id("lib/src/lib.rs", "method", "new")
+            assert arc_new not in _calls_of(h, run_id)
+        finally:
+            h.teardown()
+
+    def test_missing_module_item_links_unique_crate_match(self, tmp_path, monkeypatch):
+        h = _use_path_graph(tmp_path, monkeypatch, enabled=True)
+        try:
+            run_id = h.resolved_chunk_id("app/src/main.rs", "function", "run")
+            solo = h.resolved_chunk_id("lib/src/c.rs", "function", "solo")
+            calls = _calls_of(h, run_id)
+            assert calls[solo]["resolution"] == "rust_use_fallback"
+        finally:
+            h.teardown()
+
+    def test_knob_off_keeps_todays_edges(self, tmp_path, monkeypatch):
+        h = _use_path_graph(tmp_path, monkeypatch, enabled=False)
+        try:
+            run_id = h.resolved_chunk_id("app/src/main.rs", "function", "run")
+            arc_new = h.resolved_chunk_id("lib/src/lib.rs", "method", "new")
+            calls = _calls_of(h, run_id)
+            assert arc_new in calls, "today's tier links Arc::new to the project Arc"
+            assert sum(t.endswith(":mix") for t in calls) == 3
+            assert not any("resolution" in d for d in calls.values())
+        finally:
+            h.teardown()
+
+
 class TestSelfCallStaysExactAcrossFullPipeline:
     """Case 4: `self.magnitude_sq()` inside `Point::magnitude` resolves
     through the qualified-first lookup and stays "exact" despite being a
