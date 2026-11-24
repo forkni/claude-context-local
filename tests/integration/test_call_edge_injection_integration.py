@@ -285,21 +285,16 @@ def test_split_method_callee_lands_on_split_block_not_class(
     resolved = [edge for edge in data["edges"] if edge.get("resolver_source")]
     into_split = [e for e in resolved if ":split_block:Worker.process" in e["target"]]
     assert into_split, "no resolver edge reached a Worker.process split_block node"
-    # ``Worker()`` in main.run is a genuine class-target edge. Its ``line`` is
-    # whichever rail last wrote it: the LSP resolver records the callee's
-    # ``class`` statement line, while the AST rail (kept when libcst reports
-    # line=0, see search/call_edge_injection.py) records the call site
-    # relative to the caller chunk — neither falls inside the class body. The
-    # bug this guards against is the *other* kind: a callee ``def`` line
-    # strictly inside the class body falling through to the class chunk
-    # because no fragment covered it.
-    (class_id,) = [n["id"] for n in data["nodes"] if ":class:Worker" in n["id"]]
-    class_start, class_end = (int(part) for part in class_id.split(":")[1].split("-"))
-    inside_body = [
-        e
-        for e in resolved
-        if e["target"] == class_id and class_start < (e.get("line") or 0) <= class_end
-    ]
-    assert not inside_body, (
-        f"resolver edges still land on the class body: {inside_body}"
+    # The bug this guards against: the cross-module ``.process`` call in
+    # main.run falling through to the ``class Worker`` chunk because no
+    # fragment covered the method's ``def`` line. Then the resolver writes
+    # run -> class (merged with the genuine ``Worker()`` constructor edge) and
+    # no resolver edge from main.py reaches a fragment. Neither ``line`` nor
+    # ``is_method`` can tell the two calls apart: ``line`` is the call site in
+    # the caller's file (main.py:8 for both), and libcst's ``is_method``
+    # describes the caller, not the call.
+    from_run = [e for e in into_split if e["source"].startswith("main.py:")]
+    assert from_run, (
+        "the main.run -> Worker.process resolver edge did not reach a "
+        f"split_block; resolver edges: {resolved}"
     )
