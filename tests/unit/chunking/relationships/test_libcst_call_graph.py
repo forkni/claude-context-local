@@ -719,6 +719,7 @@ class TestLibCSTProgressTicks:
         )
 
 
+@pytest.mark.skipif(not libcst_available(), reason="libcst not installed")
 class TestLibCSTCallSiteLine:
     """Real libcst run: an edge carries the file line of its first call site."""
 
@@ -728,9 +729,6 @@ class TestLibCSTCallSiteLine:
         ``g`` calls ``runner.f()`` (module-attribute call) at lines 5 and 7 and
         ``h()`` at line 6. Expect one edge per pair, at the first call line.
         """
-        if not libcst_available():
-            pytest.skip("libcst not installed")
-
         pkg = tmp_path / "pkg"
         pkg.mkdir()
         (pkg / "__init__.py").write_text("", encoding="utf-8")
