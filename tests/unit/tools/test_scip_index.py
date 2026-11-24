@@ -44,7 +44,7 @@ def test_hash_skips_build_output(workspace: Path) -> None:
 def test_writes_index_and_manifest(workspace: Path, tmp_path: Path) -> None:
     out = tmp_path / "scip"
     manifest = make_scip_index(
-        workspace, out, "ra", runner=_writing_runner(), version="ra 1"
+        workspace, out, "ra", runner=_writing_runner(), version="ra 1", decode=False
     )
     assert (out / "index.scip").read_bytes() == b"scip"
     on_disk = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
@@ -59,7 +59,7 @@ def test_writes_index_and_manifest(workspace: Path, tmp_path: Path) -> None:
 def test_file_changed_during_run_is_left_out(workspace: Path, tmp_path: Path) -> None:
     runner = _writing_runner(edit=workspace / "src" / "b.rs")
     manifest = make_scip_index(
-        workspace, tmp_path / "scip", "ra", runner=runner, version="ra 1"
+        workspace, tmp_path / "scip", "ra", runner=runner, version="ra 1", decode=False
     )
     assert manifest["changed_during_run"] == ["src/b.rs"]
     assert sorted(manifest["files"]) == ["src/lib.rs"]
@@ -67,10 +67,17 @@ def test_file_changed_during_run_is_left_out(workspace: Path, tmp_path: Path) ->
 
 def test_failed_run_keeps_previous_index(workspace: Path, tmp_path: Path) -> None:
     out = tmp_path / "scip"
-    make_scip_index(workspace, out, "ra", runner=_writing_runner(), version="ra 1")
+    make_scip_index(
+        workspace, out, "ra", runner=_writing_runner(), version="ra 1", decode=False
+    )
     with pytest.raises(RuntimeError, match="exited 101"):
         make_scip_index(
-            workspace, out, "ra", runner=lambda cmd, env: 101, version="ra 1"
+            workspace,
+            out,
+            "ra",
+            runner=lambda cmd, env: 101,
+            version="ra 1",
+            decode=False,
         )
     assert (out / "index.scip").read_bytes() == b"scip"
     assert not list(out.glob("*.tmp"))
@@ -85,7 +92,13 @@ def test_target_dir_is_passed_to_the_build(workspace: Path, tmp_path: Path) -> N
 
     target = tmp_path / "t"
     make_scip_index(
-        workspace, tmp_path / "scip", "ra", target_dir=target, runner=run, version="v"
+        workspace,
+        tmp_path / "scip",
+        "ra",
+        target_dir=target,
+        runner=run,
+        version="v",
+        decode=False,
     )
     assert seen["CARGO_TARGET_DIR"] == str(target)
 
@@ -102,3 +115,51 @@ def test_cli_refuses_unindexed_project(workspace: Path, monkeypatch, capsys) -> 
     monkeypatch.setattr(scip_index, "_storage_scip_dir", lambda project: None)
     assert scip_index.main(["--path", str(workspace)]) == 2
     assert "not indexed yet" in capsys.readouterr().out
+
+
+def _len_field(number: int, payload: bytes) -> bytes:
+    assert len(payload) < 128
+    return bytes([number << 3 | 2, len(payload)]) + payload
+
+
+_SYMBOL = b"rust-analyzer cargo ws 0.1.0 b()."
+# One document, src/lib.rs: a definition of b() on line 1 and a reference on line 2.
+_INDEX = _len_field(
+    2,
+    _len_field(1, b"src\\lib.rs")
+    + _len_field(
+        2, _len_field(1, b"\x00\x00\x01") + _len_field(2, _SYMBOL) + b"\x18\x01"
+    )
+    + _len_field(2, _len_field(1, b"\x01\x00\x01") + _len_field(2, _SYMBOL)),
+)
+
+
+def _index_runner(cmd: list[str], env: dict[str, str]) -> int:
+    Path(cmd[cmd.index("--output") + 1]).write_bytes(_INDEX)
+    return 0
+
+
+def test_writes_reference_table(workspace: Path, tmp_path: Path) -> None:
+    out = tmp_path / "scip"
+    manifest = make_scip_index(workspace, out, "ra", runner=_index_runner, version="v")
+    assert manifest["refs"] == {
+        "symbols": 1,
+        "external": 0,
+        "multi_def": 0,
+        "refs": 1,
+    }
+    assert (out / "refs.sqlite").is_file()
+    assert json.loads((out / "manifest.json").read_text(encoding="utf-8")) == manifest
+
+
+def test_digest_only_rebuilds_the_table(
+    workspace: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    out = tmp_path / "scip"
+    out.mkdir()
+    (out / "index.scip").write_bytes(_INDEX)
+    monkeypatch.setattr(scip_index, "_storage_scip_dir", lambda project: out)
+    monkeypatch.setattr(scip_index, "find_rust_analyzer", lambda explicit=None: None)
+    assert scip_index.main(["--path", str(workspace), "--digest-only"]) == 0
+    assert (out / "refs.sqlite").is_file()
+    assert "1 references" in capsys.readouterr().out

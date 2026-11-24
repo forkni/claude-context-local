@@ -2690,11 +2690,11 @@ class TestClassContainsMethodEdge(TestCase):
 class TestRustUsePathsKnob(TestCase):
     """ADR-0091: the rust_use_paths knob never touches non-Rust call sites."""
 
-    def _edges(self, enabled: bool) -> list:
+    def _edges(self, enabled: bool, knob: str = "rust_use_paths") -> list:
         from search.config import SearchConfig
 
         config = SearchConfig()
-        config.call_graph.rust_use_paths = enabled
+        setattr(config.call_graph, knob, enabled)
         storage = Mock()
         storage.__len__ = Mock(return_value=0)
         graph = GraphIntegration.from_storage(storage)
@@ -2724,3 +2724,9 @@ class TestRustUsePathsKnob(TestCase):
 
     def test_python_build_is_identical_with_knob_on(self):
         self.assertEqual(self._edges(True), self._edges(False))
+
+    def test_python_build_is_identical_with_scip_knob_on(self):
+        """ADR-0092: rust_scip never touches non-Rust call sites either."""
+        self.assertEqual(
+            self._edges(True, knob="rust_scip"), self._edges(False, knob="rust_scip")
+        )

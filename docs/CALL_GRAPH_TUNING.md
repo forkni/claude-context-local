@@ -564,6 +564,26 @@ The gates that decide which *stored* edges ego-graph and multi-hop expansion may
 call sites; `policy.gates_edges` short-circuits the per-edge lookups when no gate is armed, so
 the defaults cost nothing.
 
+### 6.9 Rust tiers — `rust_use_paths` and `rust_scip`
+
+Two Rust-only tiers run in the graph build, before the name-only tier (ADR-0070):
+
+| Key | Default | Effect |
+|-----|---------|--------|
+| `call_graph.rust_use_paths` | `true` | D (ADR-0091): resolves plain and path calls through `use` imports, the module tree and the Cargo workspace; refuses `std` and outside-crate paths |
+| `call_graph.rust_scip` | `false` | E (ADR-0092): decides every Rust call, receiver calls included, from a rust-analyzer SCIP table; runs before D; stale files fall back to D |
+
+To use E on a Cargo workspace:
+
+1. Index the project.
+2. Make the SCIP table: `python tools/scip_index.py --path <workspace root>`, or the launcher's
+   Project Management > Make SCIP Index. A large workspace takes about 10 min and 16 GB RAM, so
+   close other large programs first.
+3. Set `call_graph.rust_scip` to `true` and reindex.
+
+The build log shows `[RUST_SCIP] resolved= refused_external= ... stale_caller= stale_def=`.
+Rising `stale_*` counts mean the table is old: run step 2 again.
+
 ---
 
 ## 7. Out-of-Scope Items

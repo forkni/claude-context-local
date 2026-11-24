@@ -1672,7 +1672,7 @@ class QueryExpansionConfig:
 
 @dataclass
 class CallGraphConfig:
-    """Call-graph resolver pipeline settings (14 fields).
+    """Call-graph resolver pipeline settings (15 fields).
 
     Controls which static-analysis backends run at full-index time to inject
     cross-module ``calls`` edges into the code graph.
@@ -1969,6 +1969,21 @@ class CallGraphConfig:
     other languages stay byte-identical. On since the ADR-0091 hand-label gate
     passed (40/40 rows on hyprzero, +10.3 s graph build); set False to get the
     ADR-0070 name-only tier back.
+    """
+    rust_scip: bool = field(
+        default=False,
+        metadata=spec(reader="search/graph_integration.py"),
+    )
+    """Resolve Rust calls from a rust-analyzer SCIP reference table (opt-in).
+
+    Needs ``<storage>/scip/refs.sqlite`` from ``tools/scip_index.py`` (launcher
+    menu: Make SCIP Index); without it the build logs one line and goes on
+    without this tier. When on, ``GraphIntegration._two_pass_build`` decides
+    every Rust call, receiver calls ``x.m()`` included, whose caller file and
+    definition file still match the hashes the producer recorded: a project
+    function gets one exact edge (``resolver_source="scip"``), a function outside
+    the indexed sources gets no resolved edge. Calls it cannot decide go to
+    ``rust_use_paths`` and then the name-only tier. Rust only (ADR-0092).
     """
 
     def __post_init__(self) -> None:

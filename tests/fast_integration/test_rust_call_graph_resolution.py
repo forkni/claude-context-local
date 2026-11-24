@@ -376,6 +376,202 @@ class TestRustUsePathResolution:
             h.teardown()
 
 
+_SCIP_WS_FILES = {
+    "Cargo.toml": '[package]\nname = "ws"\n',
+    "src/lib.rs": "pub mod a;\npub mod b;\npub mod c;\npub mod d;\npub mod e;\n",
+    "src/e.rs": "pub fn helper() {}\n",
+    "src/a.rs": "pub struct Alpha;\n\nimpl Alpha {\n    pub fn tick(&self) {}\n}\n",
+    "src/b.rs": "pub struct Beta;\n\nimpl Beta {\n    pub fn tick(&self) {}\n}\n",
+    "src/c.rs": "pub struct Gamma;\n\nimpl Gamma {\n    pub fn tick(&self) {}\n}\n",
+    "src/d.rs": (
+        "pub struct Stack;\n\nimpl Stack {\n    pub fn push(&mut self, x: i32) {}\n}\n"
+    ),
+    "src/main.rs": (
+        "use ws::b::Beta;\n\n"
+        "fn run(b: &Beta, v: &mut Vec<i32>) {\n"
+        "    b.tick();\n"
+        "    v.push(1);\n"
+        "}\n\n"
+        "fn main() {\n"
+        "    helper();\n"
+        "}\n\n"
+        "fn helper() {}\n"
+    ),
+}
+_BETA_TICK = "rust-analyzer cargo ws 0.1.0 b/impl#[Beta]tick()."
+_ALPHA_TICK = "rust-analyzer cargo ws 0.1.0 a/impl#[Alpha]tick()."
+_VEC_PUSH = "rust-analyzer cargo alloc https://x vec/impl#[`Vec<T, A>`]push()."
+# One symbol string defined twice, as rust-analyzer does across tests/*.rs crates.
+_HELPER = "rust-analyzer cargo ws 0.1.0 helper()."
+_SYMBOLS = {
+    _BETA_TICK: ("tick", [("src/b.rs", 4)]),
+    _ALPHA_TICK: ("tick", [("src/a.rs", 4)]),
+    _VEC_PUSH: ("push", []),
+    _HELPER: ("helper", [("src/e.rs", 1), ("src/main.rs", 12)]),
+}
+
+
+def _write_scip_table(
+    root: Path, scip_dir: Path, refs: list[tuple], symbols: dict | None = None
+) -> None:
+    """A refs.sqlite + manifest as tools/scip_index.py would write them."""
+    import json
+    import sqlite3
+
+    from search.scip_refs import MANIFEST_NAME, REFS_NAME, hash_rust_files
+
+    scip_dir.mkdir(parents=True, exist_ok=True)
+    symbols = symbols or _SYMBOLS
+    ids = {symbol: i for i, symbol in enumerate(symbols, start=1)}
+    con = sqlite3.connect(scip_dir / REFS_NAME)
+    con.execute("CREATE TABLE symbols(id INTEGER PRIMARY KEY, symbol TEXT, name TEXT)")
+    con.execute("CREATE TABLE defs(symbol_id INT, file TEXT, line INT)")
+    con.execute("CREATE TABLE refs(file TEXT, line INT, name TEXT, symbol_id INT)")
+    con.executemany(
+        "INSERT INTO symbols VALUES (?, ?, ?)",
+        [(ids[s], s, name) for s, (name, _) in symbols.items()],
+    )
+    con.executemany(
+        "INSERT INTO defs VALUES (?, ?, ?)",
+        [(ids[s], f, line) for s, (_, defs) in symbols.items() for f, line in defs],
+    )
+    con.executemany(
+        "INSERT INTO refs VALUES (?, ?, ?, ?)",
+        [(file, line, symbols[s][0], ids[s]) for file, line, s in refs],
+    )
+    con.commit()
+    con.close()
+    manifest = {"format": 1, "project_path": str(root), "files": hash_rust_files(root)}
+    (scip_dir / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+
+
+_MAIN_REFS = [
+    ("src/main.rs", 4, _BETA_TICK),
+    ("src/main.rs", 5, _VEC_PUSH),
+    ("src/main.rs", 9, _HELPER),
+]
+
+
+def _scip_graph(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    enabled: bool = True,
+    refs: list[tuple] | None = None,
+    symbols: dict | None = None,
+    edit: dict[str, str] | None = None,
+) -> _RustGraphHarness:
+    from search import graph_integration
+    from search.config import SearchConfig
+
+    config = SearchConfig()
+    config.call_graph.rust_scip = enabled
+    monkeypatch.setattr(graph_integration, "get_search_config", lambda: config)
+    root = tmp_path / "ws"
+    for rel, text in _SCIP_WS_FILES.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    h = _RustGraphHarness(root)
+    if refs is not None:
+        _write_scip_table(root, root / ".graph" / "scip", refs, symbols)
+    for rel, text in (edit or {}).items():
+        (root / rel).write_text(text, encoding="utf-8")
+    for rel in (
+        "src/a.rs",
+        "src/b.rs",
+        "src/c.rs",
+        "src/d.rs",
+        "src/e.rs",
+        "src/main.rs",
+    ):
+        h.index_file(rel)
+    h.build_graph_from_persisted()
+    return h
+
+
+class TestRustScipResolution:
+    """ADR-0092 "E": a SCIP reference table decides receiver calls."""
+
+    def test_receiver_call_picks_the_scip_target(self, tmp_path, monkeypatch):
+        h = _scip_graph(tmp_path, monkeypatch, refs=_MAIN_REFS)
+        try:
+            run_id = h.resolved_chunk_id("src/main.rs", "function", "run")
+            beta = h.resolved_chunk_id("src/b.rs", "method", "tick")
+            calls = _calls_of(h, run_id)
+            ticks = sorted(t for t in calls if t.endswith(".tick"))
+            assert ticks == [beta], f"only Beta::tick may be linked, got {ticks}"
+            assert calls[beta]["confidence"] == "exact"
+            assert calls[beta]["resolver_source"] == "scip"
+            assert calls[beta]["resolution"] == "scip"
+        finally:
+            h.teardown()
+
+    def test_external_symbol_gets_no_project_edge(self, tmp_path, monkeypatch):
+        h = _scip_graph(tmp_path, monkeypatch, refs=_MAIN_REFS)
+        try:
+            run_id = h.resolved_chunk_id("src/main.rs", "function", "run")
+            stack_push = h.resolved_chunk_id("src/d.rs", "method", "push")
+            assert stack_push not in _calls_of(h, run_id)
+        finally:
+            h.teardown()
+
+    def test_without_table_the_name_tier_links_all_three(self, tmp_path, monkeypatch):
+        h = _scip_graph(tmp_path, monkeypatch, refs=None)
+        try:
+            run_id = h.resolved_chunk_id("src/main.rs", "function", "run")
+            calls = _calls_of(h, run_id)
+            assert sum(t.endswith(".tick") for t in calls) == 3
+            assert not any(d.get("resolver_source") == "scip" for d in calls.values())
+        finally:
+            h.teardown()
+
+    def test_knob_off_ignores_the_table(self, tmp_path, monkeypatch):
+        h = _scip_graph(tmp_path, monkeypatch, enabled=False, refs=_MAIN_REFS)
+        try:
+            run_id = h.resolved_chunk_id("src/main.rs", "function", "run")
+            calls = _calls_of(h, run_id)
+            assert sum(t.endswith(".tick") for t in calls) == 3
+            assert not any(d.get("resolver_source") == "scip" for d in calls.values())
+        finally:
+            h.teardown()
+
+    def test_edited_caller_falls_through(self, tmp_path, monkeypatch):
+        edited = _SCIP_WS_FILES["src/main.rs"].replace(
+            "fn helper() {}", "fn helper() { }"
+        )
+        h = _scip_graph(
+            tmp_path, monkeypatch, refs=_MAIN_REFS, edit={"src/main.rs": edited}
+        )
+        try:
+            run_id = h.resolved_chunk_id("src/main.rs", "function", "run")
+            calls = _calls_of(h, run_id)
+            assert sum(t.endswith(".tick") for t in calls) == 3
+        finally:
+            h.teardown()
+
+    def test_edited_definition_falls_through(self, tmp_path, monkeypatch):
+        edited = _SCIP_WS_FILES["src/b.rs"] + "// edited\n"
+        h = _scip_graph(
+            tmp_path, monkeypatch, refs=_MAIN_REFS, edit={"src/b.rs": edited}
+        )
+        try:
+            run_id = h.resolved_chunk_id("src/main.rs", "function", "run")
+            calls = _calls_of(h, run_id)
+            assert sum(t.endswith(".tick") for t in calls) == 3
+        finally:
+            h.teardown()
+
+    def test_two_symbols_on_one_line_fall_through(self, tmp_path, monkeypatch):
+        refs = [*_MAIN_REFS, ("src/main.rs", 4, _ALPHA_TICK)]
+        h = _scip_graph(tmp_path, monkeypatch, refs=refs)
+        try:
+            run_id = h.resolved_chunk_id("src/main.rs", "function", "run")
+            calls = _calls_of(h, run_id)
+            assert sum(t.endswith(".tick") for t in calls) == 3
+        finally:
+            h.teardown()
+
+
 class TestSelfCallStaysExactAcrossFullPipeline:
     """Case 4: `self.magnitude_sq()` inside `Point::magnitude` resolves
     through the qualified-first lookup and stays "exact" despite being a
@@ -398,5 +594,30 @@ class TestSelfCallStaysExactAcrossFullPipeline:
                 f"Point::magnitude must resolve self.magnitude_sq(), got {callees}"
             )
             assert h.call_edge_confidence(magnitude_id, magnitude_sq_id) == "exact"
+        finally:
+            h.teardown()
+
+    def test_duplicate_symbol_uses_the_callers_own_definition(
+        self, tmp_path, monkeypatch
+    ):
+        h = _scip_graph(tmp_path, monkeypatch, refs=_MAIN_REFS)
+        try:
+            main_id = h.resolved_chunk_id("src/main.rs", "function", "main")
+            own = h.resolved_chunk_id("src/main.rs", "function", "helper")
+            other = h.resolved_chunk_id("src/e.rs", "function", "helper")
+            calls = _calls_of(h, main_id)
+            assert own in calls and other not in calls, calls
+            assert calls[own]["resolver_source"] == "scip"
+        finally:
+            h.teardown()
+
+    def test_duplicate_symbol_elsewhere_falls_through(self, tmp_path, monkeypatch):
+        symbols = dict(_SYMBOLS)
+        symbols[_HELPER] = ("helper", [("src/e.rs", 1), ("src/a.rs", 1)])
+        h = _scip_graph(tmp_path, monkeypatch, refs=_MAIN_REFS, symbols=symbols)
+        try:
+            main_id = h.resolved_chunk_id("src/main.rs", "function", "main")
+            calls = _calls_of(h, main_id)
+            assert not any(d.get("resolver_source") == "scip" for d in calls.values())
         finally:
             h.teardown()

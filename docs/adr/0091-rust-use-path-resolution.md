@@ -62,7 +62,8 @@ only).
 - **rust-analyzer SCIP inside the reindex ("E").** Rejected as a default. A cold
   run on hyprzero took 634 s and used 16.48 GB at peak. E stays planned as an
   opt-in tier that reads a cached `.scip` file and joins its references to
-  tree-sitter call sites. Only E can resolve receiver calls.
+  tree-sitter call sites. Only E can resolve receiver calls. Built as ADR-0092
+  (`call_graph.rust_scip`, opt-in), which runs before D.
 - **Refuse every unmatched path head.** Rejected. A head that is not std, not a
   dependency and not in scope (a macro-made module, a cfg twin) stays *unknown*
   and keeps today's resolution, so D removes only what it can show is wrong.

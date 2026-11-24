@@ -212,6 +212,7 @@
     "min_confidence": 0.65,
     "inject_on_incremental": false,
     "ambiguous_fanout_cap": 3,
-    "rust_use_paths": true
+    "rust_use_paths": true,
+    "rust_scip": false
   }
 }

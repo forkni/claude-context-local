@@ -195,6 +195,142 @@ class _RustUsePass:
         )
 
 
+def _chunk_tail_name(chunk_id: str) -> str:
+    """Last name in a chunk id's symbol segment: ``...:method:Engine.run`` -> ``run``."""
+    symbol = chunk_id.rsplit(":", 1)[-1]
+    return symbol.rsplit(".", 1)[-1]
+
+
+# SCIP edges: compiler-resolved targets, below LSP's 0.98 because the join to a
+# tree-sitter call site is by line and name, not by column.
+_SCIP_RESOLVER_CONFIDENCE = 0.95
+
+
+class _RustScipPass:
+    """One build's Rust SCIP decisions (ADR-0092 "E", opt-in).
+
+    Reads ``<storage>/scip/refs.sqlite`` (``search.scip_refs``). :meth:`decide`
+    returns None to hand a call to D and the name-only tier, or
+    ``("scip", targets)``: one target is an exact edge, no target refuses the
+    call (only the bare-name phantom edge stays).
+    """
+
+    def __init__(
+        self, refs: Any, rust_chunks: dict[str, tuple[str, int, int, str]]
+    ) -> None:
+        self.refs = refs
+        self.rust_chunks = rust_chunks
+        self._by_file: dict[str, list[tuple[int, int, str]]] | None = None
+        self.counts = dict.fromkeys(
+            (
+                "resolved",
+                "refused_external",
+                "no_ref",
+                "multi",
+                "dup_def",
+                "stale_caller",
+                "stale_def",
+                "unmapped",
+            ),
+            0,
+        )
+        self._started = time.perf_counter()
+
+    @classmethod
+    def open(
+        cls,
+        scip_dir: Path,
+        rust_chunks: dict[str, tuple[str, int, int, str]],
+        logger: logging.Logger,
+    ) -> "_RustScipPass | None":
+        from search.scip_refs import ScipRefs
+
+        refs = ScipRefs.open(scip_dir)
+        if refs is None:
+            logger.info(
+                "[RUST_SCIP] no SCIP table at %s; run tools/scip_index.py", scip_dir
+            )
+            return None
+        return cls(refs, rust_chunks)
+
+    def decide(
+        self, caller_file: str, line: int, callee_name: str
+    ) -> tuple[str, list[str]] | None:
+        refs = self.refs
+        caller = refs.relative(caller_file)
+        if caller is None or not line or not refs.is_fresh(caller):
+            self.counts["stale_caller"] += 1
+            return None
+        hits = refs.refs_at(caller, line, callee_name)
+        if not hits:
+            self.counts["no_ref"] += 1
+            return None
+        if len({hit[0] for hit in hits}) > 1:
+            self.counts["multi"] += 1
+            return None
+        definitions = hits[0][1]
+        if not definitions:
+            self.counts["refused_external"] += 1
+            return "scip", []
+        if len(definitions) > 1:
+            # One symbol string, several targets (each tests/*.rs is its own
+            # crate): only the caller's own file is known to be the right one.
+            definitions = tuple(d for d in definitions if d[0] == caller)
+            if len(definitions) != 1:
+                self.counts["dup_def"] += 1
+                return None
+        def_file, def_line = definitions[0]
+        if not refs.is_fresh(def_file):
+            self.counts["stale_def"] += 1
+            return None
+        target = self._chunk_at(def_file, def_line, callee_name)
+        if target is None:
+            self.counts["unmapped"] += 1
+            return None
+        self.counts["resolved"] += 1
+        return "scip", [target]
+
+    def _chunk_at(self, def_file: str, def_line: int, name: str) -> str | None:
+        """Innermost Rust chunk named ``name`` whose span holds ``def_line``."""
+        if self._by_file is None:
+            by_file: dict[str, list[tuple[int, int, str]]] = defaultdict(list)
+            for cid, (file, start, end, _kind) in self.rust_chunks.items():
+                relative = self.refs.relative(file)
+                if relative is not None:
+                    by_file[relative].append((start, end, cid))
+            self._by_file = by_file
+        best: tuple[int, str] | None = None
+        for start, end, cid in self._by_file.get(def_file, ()):
+            if start <= def_line <= end and _chunk_tail_name(cid) == name:
+                size = end - start
+                if (
+                    best is None
+                    or size < best[0]
+                    or (size == best[0] and cid < best[1])
+                ):
+                    best = (size, cid)
+        return best[1] if best else None
+
+    def log(self, logger: logging.Logger) -> None:
+        c = self.counts
+        logger.info(
+            "[RUST_SCIP] resolved=%d refused_external=%d no_ref=%d multi=%d "
+            "dup_def=%d stale_caller=%d stale_def=%d unmapped=%d secs=%.1f",
+            c["resolved"],
+            c["refused_external"],
+            c["no_ref"],
+            c["multi"],
+            c["dup_def"],
+            c["stale_caller"],
+            c["stale_def"],
+            c["unmapped"],
+            time.perf_counter() - self._started,
+        )
+
+    def close(self) -> None:
+        self.refs.close()
+
+
 def _chunk_start_line(chunk_id: str) -> int:
     """Start line parsed from a chunk id's ``"start-end"`` segment.
 
@@ -1069,10 +1205,13 @@ class GraphIntegration:
         # cheap stat() each call (documented as intentional in
         # SearchConfigManager.load_config), but one value covers the build.
         call_graph_config = get_search_config().call_graph
-        # ADR-0091: Rust chunk locations for use-path narrowing, filled only
-        # when the knob is on, so knob-off builds do no extra work.
+        # ADR-0091/0092: Rust chunk locations for use-path narrowing and SCIP
+        # targets, filled only when a knob is on, so knob-off builds do no
+        # extra work.
+        use_paths_on = call_graph_config.rust_use_paths is True
+        scip_on = call_graph_config.rust_scip is True
         rust_chunks: dict[str, tuple[str, int, int, str]] | None = (
-            {} if call_graph_config.rust_use_paths is True else None
+            {} if use_paths_on or scip_on else None
         )
 
         for spec in specs:
@@ -1164,8 +1303,18 @@ class GraphIntegration:
         # Build-time ambiguous fan-out cap (Wall-2 item 5, C-family and Rust).
         fanout_cap = call_graph_config.ambiguous_fanout_cap
         rust_use = (
-            _RustUsePass(fanout_cap, rust_chunks) if rust_chunks else None
+            _RustUsePass(fanout_cap, rust_chunks)
+            if rust_chunks and use_paths_on
+            else None
         )  # None when the knob is off or the batch has no Rust chunk
+        graph_path = getattr(self.storage, "graph_path", None)
+        rust_scip = (
+            _RustScipPass.open(
+                Path(graph_path).parent / "scip", rust_chunks, self._logger
+            )
+            if rust_chunks and scip_on and isinstance(graph_path, (str, Path))
+            else None
+        )
         self._file_ast_cache = {}
         self._seen_split_methods = set()
         call_edges = 0
@@ -1184,19 +1333,27 @@ class GraphIntegration:
                     line_number = call["line_number"]
                     is_method_call = call["is_method_call"]
                     callee_qualified = call.get("callee_qualified")
+                    is_rust = spec.language in _RUST_LANGUAGES
+                    # E (ADR-0092) first, for every Rust call; then D (ADR-0091)
+                    # for plain and path calls; None -> today's tiers.
                     decision = (
-                        rust_use.decide(
+                        rust_scip.decide(spec.file_path, line_number, callee_name)
+                        if rust_scip is not None and is_rust
+                        else None
+                    )
+                    if (
+                        decision is None
+                        and rust_use is not None
+                        and is_rust
+                        and not is_method_call
+                    ):
+                        decision = rust_use.decide(
                             spec.file_path,
                             line_number,
                             callee_name,
                             callee_qualified,
                             name_to_chunk_ids,
                         )
-                        if rust_use is not None
-                        and not is_method_call
-                        and spec.language in _RUST_LANGUAGES
-                        else None
-                    )
                     if decision is not None:
                         resolution, targets = decision
                         if not targets:
@@ -1212,6 +1369,14 @@ class GraphIntegration:
                             phantom_edges += 1
                         else:
                             confidence = "exact" if len(targets) == 1 else "ambiguous"
+                            provenance = (
+                                {
+                                    "resolver_source": "scip",
+                                    "resolver_confidence": _SCIP_RESOLVER_CONFIDENCE,
+                                }
+                                if resolution == "scip"
+                                else {}
+                            )
                             for target in targets:
                                 self.storage.add_call_edge(
                                     caller_id=spec.chunk_id,
@@ -1221,6 +1386,7 @@ class GraphIntegration:
                                     is_resolved=True,
                                     confidence=confidence,
                                     resolution=resolution,
+                                    **provenance,
                                 )
                             if confidence == "exact":
                                 resolved_edges += 1
@@ -1335,6 +1501,9 @@ class GraphIntegration:
             except Exception as e:  # noqa: BLE001 - resilience: per-spec edge failure, continue with remaining specs
                 self._logger.warning(f"Failed to add edges for {spec.chunk_id}: {e}")
 
+        if rust_scip is not None:
+            rust_scip.log(self._logger)
+            rust_scip.close()
         if rust_use is not None:
             rust_use.log(self._logger)
 

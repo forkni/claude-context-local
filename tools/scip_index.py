@@ -9,6 +9,8 @@ project's storage directory::
     <storage>/scip/index.scip     the SCIP index
     <storage>/scip/manifest.json  format, time, rust-analyzer version, and a
                                   sha256 for every .rs file
+    <storage>/scip/refs.sqlite    call references decoded from the index
+                                  (search/scip_refs.py), read by the graph build
 
 The graph build uses a SCIP reference only when the caller's file and the
 definition's file still have the hash recorded here, so a stale index can never
@@ -19,12 +21,12 @@ renamed, so a failed run keeps the previous index.
 Usage::
 
     python tools/scip_index.py --path D:/code/my_workspace
+    python tools/scip_index.py --path D:/code/my_workspace --digest-only
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -38,35 +40,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from search.scip_refs import (  # noqa: E402 - after the sys.path insert
+    INDEX_NAME,
+    MANIFEST_NAME,
+    REFS_NAME,
+    SCIP_DIRNAME,
+    hash_rust_files,
+    write_refs_table,
+)
+
+
 MANIFEST_FORMAT = 1
-SCIP_DIRNAME = "scip"
-INDEX_NAME = "index.scip"
-MANIFEST_NAME = "manifest.json"
-# Directories that never hold project sources: build output and VCS data.
-_SKIP_DIRS = frozenset({"target", ".git", "node_modules", ".venv"})
 
 Runner = Callable[[list[str], dict[str, str]], int]
-
-
-def hash_rust_files(root: Path) -> dict[str, str]:
-    """``{relative posix path: sha256 hex}`` for every ``.rs`` file under ``root``.
-
-    Skips build output and VCS directories (``target``, ``.git`` and similar)
-    at any depth.
-    """
-    hashes: dict[str, str] = {}
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
-        for name in sorted(filenames):
-            if not name.endswith(".rs"):
-                continue
-            path = Path(dirpath) / name
-            try:
-                digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            except OSError:
-                continue
-            hashes[path.relative_to(root).as_posix()] = digest
-    return hashes
 
 
 def find_rust_analyzer(explicit: str | None = None) -> str | None:
@@ -106,6 +92,7 @@ def make_scip_index(
     target_dir: Path | None = None,
     runner: Runner = _default_runner,
     version: str | None = None,
+    decode: bool = True,
 ) -> dict:
     """Run ``rust-analyzer scip`` on ``project`` and write the index and manifest.
 
@@ -117,6 +104,7 @@ def make_scip_index(
             rust-analyzer compiles; None leaves the environment unchanged.
         runner: Runs the command and returns its exit code (tests inject one).
         version: rust-analyzer version text; None asks the executable.
+        decode: Also write the reference table (``refs.sqlite``) from the index.
 
     Returns:
         The manifest that was written.
@@ -148,6 +136,7 @@ def make_scip_index(
         p for p in before.keys() | after.keys() if before.get(p) != after.get(p)
     )
     files = {p: h for p, h in sorted(after.items()) if p not in changed}
+    refs = write_refs_table(tmp_index, out_dir / REFS_NAME) if decode else None
     manifest = {
         "format": MANIFEST_FORMAT,
         "created": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -156,6 +145,7 @@ def make_scip_index(
         "wall_secs": round(wall, 1),
         "index_bytes": tmp_index.stat().st_size,
         "changed_during_run": changed,
+        "refs": refs,
         "files": files,
     }
     tmp_manifest = out_dir / f"{MANIFEST_NAME}.tmp"
@@ -206,12 +196,19 @@ def main(argv: list[str] | None = None) -> int:
         help="CARGO_TARGET_DIR for rust-analyzer's build (default: <storage>/scip/target, "
         "so the project's own target/ is not locked)",
     )
+    parser.add_argument(
+        "--digest-only",
+        action="store_true",
+        help="Rebuild refs.sqlite from the existing index.scip; no rust-analyzer run",
+    )
     args = parser.parse_args(argv)
 
     project = Path(args.path).resolve()
     if not (project / "Cargo.toml").is_file():
         print(f"[ERROR] No Cargo.toml in {project}: SCIP needs a Cargo workspace root.")
         return 2
+    if args.digest_only:
+        return _digest_only(project)
     rust_analyzer = find_rust_analyzer(args.rust_analyzer)
     if rust_analyzer is None:
         print(
@@ -248,8 +245,30 @@ def main(argv: list[str] | None = None) -> int:
             f"[WARN] {len(manifest['changed_during_run'])} .rs file(s) changed during the run "
             "and are left out; rerun to cover them."
         )
+    refs = manifest.get("refs") or {}
     print(
-        "[INFO] The graph build does not read this index yet (planned: SCIP call tier)."
+        f"[OK] Reference table: {refs.get('symbols', 0)} functions "
+        f"({refs.get('external', 0)} external), {refs.get('refs', 0)} references"
+    )
+    print(
+        "[INFO] Set call_graph.rust_scip to true, then reindex, to use it in the call graph."
+    )
+    return 0
+
+
+def _digest_only(project: Path) -> int:
+    out_dir = _storage_scip_dir(project)
+    if out_dir is None or not (out_dir / INDEX_NAME).is_file():
+        print(f"[ERROR] No SCIP index for {project}. Run without --digest-only first.")
+        return 2
+    try:
+        refs = write_refs_table(out_dir / INDEX_NAME, out_dir / REFS_NAME)
+    except (OSError, ValueError) as exc:
+        print(f"[ERROR] {exc}")
+        return 1
+    print(
+        f"[OK] Reference table: {refs['symbols']} functions ({refs['external']} external), "
+        f"{refs['refs']} references -> {out_dir / REFS_NAME}"
     )
     return 0
 
