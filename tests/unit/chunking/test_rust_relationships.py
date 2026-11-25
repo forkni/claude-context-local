@@ -401,3 +401,76 @@ def test_generic_method_records_the_method_name_line(multiline_chunks):
     gets the line of `collect`."""
     chunk = _chunk(multiline_chunks, "generic_method")
     assert _call_lines(chunk) == [("collect", 15)]
+
+
+# ===== macro call candidates (F2) =====
+
+_MACRO_CALLS_SOURCE = """\
+fn checks(v: Values) {
+    assert!(ready(v));
+    let s = format!("{}", label(1));
+    assert_eq!(v.total(), vec![seed(2)]);
+    println!("plain text");
+}
+
+fn generated() {
+    macro_rules! twice {
+        ($x:expr) => { helper($x) };
+    }
+    make! { fn produced(a: u8) {} }
+}
+"""
+
+
+@pytest.fixture
+def macro_chunks(tmp_path: Path):
+    """Chunks of a file whose calls are written inside macro arguments."""
+    file_path = tmp_path / "macros.rs"
+    file_path.write_text(_MACRO_CALLS_SOURCE, encoding="utf-8", newline="\n")
+    chunker = MultiLanguageChunker(root_path=str(tmp_path))
+    return chunker.chunk_file(str(file_path))
+
+
+def _macro_calls(chunk) -> list[tuple[str, int, bool]]:
+    return sorted(
+        (c.callee_name, c.line_number, c.is_method_call)
+        for c in chunk.calls
+        if c.in_macro
+    )
+
+
+def test_calls_inside_macro_arguments_are_candidates(macro_chunks):
+    """A name followed by `(` inside a macro's arguments is a macro call
+    candidate, including a method (`v.total()`) and a call nested in a second
+    macro (`vec![seed(2)]`). The macros themselves (`format!`, `vec!`) are not."""
+    chunk = _chunk(macro_chunks, "checks")
+    assert _macro_calls(chunk) == [
+        ("label", 3, False),
+        ("ready", 2, False),
+        ("seed", 4, False),
+        ("total", 4, True),
+    ]
+    assert not any(c.in_macro for c in chunk.calls if c.callee_name == "format")
+
+
+def test_macro_rules_body_and_generated_fn_are_skipped(macro_chunks):
+    """`helper($x)` in a `macro_rules!` body is a template, not a call, and
+    `fn produced(` inside a macro defines a function."""
+    chunk = _chunk(macro_chunks, "generated")
+    assert _macro_calls(chunk) == []
+    assert all(
+        c.callee_name != "helper" for ch in macro_chunks for c in (ch.calls or ())
+    )
+
+
+def test_ordinary_call_edge_serializes_without_the_macro_flag():
+    """Only candidates carry `in_macro`, so stored metadata of every other
+    call is unchanged."""
+    from chunking.relationships.call_graph_extractor import CallEdge
+
+    plain = CallEdge(caller_id="a", callee_name="f", line_number=1)
+    assert "in_macro" not in plain.to_dict()
+    flagged = CallEdge(caller_id="a", callee_name="f", line_number=1, in_macro=True)
+    assert flagged.to_dict()["in_macro"] is True
+    assert CallEdge.from_dict(flagged.to_dict()).in_macro is True
+    assert CallEdge.from_dict(plain.to_dict()).in_macro is False

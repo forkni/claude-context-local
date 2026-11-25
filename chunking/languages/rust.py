@@ -321,12 +321,16 @@ class RustChunker(LanguageChunker):
             metadata: Metadata dict being populated; must already have a
                 "relationships" list key.
         """
-        calls: list[tuple[str, int, bool, str | None]] = []
+        # 4-tuples for call expressions, 5-tuples (last field True) for macro
+        # call candidates; `edge_specs.CallSite` reads both widths.
+        calls: list[tuple] = []
         instantiate_sites: list[tuple[str, int]] = []
         stack = [node]
         while stack:
             current = stack.pop()
-            if current.type == "call_expression":
+            if current.type == "macro_invocation":
+                calls.extend(self._macro_call_candidates(current, source))
+            elif current.type == "call_expression":
                 func_node = current.child_by_field_name("function")
                 if func_node is not None and not func_node.is_missing:
                     entry = self._dispatch_call_site(func_node, source, impl_type)
@@ -348,6 +352,57 @@ class RustChunker(LanguageChunker):
         instantiate_sites.sort(key=lambda s: s[1])
         for name, line in instantiate_sites:
             _add_relationship(metadata, "instantiates", name, line)
+
+    def _macro_call_candidates(
+        self, macro_node: Any, source: bytes
+    ) -> list[tuple[str, int, bool, None, bool]]:
+        """Macro call candidates in one `macro_invocation`'s arguments.
+
+        tree-sitter-rust leaves macro arguments as flat token trees, so a call
+        written in `assert!(ready(v))` is never a `call_expression`. A candidate
+        is an identifier whose next sibling is a token tree that starts with
+        `(`, at any depth (a call inside `vec![...]` inside `assert_eq!(...)`
+        counts once, here, at the outer invocation: nested invocations inside
+        a token tree are tokens, not `macro_invocation` nodes). An identifier
+        after `.` is a method call. `fn name(` defines a function and is
+        skipped. The macro name itself is never a candidate: it is followed by
+        `!`, not by a token tree.
+
+        Only the SCIP tier may turn a candidate into an edge (ADR-0092
+        amendment); the line is the identifier's, like any call site.
+
+        Returns:
+            `(name, line, is_method_call, None, True)` tuples.
+        """
+        found: list[tuple[str, int, bool, None, bool]] = []
+        stack = [child for child in macro_node.children if child.type == "token_tree"]
+        while stack:
+            tree = stack.pop()
+            kids = tree.children
+            for i, kid in enumerate(kids):
+                if kid.type == "token_tree":
+                    stack.append(kid)
+                    continue
+                if kid.type != "identifier" or i + 1 >= len(kids):
+                    continue
+                nxt = kids[i + 1]
+                if nxt.type != "token_tree" or not nxt.children:
+                    continue
+                if nxt.children[0].type != "(":
+                    continue
+                before = kids[i - 1].type if i > 0 else None
+                if before == "fn":
+                    continue
+                found.append(
+                    (
+                        self.get_node_text(kid, source),
+                        kid.start_point[0] + 1,
+                        before == ".",
+                        None,
+                        True,
+                    )
+                )
+        return found
 
     def _extract_use_declaration(
         self, use_node: Any, source: bytes, metadata: dict[str, Any]

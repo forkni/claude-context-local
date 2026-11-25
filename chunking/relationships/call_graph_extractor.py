@@ -36,6 +36,9 @@ class CallEdge:
             attribute calls, or a pre-Part-1 persisted edge). Lets index-time
             resolution disambiguate same-named symbols defined in more than
             one module instead of falling back to a flat name lookup.
+        in_macro: True for a macro call candidate (ADR-0092 amendment): a name
+            followed by an argument list inside a macro's arguments. Only the
+            SCIP tier may turn one into an edge; every other tier skips it.
     """
 
     caller_id: str
@@ -44,10 +47,15 @@ class CallEdge:
     is_method_call: bool = False
     confidence: float = 1.0  # Static analysis has high confidence
     callee_qualified: str | None = None
+    in_macro: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
-        return {
+        """Convert to dictionary for serialization.
+
+        ``in_macro`` is written only when set, so the stored form of every
+        ordinary call stays the same.
+        """
+        data: dict[str, Any] = {
             "caller_id": self.caller_id,
             "callee_name": self.callee_name,
             "line_number": self.line_number,
@@ -55,6 +63,9 @@ class CallEdge:
             "confidence": self.confidence,
             "callee_qualified": self.callee_qualified,
         }
+        if self.in_macro:
+            data["in_macro"] = True
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CallEdge":
@@ -66,6 +77,7 @@ class CallEdge:
             is_method_call=data.get("is_method_call", False),
             confidence=data.get("confidence", 1.0),
             callee_qualified=data.get("callee_qualified"),
+            in_macro=bool(data.get("in_macro", False)),
         )
 
 

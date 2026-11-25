@@ -55,13 +55,15 @@ class CallSite(NamedTuple):
 
     ``materialize_call_edges`` accepts either shape in the same
     ``metadata["calls"]`` list — GLSL keeps emitting bare ``(name, line)``
-    2-tuples, unchanged.
+    2-tuples, unchanged. Rust adds a fifth field, ``in_macro``, for macro call
+    candidates (see ``CallEdge.in_macro``).
     """
 
     name: str
     line: int
     is_method_call: bool = False
     qualified: str | None = None
+    in_macro: bool = False
 
 
 @dataclass(frozen=True)
@@ -202,6 +204,7 @@ def materialize_call_edges(
             is_method_call=site.is_method_call,
             confidence=spec.call_confidence,
             callee_qualified=site.qualified,
+            in_macro=site.in_macro,
         )
         for site in (_as_call_site(entry) for entry in raw_calls)
         if _in_split_block_window(chunk, site.line)

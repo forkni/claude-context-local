@@ -526,6 +526,48 @@ class TestRustScipResolution:
         finally:
             h.teardown()
 
+    _IN_ASSERT = {
+        "src/main.rs": _SCIP_WS_FILES["src/main.rs"].replace(
+            "    b.tick();\n", "    assert!(b.tick());\n"
+        )
+    }
+
+    def _ticks(self, h) -> dict[str, dict]:
+        run_id = h.resolved_chunk_id("src/main.rs", "function", "run")
+        return {t: d for t, d in _calls_of(h, run_id).items() if t.endswith("tick")}
+
+    def test_call_inside_a_macro_resolves_through_scip(self, tmp_path, monkeypatch):
+        h = _scip_graph(tmp_path, monkeypatch, refs=_MAIN_REFS, files=self._IN_ASSERT)
+        try:
+            beta = h.resolved_chunk_id("src/b.rs", "method", "tick")
+            ticks = self._ticks(h)
+            assert list(ticks) == [beta], f"only Beta::tick may be linked, got {ticks}"
+            assert ticks[beta]["confidence"] == "exact"
+            assert ticks[beta]["resolver_source"] == "scip_macro"
+            assert ticks[beta]["resolution"] == "scip"
+        finally:
+            h.teardown()
+
+    def test_macro_candidate_without_a_reference_gets_no_edge(
+        self, tmp_path, monkeypatch
+    ):
+        """No SCIP reference: the candidate is dropped, not linked by name."""
+        refs = [r for r in _MAIN_REFS if r[2] != _BETA_TICK]
+        h = _scip_graph(tmp_path, monkeypatch, refs=refs, files=self._IN_ASSERT)
+        try:
+            assert self._ticks(h) == {}
+        finally:
+            h.teardown()
+
+    def test_macro_candidate_with_scip_off_gets_no_edge(self, tmp_path, monkeypatch):
+        h = _scip_graph(
+            tmp_path, monkeypatch, enabled=False, refs=_MAIN_REFS, files=self._IN_ASSERT
+        )
+        try:
+            assert self._ticks(h) == {}
+        finally:
+            h.teardown()
+
     def test_external_symbol_gets_no_project_edge(self, tmp_path, monkeypatch):
         h = _scip_graph(tmp_path, monkeypatch, refs=_MAIN_REFS)
         try:

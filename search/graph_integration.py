@@ -221,19 +221,20 @@ class _RustScipPass:
         self.refs = refs
         self.rust_chunks = rust_chunks
         self._by_file: dict[str, list[tuple[int, int, str]]] | None = None
-        self.counts = dict.fromkeys(
-            (
-                "resolved",
-                "refused_external",
-                "no_ref",
-                "multi",
-                "dup_def",
-                "stale_caller",
-                "stale_def",
-                "unmapped",
-            ),
-            0,
+        outcomes = (
+            "resolved",
+            "refused_external",
+            "no_ref",
+            "multi",
+            "dup_def",
+            "stale_caller",
+            "stale_def",
+            "unmapped",
         )
+        self.counts = dict.fromkeys(outcomes, 0)
+        # Macro call candidates are counted apart, so `counts` keeps meaning
+        # "tree-sitter call sites" (ADR-0092 amendment).
+        self.macro_counts = dict.fromkeys(outcomes, 0)
         self._started = time.perf_counter()
 
     @classmethod
@@ -254,40 +255,42 @@ class _RustScipPass:
         return cls(refs, rust_chunks)
 
     def decide(
-        self, caller_file: str, line: int, callee_name: str
+        self, caller_file: str, line: int, callee_name: str, *, in_macro: bool = False
     ) -> tuple[str, list[str]] | None:
+        """Decide one Rust call; ``in_macro`` counts it in ``macro_counts``."""
+        counts = self.macro_counts if in_macro else self.counts
         refs = self.refs
         caller = refs.relative(caller_file)
         if caller is None or not line or not refs.is_fresh(caller):
-            self.counts["stale_caller"] += 1
+            counts["stale_caller"] += 1
             return None
         hits = refs.refs_at(caller, line, callee_name)
         if not hits:
-            self.counts["no_ref"] += 1
+            counts["no_ref"] += 1
             return None
         if len({hit[0] for hit in hits}) > 1:
-            self.counts["multi"] += 1
+            counts["multi"] += 1
             return None
         definitions = hits[0][1]
         if not definitions:
-            self.counts["refused_external"] += 1
+            counts["refused_external"] += 1
             return "scip", []
         if len(definitions) > 1:
             # One symbol string, several targets (each tests/*.rs is its own
             # crate): only the caller's own file is known to be the right one.
             definitions = tuple(d for d in definitions if d[0] == caller)
             if len(definitions) != 1:
-                self.counts["dup_def"] += 1
+                counts["dup_def"] += 1
                 return None
         def_file, def_line = definitions[0]
         if not refs.is_fresh(def_file):
-            self.counts["stale_def"] += 1
+            counts["stale_def"] += 1
             return None
         target = self._chunk_at(def_file, def_line, callee_name)
         if target is None:
-            self.counts["unmapped"] += 1
+            counts["unmapped"] += 1
             return None
-        self.counts["resolved"] += 1
+        counts["resolved"] += 1
         return "scip", [target]
 
     def _chunk_at(self, def_file: str, def_line: int, name: str) -> str | None:
@@ -326,6 +329,22 @@ class _RustScipPass:
             c["unmapped"],
             time.perf_counter() - self._started,
         )
+        m = self.macro_counts
+        if any(m.values()):
+            logger.info(
+                "[RUST_SCIP_MACRO] candidates=%d resolved=%d refused_external=%d "
+                "no_ref=%d multi=%d dup_def=%d stale_caller=%d stale_def=%d "
+                "unmapped=%d",
+                sum(m.values()),
+                m["resolved"],
+                m["refused_external"],
+                m["no_ref"],
+                m["multi"],
+                m["dup_def"],
+                m["stale_caller"],
+                m["stale_def"],
+                m["unmapped"],
+            )
 
     def close(self) -> None:
         self.refs.close()
@@ -1021,6 +1040,7 @@ class GraphIntegration:
                 "line_number": c.get("line_number", 0),
                 "is_method_call": c.get("is_method_call", False),
                 "callee_qualified": c.get("callee_qualified"),
+                "in_macro": bool(c.get("in_macro", False)),
             }
             for c in raw_calls
         ]
@@ -1093,6 +1113,7 @@ class GraphIntegration:
                         "line_number": call.line_number,  # pyrefly: ignore [missing-attribute]
                         "is_method_call": call.is_method_call,  # pyrefly: ignore [missing-attribute]
                         "callee_qualified": getattr(call, "callee_qualified", None),
+                        "in_macro": bool(getattr(call, "in_macro", False)),
                     }
                 )
             else:
@@ -1102,6 +1123,7 @@ class GraphIntegration:
                         "line_number": call.get("line_number", 0),
                         "is_method_call": call.get("is_method_call", False),
                         "callee_qualified": call.get("callee_qualified"),
+                        "in_macro": bool(call.get("in_macro", False)),
                     }
                 )
 
@@ -1334,6 +1356,32 @@ class GraphIntegration:
                     is_method_call = call["is_method_call"]
                     callee_qualified = call.get("callee_qualified")
                     is_rust = spec.language in _RUST_LANGUAGES
+                    if call.get("in_macro"):
+                        # A macro call candidate becomes one exact edge only
+                        # when SCIP confirms a project target; otherwise it is
+                        # dropped, never given to D or the name-only tier.
+                        macro_decision = (
+                            rust_scip.decide(
+                                spec.file_path, line_number, callee_name, in_macro=True
+                            )
+                            if rust_scip is not None and is_rust
+                            else None
+                        )
+                        if macro_decision is not None and macro_decision[1]:
+                            self.storage.add_call_edge(
+                                caller_id=spec.chunk_id,
+                                callee_name=macro_decision[1][0],
+                                line_number=line_number,
+                                is_method_call=is_method_call,
+                                is_resolved=True,
+                                confidence="exact",
+                                resolution="scip",
+                                resolver_source="scip_macro",
+                                resolver_confidence=_SCIP_RESOLVER_CONFIDENCE,
+                            )
+                            call_edges += 1
+                            resolved_edges += 1
+                        continue
                     # E (ADR-0092) first, for every Rust call; then D (ADR-0091)
                     # for plain and path calls; None -> today's tiers.
                     decision = (
@@ -1651,6 +1699,10 @@ class GraphIntegration:
             # Add call edges from function call extraction
             calls = metadata.get("calls", [])
             for call_dict in calls:
+                if call_dict.get("in_macro"):
+                    # A macro call candidate is an edge only through the SCIP
+                    # tier in a full build (ADR-0092 amendment).
+                    continue
                 self.storage.add_call_edge(
                     caller_id=chunk_id,
                     callee_name=call_dict.get("callee_name", "unknown"),

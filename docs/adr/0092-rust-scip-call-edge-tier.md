@@ -106,3 +106,14 @@ and D plus E (`evaluation/RUST_SCIP_GATE_20261124.md`, local only).
   no reference. In a later hyprzero probe, 77,048 of 152,649 `no_ref` calls
   had the name's reference 1 to 12 lines lower. D is not affected: it uses the line
   only to find the inline module and block-scoped imports that hold the call.
+- 2026-11-24: Calls written inside macro arguments are now in scope, which
+  replaces "stay out of scope" under Evidence. tree-sitter leaves macro
+  arguments as flat tokens, so the Rust chunker records each name followed by
+  an argument list there as a macro call candidate (`in_macro` on the call),
+  skipping `macro_rules!` bodies and `fn name(` inside macros. Only E decides a
+  candidate: a project target gives one exact edge with
+  `resolver_source="scip_macro"`, and any other outcome gives no edge at all,
+  never a D or name-only edge. Candidates have their own counters, logged as
+  `[RUST_SCIP_MACRO]`, so the `[RUST_SCIP]` line is unchanged. A probe on
+  hyprzero found 107,291 candidates, of which E resolved 32,632 (84% inside
+  `assert!` and `assert_eq!`), against a go threshold of 10,000.

@@ -105,6 +105,33 @@ class TestGraphIntegration(TestCase):
 
     @patch("search.graph_integration.CodeGraphStorage")
     @patch("search.graph_integration.GRAPH_STORAGE_AVAILABLE", True)
+    def test_add_chunk_skips_macro_call_candidates(self, mock_graph_storage):
+        """A macro call candidate becomes an edge only through the SCIP tier
+        in a full build; add_chunk writes no edge for it."""
+        mock_storage = Mock()
+        mock_graph_storage.return_value = mock_storage
+        graph = GraphIntegration("test_project", self.storage_dir)
+        call = {"callee_name": "ready", "line_number": 2, "is_method_call": False}
+        metadata = {
+            "chunk_type": "function",
+            "name": "checks",
+            "file_path": "lib.rs",
+            "language": "rust",
+            "calls": [{**call, "in_macro": True}, {**call, "callee_name": "plain"}],
+            "relationships": [],
+        }
+
+        graph.add_chunk("lib.rs:1-5:function:checks", metadata)
+
+        mock_storage.add_call_edge.assert_called_once_with(
+            caller_id="lib.rs:1-5:function:checks",
+            callee_name="plain",
+            line_number=2,
+            is_method_call=False,
+        )
+
+    @patch("search.graph_integration.CodeGraphStorage")
+    @patch("search.graph_integration.GRAPH_STORAGE_AVAILABLE", True)
     def test_add_chunk_class(self, mock_graph_storage):
         """Test adding a class chunk to graph."""
         mock_storage = Mock()

@@ -584,6 +584,13 @@ To use E on a Cargo workspace:
 The build log shows `[RUST_SCIP] resolved= refused_external= ... stale_caller= stale_def=`.
 Rising `stale_*` counts mean the table is old: run step 2 again.
 
+With `rust_scip` on, calls written inside macro arguments (`assert!(f(x))`,
+`vec![g()]`) also get edges, but only when the SCIP table confirms a project
+function (`resolver_source="scip_macro"`). They are counted on their own line,
+`[RUST_SCIP_MACRO] candidates= resolved= ...`. Most of these edges link tests to
+the code they assert on. To hide them, pass `exclude_dirs=["tests/"]` to
+`find_connections`.
+
 ---
 
 ## 7. Out-of-Scope Items
