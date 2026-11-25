@@ -28,9 +28,12 @@ We index each `.wgsl` file as one **whole-file chunk** with no grammar:
   largest is 34,729). The chunk keeps the full text. The embedding composer's
   character budget (`EmbeddingConfig.body_truncation="fill_budget"`, about
   6,000 characters) cuts only the embedded text.
-- **No calls.** `wgsl` is in `PSEUDO_LANGUAGES`, so its chunks are graph nodes
-  but never call targets. A Rust call `reduce()` cannot link to `reduce.wgsl`
-  by name.
+- **No calls, no graph node.** `whole_file` is not in `SEMANTIC_TYPES`
+  (`search/graph_integration.py`), and the chunk has no relationships, so the
+  graph build skips it: the hyprzero reindex has 89 `whole_file` chunks and 0
+  WGSL graph nodes. `wgsl` is also in `PSEUDO_LANGUAGES`, so if a later change
+  makes these chunks nodes, they still never become call targets. A Rust call
+  `reduce()` cannot link to `reduce.wgsl` by name.
 - **Switch.** `ChunkingConfig.enable_wgsl_whole_file`, default on, read only
   through `chunking.language_registry.wgsl_whole_file_enabled()`. `.wgsl` is
   registered in `EXT_TO_LANGUAGE` unconditionally, like `.tdgraph.json`
@@ -57,7 +60,9 @@ We index each `.wgsl` file as one **whole-file chunk** with no grammar:
 
 ## Consequences
 
-- hyprzero gets 89 new `whole_file` chunks on its next full reindex.
+- hyprzero has 89 `whole_file` chunks after its full reindex (84,818 -> 84,907
+  chunks, 89 embedding-cache misses); the Rust call-graph counters did not
+  change.
 - A maintained WGSL grammar can replace this later with function chunks; the
   switch and the chunk type then become the fallback for files it cannot parse.
 - `whole_file` is a general chunk type. Another language with no usable parser

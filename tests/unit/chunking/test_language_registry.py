@@ -253,8 +253,8 @@ class TestWgslWholeFileGate:
         assert extensions_on - extensions_off == {".wgsl"}
 
     def test_wgsl_is_a_pseudo_language(self) -> None:
-        """Pseudo-language chunks are graph nodes but never call targets, so a
-        Rust call `reduce()` cannot link to `reduce.wgsl` by name."""
+        """Pseudo-language chunks are never call targets, so a Rust call
+        `reduce()` cannot link to `reduce.wgsl` by name."""
         from chunking.language_registry import PSEUDO_LANGUAGES
 
         assert "wgsl" in PSEUDO_LANGUAGES
