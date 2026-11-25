@@ -235,6 +235,8 @@ class _RustScipPass:
         # Macro call candidates are counted apart, so `counts` keeps meaning
         # "tree-sitter call sites" (ADR-0092 amendment).
         self.macro_counts = dict.fromkeys(outcomes, 0)
+        # Files whose hash no longer matches the manifest, for the stale warning.
+        self._stale_files: set[str] = set()
         self._started = time.perf_counter()
 
     @classmethod
@@ -263,6 +265,8 @@ class _RustScipPass:
         caller = refs.relative(caller_file)
         if caller is None or not line or not refs.is_fresh(caller):
             counts["stale_caller"] += 1
+            if caller is not None and line:
+                self._stale_files.add(caller)
             return None
         hits = refs.refs_at(caller, line, callee_name)
         if not hits:
@@ -285,6 +289,7 @@ class _RustScipPass:
         def_file, def_line = definitions[0]
         if not refs.is_fresh(def_file):
             counts["stale_def"] += 1
+            self._stale_files.add(def_file)
             return None
         target = self._chunk_at(def_file, def_line, callee_name)
         if target is None:
@@ -329,6 +334,14 @@ class _RustScipPass:
             c["unmapped"],
             time.perf_counter() - self._started,
         )
+        # The counters give call counts; this line says the table needs a
+        # refresh, once per build, when stale calls pass 10% of all decisions.
+        total = sum(c.values())
+        if total and (c["stale_caller"] + c["stale_def"]) * 10 > total:
+            logger.warning(
+                "[RUST_SCIP] SCIP table is stale for %d files; run Make SCIP Index",
+                len(self._stale_files),
+            )
         m = self.macro_counts
         if any(m.values()):
             logger.info(

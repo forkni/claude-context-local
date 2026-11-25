@@ -50,6 +50,7 @@ Four cases:
    divergence from C-family's blanket downgrade.
 """
 
+import logging
 from pathlib import Path
 
 from chunking.multi_language_chunker import MultiLanguageChunker
@@ -608,6 +609,50 @@ class TestRustScipResolution:
             run_id = h.resolved_chunk_id("src/main.rs", "function", "run")
             calls = _calls_of(h, run_id)
             assert sum(t.endswith(".tick") for t in calls) == 3
+        finally:
+            h.teardown()
+
+    _STALE = "SCIP table is stale"
+
+    def _stale_warnings(self, caplog) -> list[str]:
+        return [r.getMessage() for r in caplog.records if self._STALE in r.getMessage()]
+
+    def test_stale_caller_file_logs_one_warning(self, tmp_path, monkeypatch, caplog):
+        """All 3 calls in the edited main.rs are stale (> 10%): one warning
+        that names the file count and the fix."""
+        edited = _SCIP_WS_FILES["src/main.rs"] + "// edited\n"
+        caplog.set_level(logging.INFO, logger="search.graph_integration")
+        h = _scip_graph(
+            tmp_path, monkeypatch, refs=_MAIN_REFS, edit={"src/main.rs": edited}
+        )
+        try:
+            assert self._stale_warnings(caplog) == [
+                "[RUST_SCIP] SCIP table is stale for 1 files; run Make SCIP Index"
+            ]
+        finally:
+            h.teardown()
+
+    def test_stale_definition_file_logs_one_warning(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """1 of 3 calls targets the edited b.rs (33% > 10%)."""
+        edited = _SCIP_WS_FILES["src/b.rs"] + "// edited\n"
+        caplog.set_level(logging.INFO, logger="search.graph_integration")
+        h = _scip_graph(
+            tmp_path, monkeypatch, refs=_MAIN_REFS, edit={"src/b.rs": edited}
+        )
+        try:
+            assert self._stale_warnings(caplog) == [
+                "[RUST_SCIP] SCIP table is stale for 1 files; run Make SCIP Index"
+            ]
+        finally:
+            h.teardown()
+
+    def test_fresh_table_logs_no_stale_warning(self, tmp_path, monkeypatch, caplog):
+        caplog.set_level(logging.INFO, logger="search.graph_integration")
+        h = _scip_graph(tmp_path, monkeypatch, refs=_MAIN_REFS)
+        try:
+            assert self._stale_warnings(caplog) == []
         finally:
             h.teardown()
 

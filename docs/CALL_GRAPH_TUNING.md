@@ -582,7 +582,9 @@ To use E on a Cargo workspace:
 3. Set `call_graph.rust_scip` to `true` and reindex.
 
 The build log shows `[RUST_SCIP] resolved= refused_external= ... stale_caller= stale_def=`.
-Rising `stale_*` counts mean the table is old: run step 2 again.
+Rising `stale_*` counts mean the table is old: run step 2 again. When stale calls
+pass 10% of all E decisions, the build also logs one warning,
+`[RUST_SCIP] SCIP table is stale for N files; run Make SCIP Index`.
 
 With `rust_scip` on, calls written inside macro arguments (`assert!(f(x))`,
 `vec![g()]`) also get edges, but only when the SCIP table confirms a project
