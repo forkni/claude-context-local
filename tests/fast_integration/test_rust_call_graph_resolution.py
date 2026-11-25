@@ -460,7 +460,10 @@ def _scip_graph(
     refs: list[tuple] | None = None,
     symbols: dict | None = None,
     edit: dict[str, str] | None = None,
+    files: dict[str, str] | None = None,
 ) -> _RustGraphHarness:
+    """Build the SCIP workspace graph. ``files`` replaces workspace files
+    before the table is written (fresh); ``edit`` changes them after (stale)."""
     from search import graph_integration
     from search.config import SearchConfig
 
@@ -468,7 +471,7 @@ def _scip_graph(
     config.call_graph.rust_scip = enabled
     monkeypatch.setattr(graph_integration, "get_search_config", lambda: config)
     root = tmp_path / "ws"
-    for rel, text in _SCIP_WS_FILES.items():
+    for rel, text in {**_SCIP_WS_FILES, **(files or {})}.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
     h = _RustGraphHarness(root)
@@ -503,6 +506,23 @@ class TestRustScipResolution:
             assert calls[beta]["confidence"] == "exact"
             assert calls[beta]["resolver_source"] == "scip"
             assert calls[beta]["resolution"] == "scip"
+        finally:
+            h.teardown()
+
+    def test_receiver_call_split_over_two_lines_resolves(self, tmp_path, monkeypatch):
+        """SCIP records `tick` on the line of the name; the chunker must too."""
+        main = _SCIP_WS_FILES["src/main.rs"].replace(
+            "    b.tick();\n", "    b\n        .tick();\n"
+        )
+        refs = [("src/main.rs", 5, _BETA_TICK), ("src/main.rs", 6, _VEC_PUSH)]
+        h = _scip_graph(tmp_path, monkeypatch, refs=refs, files={"src/main.rs": main})
+        try:
+            run_id = h.resolved_chunk_id("src/main.rs", "function", "run")
+            beta = h.resolved_chunk_id("src/b.rs", "method", "tick")
+            calls = _calls_of(h, run_id)
+            ticks = sorted(t for t in calls if t.endswith(".tick"))
+            assert ticks == [beta], f"only Beta::tick may be linked, got {ticks}"
+            assert calls[beta]["resolver_source"] == "scip"
         finally:
             h.teardown()
 

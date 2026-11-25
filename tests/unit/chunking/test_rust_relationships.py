@@ -345,3 +345,59 @@ def test_mod_scoped_call_carries_qualified_name(rust_chunks):
     assert [
         (c.callee_name, c.is_method_call, c.callee_qualified) for c in chunk.calls
     ] == [("unit_length", False, "geometry::unit_length")]
+
+
+# ===== call-site line: the line of the called name (F1) =====
+
+_MULTILINE_CALLS_SOURCE = """\
+fn chained(builder: Builder) {
+    builder
+        .width(3)
+        .height(4)
+        .build();
+}
+
+fn split_path() {
+    crate::geometry::
+        unit_length(1.0);
+}
+
+fn generic_method(items: Items) {
+    items
+        .collect::<Vec<u8>>();
+}
+"""
+
+
+@pytest.fixture
+def multiline_chunks(tmp_path: Path):
+    """Chunks of a file whose calls span several lines."""
+    file_path = tmp_path / "multiline.rs"
+    file_path.write_text(_MULTILINE_CALLS_SOURCE, encoding="utf-8", newline="\n")
+    chunker = MultiLanguageChunker(root_path=str(tmp_path))
+    return chunker.chunk_file(str(file_path))
+
+
+def _call_lines(chunk) -> list[tuple[str, int]]:
+    return sorted((c.callee_name, c.line_number) for c in chunk.calls)
+
+
+def test_chained_method_calls_record_the_method_name_line(multiline_chunks):
+    """Each call in a chain gets the line of its method name, not the line of
+    `builder` where the whole expression starts. SCIP records the name's line,
+    so the SCIP tier can only match a call at that line."""
+    chunk = _chunk(multiline_chunks, "chained")
+    assert _call_lines(chunk) == [("build", 5), ("height", 4), ("width", 3)]
+
+
+def test_path_call_split_over_lines_records_the_name_line(multiline_chunks):
+    """A path call whose final segment is on the next line gets that line."""
+    chunk = _chunk(multiline_chunks, "split_path")
+    assert _call_lines(chunk) == [("unit_length", 10)]
+
+
+def test_generic_method_records_the_method_name_line(multiline_chunks):
+    """`x\n.collect::<T>()` is peeled through `generic_function` and still
+    gets the line of `collect`."""
+    chunk = _chunk(multiline_chunks, "generic_method")
+    assert _call_lines(chunk) == [("collect", 15)]

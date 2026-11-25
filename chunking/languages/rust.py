@@ -196,7 +196,7 @@ class RustChunker(LanguageChunker):
         return None
 
     def _dispatch_call_site(
-        self, func_node: Any, line: int, source: bytes, impl_type: str | None
+        self, func_node: Any, source: bytes, impl_type: str | None
     ) -> tuple[str, int, bool, str | None] | None:
         """Resolve a `call_expression`'s `function` field to a call-site tuple.
 
@@ -229,13 +229,15 @@ class RustChunker(LanguageChunker):
           type, never as a `call_expression`'s `function` field, so it
           needs no explicit skip branch): skipped.
 
+        The call-site line is the line of the called name (the identifier,
+        the `field` of a method call, the `name` of a path), not the line
+        where the expression starts: in a chain written over several lines,
+        `a\\n    .b()` gets `b`'s line. rust-analyzer's SCIP index records the
+        name's line, and the SCIP tier matches a call to a reference by
+        file, line and name.
+
         Args:
             func_node: The `call_expression`'s `function` field.
-            line: 1-indexed source line, computed once from the outermost
-                `function` field by the caller and threaded through every
-                dispatch branch including the `generic_function` peel
-                (mirrors `_c_family.extract_call_sites`'s single up-front
-                `line` computation).
             source: Source code bytes.
             impl_type: The enclosing `impl` block's Self type name, or None.
 
@@ -246,12 +248,18 @@ class RustChunker(LanguageChunker):
         if func_node is None or func_node.is_missing:
             return None
         if func_node.type == "identifier":
-            return (self.get_node_text(func_node, source), line, False, None)
+            return (
+                self.get_node_text(func_node, source),
+                func_node.start_point[0] + 1,
+                False,
+                None,
+            )
         if func_node.type == "field_expression":
             field_node = func_node.child_by_field_name("field")
             if field_node is None or field_node.is_missing:
                 return None
             name = self.get_node_text(field_node, source)
+            line = field_node.start_point[0] + 1
             value_node = func_node.child_by_field_name("value")
             if value_node is not None and value_node.type == "self" and impl_type:
                 return (name, line, True, f"{impl_type}::{name}")
@@ -261,6 +269,7 @@ class RustChunker(LanguageChunker):
             if name_node is None or name_node.is_missing:
                 return None
             name = self.get_node_text(name_node, source)
+            line = name_node.start_point[0] + 1
             qualified_text = self.get_node_text(func_node, source)
             if _is_rust_std_qualified(qualified_text):
                 return None
@@ -277,7 +286,7 @@ class RustChunker(LanguageChunker):
             return (name, line, False, qualified)
         if func_node.type == "generic_function":
             inner = func_node.child_by_field_name("function")
-            return self._dispatch_call_site(inner, line, source, impl_type)
+            return self._dispatch_call_site(inner, source, impl_type)
         return None
 
     def _extract_call_and_related_metadata(
@@ -320,8 +329,7 @@ class RustChunker(LanguageChunker):
             if current.type == "call_expression":
                 func_node = current.child_by_field_name("function")
                 if func_node is not None and not func_node.is_missing:
-                    line = func_node.start_point[0] + 1
-                    entry = self._dispatch_call_site(func_node, line, source, impl_type)
+                    entry = self._dispatch_call_site(func_node, source, impl_type)
                     if entry is not None:
                         calls.append(entry)
             elif current.type == "struct_expression":

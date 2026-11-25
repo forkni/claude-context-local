@@ -96,3 +96,13 @@ and D plus E (`evaluation/RUST_SCIP_GATE_20261124.md`, local only).
 - No retrieval canon re-pin: the switch is off, and the self-index has no Rust
   code.
 - Closes the "receiver calls need types" item that ADR-0091 left open.
+
+## Amendments
+
+- 2026-11-24: The Rust chunker now records a call on the line of the called
+  name, not on the line where the call expression starts. Before this change,
+  a chain written over several lines (`a` on one line, `.b()` on the next)
+  recorded `a`'s line. SCIP puts the reference on `b`'s line, so step 2 found
+  no reference. In a later hyprzero probe, 77,048 of 152,649 `no_ref` calls
+  had the name's reference 1 to 12 lines lower. D is not affected: it uses the line
+  only to find the inline module and block-scoped imports that hold the call.
