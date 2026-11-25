@@ -98,6 +98,7 @@ for avoiding re-litigating settled questions.
 | [0090](0090-language-group-fence-for-call-edges.md) | Resolve call targets only inside the caller's language group | accepted | 2026-11-24 |
 | [0091](0091-rust-use-path-resolution.md) | Resolve Rust call paths through use imports and the module tree | accepted | 2026-11-24 |
 | [0092](0092-rust-scip-call-edge-tier.md) | Resolve Rust calls from a rust-analyzer SCIP table (opt-in) | accepted | 2026-11-24 |
+| [0093](0093-wgsl-whole-file-chunks.md) | Index WGSL shaders as whole-file chunks | accepted | 2026-11-24 |
 
 ## Adding a new ADR
 

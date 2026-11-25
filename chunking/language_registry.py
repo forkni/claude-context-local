@@ -58,6 +58,9 @@ EXT_TO_LANGUAGE: dict[str, str] = {
     # A compound (multi-dot) key: Path(...).suffix alone can't see it, hence
     # extension_key() below.
     ".tdgraph.json": "td_network",
+    # WGSL shaders (ADR-0093): pseudo-language, one whole-file chunk per file,
+    # gated by wgsl_whole_file_enabled() at the same consumption points.
+    ".wgsl": "wgsl",
     # TouchDesigner Python DAT mirror (e.g. "hubApi__Text__HubApi__td.txt"):
     # plain Python saved with a .txt suffix. Compound key, resolved by
     # extension_key() below; always on, not behind the ADR-0062 gate.
@@ -85,7 +88,11 @@ COMPOUND_EXTENSIONS: dict[str, str] = {
 # explicitly (its AVAILABLE_LANGUAGES filter would otherwise silently drop
 # them), and MultiLanguageChunker.chunk_file() routes them to a dedicated
 # chunker instead of TreeSitterChunker.
-PSEUDO_LANGUAGES: frozenset[str] = frozenset({"td_network"})
+PSEUDO_LANGUAGES: frozenset[str] = frozenset({"td_network", "wgsl"})
+
+# Pseudo-language extensions that are plain suffixes (unlike the compound
+# keys above), so get_supported_extensions() adds them by name.
+WGSL_EXTENSION = ".wgsl"
 
 
 def extension_key(path: str) -> str:
@@ -135,6 +142,25 @@ def td_network_indexing_enabled() -> bool:
     return (
         bool(chunking_config.enable_td_network_indexing) if chunking_config else False
     )
+
+
+def is_wgsl_file(path: str) -> bool:
+    """True if `path` is a WGSL shader (.wgsl)."""
+    return extension_key(path) == WGSL_EXTENSION
+
+
+def wgsl_whole_file_enabled() -> bool:
+    """Gate for WGSL whole-file chunks (ADR-0093).
+
+    Same contract as td_network_indexing_enabled(): every site that decides
+    whether .wgsl is a chunkable extension calls this helper instead of
+    reading ChunkingConfig.enable_wgsl_whole_file. The feature is on by
+    default, so a missing config means on.
+    """
+    from search.config import get_chunking_config
+
+    chunking_config = get_chunking_config()
+    return bool(chunking_config.enable_wgsl_whole_file) if chunking_config else True
 
 
 # Common large/build/tooling directories to skip during traversal

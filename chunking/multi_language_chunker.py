@@ -22,9 +22,12 @@ from .language_registry import (
     LANGUAGE_NODE_TYPE_OVERRIDES,
     NODE_TYPE_MAP,
     SUPPORTED_EXTENSIONS,
+    WGSL_EXTENSION,
     extension_key,
     is_td_network_file,
+    is_wgsl_file,
     td_network_indexing_enabled,
+    wgsl_whole_file_enabled,
 )
 from .python_ast_chunker import CodeChunk
 from .td_network_chunker import TDNetworkChunker
@@ -363,6 +366,9 @@ class MultiLanguageChunker:
             # otherwise say True unconditionally -- .tdgraph.json is
             # registered in EXT_TO_LANGUAGE regardless of the flag).
             return td_network_indexing_enabled()
+        if ext_key == WGSL_EXTENSION:
+            # ADR-0093: registered unconditionally too, gated the same way.
+            return wgsl_whole_file_enabled()
         return ext_key in self.SUPPORTED_EXTENSIONS
 
     def chunk_file(self, file_path: str) -> list[CodeChunk]:
@@ -417,6 +423,9 @@ class MultiLanguageChunker:
                 )
                 return []
 
+        if is_wgsl_file(file_path):
+            return self._chunk_whole_file(file_path, "wgsl")
+
         # Use tree-sitter for all  languages
         try:
             tree_chunks = self.tree_sitter_chunker.chunk_file(file_path)
@@ -425,6 +434,48 @@ class MultiLanguageChunker:
         except Exception as e:
             logger.error(f"Failed to chunk file {file_path}: {e}", exc_info=True)
             return []
+
+    def _chunk_whole_file(self, file_path: str, language: str) -> list[CodeChunk]:
+        """One `whole_file` chunk holding the full text of `file_path` (ADR-0093).
+
+        For a language with no usable parser: the file is searchable, with no
+        functions or calls of its own. An oversized file stays one chunk; the
+        embedding composer's character budget cuts only the embedded text.
+        An empty file gives no chunk.
+        """
+        path = Path(file_path)
+        try:
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            logger.warning(f"Could not read {file_path}, skipping: {e}")
+            return []
+        if not content.strip():
+            return []
+        if self.root_path:
+            try:
+                relative_path = str(path.relative_to(self.root_path))
+            except ValueError:
+                relative_path = file_path
+        else:
+            relative_path = file_path
+        end_line = content.count("\n") + (0 if content.endswith("\n") else 1)
+        name = path.name
+        chunk = CodeChunk(
+            file_path=str(path),
+            relative_path=relative_path,
+            folder_structure=self._build_folder_structure(file_path),
+            chunk_type="whole_file",
+            content=content,
+            start_line=1,
+            end_line=end_line,
+            name=name,
+            tags=[language, f"role:{self._classify_file_role(relative_path)}"],
+            language=language,
+        )
+        chunk.chunk_id = self._create_chunk_id(
+            relative_path, 1, end_line, "whole_file", name
+        )
+        return [chunk]
 
     def _max_file_size_bytes(self) -> int | None:
         """Read ``ChunkingConfig.max_file_size_bytes``, or ``None`` if the search
@@ -513,6 +564,7 @@ class MultiLanguageChunker:
           - "doc"    : markdown/rst/txt files or files under docs/ directories
           - "config" : project configuration files (pyproject.toml, Dockerfile, etc.)
           - "shader" : GLSL shader files (.glsl/.frag/.vert/.comp/.geom/.tesc/.tese/.glslinc)
+            and WGSL shader files (.wgsl)
           - "src"    : everything else (implementation code)
 
         Args:
@@ -582,6 +634,7 @@ class MultiLanguageChunker:
             ".tesc",
             ".tese",
             ".glslinc",
+            ".wgsl",
         ):
             return "shader"
 

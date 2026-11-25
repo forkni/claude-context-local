@@ -74,8 +74,10 @@ def _dry_run(
 
     from chunking.language_registry import (
         SUPPORTED_EXTENSIONS,
+        WGSL_EXTENSION,
         extension_key,
         td_network_indexing_enabled,
+        wgsl_whole_file_enabled,
     )
     from search.filters import MatchKind, PathFilter, match_pattern
 
@@ -87,6 +89,8 @@ def _dry_run(
     # count files that handle_index_directory's real chunking path (gated via
     # MultiLanguageChunker.is_supported) would actually skip.
     td_enabled = td_network_indexing_enabled()
+    # ADR-0093: the same unconditional registration and gate for .wgsl.
+    wgsl_enabled = wgsl_whole_file_enabled()
 
     per_pattern_size: dict[str, int] = dict.fromkeys(
         (p.raw for p in path_filter.include_patterns), 0
@@ -114,6 +118,9 @@ def _dry_run(
             ext_key = extension_key(name)
             if ext_key == ".tdgraph.json":
                 if not td_enabled:
+                    continue
+            elif ext_key == WGSL_EXTENSION:
+                if not wgsl_enabled:
                     continue
             elif ext_key not in SUPPORTED_EXTENSIONS:
                 continue

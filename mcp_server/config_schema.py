@@ -176,6 +176,10 @@ CONFIG_BACKED: dict[str, dict[str, Any]] = _build(
             ChunkingConfig,
             "enable_td_network_indexing",
         ),
+        "configure_chunking.enable_wgsl_whole_file": (
+            ChunkingConfig,
+            "enable_wgsl_whole_file",
+        ),
         # Shared across all 20 tools — output_format is popped centrally in
         # mcp_server/server.py's handle_call_tool before any handler runs, so
         # a single (OutputConfig, "format") mapping backs every occurrence.

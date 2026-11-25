@@ -205,3 +205,56 @@ class TestTreeSitterGetSupportedExtensionsGate:
 
         assert extensions_on - extensions_off == {".tdgraph.json"}
         assert ".py" in extensions_off
+
+
+class TestWgslWholeFileGate:
+    """`.wgsl` files are indexed as whole-file chunks unless
+    `ChunkingConfig.enable_wgsl_whole_file` is off (ADR-0093)."""
+
+    def _config(self, enabled: bool) -> MagicMock:
+        config = MagicMock()
+        config.enable_wgsl_whole_file = enabled
+        config.enable_td_network_indexing = False
+        config.max_file_size_bytes = None
+        return config
+
+    def test_gate_follows_the_setting(self) -> None:
+        from chunking.language_registry import wgsl_whole_file_enabled
+
+        for enabled in (True, False):
+            with patch(
+                "search.config.get_chunking_config", return_value=self._config(enabled)
+            ):
+                assert wgsl_whole_file_enabled() is enabled
+
+    def test_gate_is_on_without_a_config(self) -> None:
+        from chunking.language_registry import wgsl_whole_file_enabled
+
+        with patch("search.config.get_chunking_config", return_value=None):
+            assert wgsl_whole_file_enabled() is True
+
+    def test_is_supported_follows_the_gate(self) -> None:
+        from chunking.multi_language_chunker import MultiLanguageChunker
+
+        chunker = MultiLanguageChunker()
+        for enabled in (True, False):
+            with patch(
+                "search.config.get_chunking_config", return_value=self._config(enabled)
+            ):
+                assert chunker.is_supported("crates/gpu/decode.wgsl") is enabled
+
+    def test_supported_extensions_follow_the_gate(self) -> None:
+        from chunking.tree_sitter import TreeSitterChunker
+
+        with patch("chunking.tree_sitter.wgsl_whole_file_enabled", return_value=False):
+            extensions_off = set(TreeSitterChunker.get_supported_extensions())
+        with patch("chunking.tree_sitter.wgsl_whole_file_enabled", return_value=True):
+            extensions_on = set(TreeSitterChunker.get_supported_extensions())
+        assert extensions_on - extensions_off == {".wgsl"}
+
+    def test_wgsl_is_a_pseudo_language(self) -> None:
+        """Pseudo-language chunks are graph nodes but never call targets, so a
+        Rust call `reduce()` cannot link to `reduce.wgsl` by name."""
+        from chunking.language_registry import PSEUDO_LANGUAGES
+
+        assert "wgsl" in PSEUDO_LANGUAGES

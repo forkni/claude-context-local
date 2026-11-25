@@ -244,8 +244,9 @@ RETURNS:
                         "split_block",
                         "operator",
                         "network",
+                        "whole_file",
                     ],
-                    "description": "Filter by code structure type (function, class, method, module, module_preamble, decorated_definition, interface, enum, struct, type, merged, split_block, operator, network -- the last two only present when enable_td_network_indexing is on, ADR-0062), or None for all",
+                    "description": "Filter by code structure type (function, class, method, module, module_preamble, decorated_definition, interface, enum, struct, type, merged, split_block, operator, network, whole_file -- operator and network only present when enable_td_network_indexing is on, ADR-0062; whole_file is one chunk per WGSL file, ADR-0093), or None for all",
                 },
                 "include_context": {
                     "type": "boolean",
@@ -997,6 +998,10 @@ RETURNS:
                 "enable_td_network_indexing": {
                     **CONFIG_BACKED["configure_chunking.enable_td_network_indexing"],
                     "description": "Index TouchDesigner network snapshots (.tdgraph.json) as a pseudo-language (ADR-0062). Off by default -- .tdgraph.json is otherwise an unrecognized extension. Re-index the project after enabling to pick up existing files.",
+                },
+                "enable_wgsl_whole_file": {
+                    **CONFIG_BACKED["configure_chunking.enable_wgsl_whole_file"],
+                    "description": "Index each WGSL shader (.wgsl) as one whole_file chunk with its full text (ADR-0093). On by default; no tree-sitter grammar parses current WGSL, so there are no function chunks or call edges. Re-index the project after changing it.",
                 },
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },

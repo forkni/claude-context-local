@@ -92,7 +92,7 @@ it prints a per-pattern file-count/size breakdown and exits without indexing.
 | **file_pattern** | string | Substring match on file path | Any string (e.g., "auth", "test_", "utils/") |
 | **include_dirs** | array | Only search in these directories (prefix match) | `["src/", "lib/"]` |
 | **exclude_dirs** | array | Exclude from search (prefix match) | `["tests/", "vendor/", "node_modules/"]` |
-| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"module_preamble"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"`, `"merged"`, `"split_block"`, `"operator"`, `"network"` |
+| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"module_preamble"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"`, `"merged"`, `"split_block"`, `"operator"`, `"network"`, `"whole_file"` |
 
 **Synthetic Summary Chunk Types (v0.9.0+)**:
 
@@ -1278,7 +1278,7 @@ def process_order(order: Order, payment: PaymentGateway):
 
 ## Supported Features
 
-- **Languages**: Python, JavaScript, TypeScript, Go, Rust, C, C++ (incl. CUDA), C#, GLSL (9 languages, 29 extensions)
+- **Languages**: Python, JavaScript, TypeScript, Go, Rust, C, C++ (incl. CUDA), C#, GLSL (9 languages, 29 extensions), plus WGSL (`.wgsl`) as one `whole_file` chunk per file, with no functions or calls (ADR-0093, `enable_wgsl_whole_file`, default on)
 - **Parsing**: AST (Python) + Tree-sitter (all others)
 - **Search Modes**: Semantic, BM25, Hybrid
 - **Chunking**: Functions, classes, methods, interfaces, enums, modules, etc.

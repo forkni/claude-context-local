@@ -1091,7 +1091,7 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (13 fields)."""
+    """Chunking algorithm settings (14 fields)."""
 
     # Large function splitting (cAST paper: AST-aware splitting improves Recall@5 +66%)
     enable_large_node_splitting: bool = field(
@@ -1198,6 +1198,19 @@ class ChunkingConfig:
         default=False,
         metadata=spec(
             flat_alias="enable_td_network_indexing",
+            mcp="chunking",
+            reader="chunking/language_registry.py",
+        ),
+    )
+
+    # WGSL whole-file chunks (ADR-0093). On by default: each `.wgsl` file
+    # becomes one `whole_file` chunk with its full text, since no maintained
+    # tree-sitter grammar parses current WGSL. Consumed through the single
+    # gate helper `chunking.language_registry.wgsl_whole_file_enabled()`.
+    enable_wgsl_whole_file: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="enable_wgsl_whole_file",
             mcp="chunking",
             reader="chunking/language_registry.py",
         ),

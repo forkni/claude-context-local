@@ -34,8 +34,10 @@ from .language_registry import (
     EXT_TO_LANGUAGE,
     LANGUAGE_SPECS,
     PSEUDO_LANGUAGES,
+    WGSL_EXTENSION,
     extension_key,
     td_network_indexing_enabled,
+    wgsl_whole_file_enabled,
 )
 
 # Import base classes and language chunkers from languages package
@@ -673,6 +675,10 @@ class TreeSitterChunker:
                 for ext, lang_name in COMPOUND_EXTENSIONS.items()
                 if lang_name in PSEUDO_LANGUAGES
             )
+        if wgsl_whole_file_enabled():
+            # ADR-0093: WGSL is a pseudo-language with a plain suffix, so it
+            # is added by name rather than from COMPOUND_EXTENSIONS.
+            supported.append(WGSL_EXTENSION)
         return supported
 
     @classmethod
