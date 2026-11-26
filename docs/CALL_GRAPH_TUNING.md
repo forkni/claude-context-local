@@ -583,8 +583,17 @@ To use E on a Cargo workspace:
 
 The build log shows `[RUST_SCIP] resolved= refused_external= ... stale_caller= stale_def=`.
 Rising `stale_*` counts mean the table is old: run step 2 again. When stale calls
-pass 10% of all E decisions, the build also logs one warning,
+pass 10% of the E decisions, the build also logs one warning,
 `[RUST_SCIP] SCIP table is stale for N files; run Make SCIP Index`.
+`no_doc=N (F files)` counts calls in uncovered files: `.rs` files that are not
+Cargo workspace members, which rust-analyzer does not load. A new table cannot
+cover them, so they do not count toward the warning. A large `no_doc` usually
+means that the index includes a folder of loose `.rs` files. To leave the folder
+out, reindex with `exclude_dirs`.
+
+Step 2 writes rust-analyzer's output to `<storage>/scip/rust-analyzer.log`. The
+console shows one summary line with the count of rust-analyzer's known-bug
+messages. These messages do not affect call edges.
 
 With `rust_scip` on, calls written inside macro arguments (`assert!(f(x))`,
 `vec![g()]`) also get edges, but only when the SCIP table confirms a project

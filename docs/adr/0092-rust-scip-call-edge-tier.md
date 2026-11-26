@@ -117,3 +117,23 @@ and D plus E (`evaluation/RUST_SCIP_GATE_20261124.md`, local only).
   `[RUST_SCIP_MACRO]`, so the `[RUST_SCIP]` line is unchanged. A probe on
   hyprzero found 107,291 candidates, of which E resolved 32,632 (84% inside
   `assert!` and `assert_eq!`), against a go threshold of 10,000.
+- 2026-11-26: A new counter, `no_doc`, comes before step 1. It is for a caller
+  file that the manifest hashed but that has no rows in the table (an uncovered
+  file: rust-analyzer loads only Cargo workspace members). Before this change,
+  such calls were `no_ref`. A hyprzero worktree that indexed
+  `docs/dev/evidence` (613 uncovered `.rs` files) logged `no_ref=170030`
+  against 75,313 on the main checkout, with `resolved` unchanged. The check
+  comes before the freshness check, because a new producer run cannot cover
+  the file, so an edit to it is not stale. The 10% stale warning leaves `no_doc`
+  out of its total. The `[RUST_SCIP]` line shows `no_doc=N (F files)`, and the
+  `[RUST_SCIP_MACRO]` line shows `no_doc=N`. All these calls still go to D, so
+  no edge changes.
+- 2026-11-26: The producer writes rust-analyzer's own output to
+  `<storage>/scip/rust-analyzer.log` and shows one summary line. rust-analyzer
+  1.100 wrote 1,236 "definition ... should have been in an SCIP document" lines
+  and 2,272 "Duplicate symbol" entries on a hyprzero run. These are
+  rust-analyzer bugs, and the table loses no function from them: all 295
+  functions named in those lines have a definition row. The other 941 are
+  derive-macro impls, whole-file module ranges and tuple fields, which the
+  table does not keep. Duplicate symbols are handled by step 4. After a failed
+  run, the producer shows the last 20 lines of the log.
