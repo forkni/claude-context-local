@@ -11,12 +11,11 @@ from typing import TYPE_CHECKING, Any
 from rich.progress import (
     BarColumn,
     Progress,
-    SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
 )
 
-from utils.console import get_progress_console
+from utils.console import get_progress_console, get_progress_spinner
 
 
 if TYPE_CHECKING:
@@ -143,12 +142,8 @@ class ParallelChunker:
         root_logger.setLevel(logging.WARNING)
         try:
             with Progress(
-                # spinner_name="line" - the default "dots" spinner renders
-                # Braille glyphs (U+2800+) that raise UnicodeEncodeError on a
-                # cp1252 Windows console; get_progress_console() does not set
-                # legacy_windows, so LegacyWindowsTerm rendering runs regardless.
-                # "line" is ASCII-only ('-', '\\', '|', '/').
-                SpinnerColumn(spinner_name="line"),
+                # Braille "dots2" on UTF streams, ASCII "line" on cp1252 (see helper).
+                get_progress_spinner(console),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),

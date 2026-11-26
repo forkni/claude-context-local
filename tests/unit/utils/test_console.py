@@ -11,20 +11,23 @@ so LegacyWindowsTerm rendering still runs. SpinnerColumn's default "dots"
 spinner renders Braille glyphs (U+2800+) with no ascii_only gating, and that
 raised UnicodeEncodeError live on this host.
 
-The production fix is at the two SpinnerColumn call sites
-(search/parallel_chunker.py, embeddings/embedder.py: spinner_name="line"),
-not in this module. This file locks down both halves of that fix: that the
-default "dots" spinner really is the encode hazard, and that "line" (what
-production now uses) is not, under a simulated cp1252 stream.
+Both SpinnerColumn call sites (search/parallel_chunker.py,
+embeddings/embedder.py) now get their column from get_progress_spinner(),
+which picks rich's Braille "dots2" spinner (finished glyph U+28DF) on a UTF
+stream and the ASCII-only "line" spinner on any other stream. This file locks
+down that choice, and that Braille really is the cp1252 encode hazard while
+"line" is not.
 """
 
+import io
 import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+from rich.console import Console
 from rich.progress import SpinnerColumn
 
-from utils.console import get_progress_console
+from utils.console import get_progress_console, get_progress_spinner
 
 
 class TestGetProgressConsole:
@@ -94,9 +97,48 @@ class TestSpinnerEncodingUnderCp1252:
                 frame.encode("cp1252")
 
     def test_line_spinner_is_cp1252_encodable(self):
-        """production now passes spinner_name="line" at both call sites."""
+        """get_progress_spinner() falls back to "line" on non-UTF streams."""
         frames = self._rendered_frames("line")
         assert len(frames) > 0
         for frame in frames:
             encoded = frame.encode("cp1252")  # must not raise
             assert isinstance(encoded, bytes)
+
+
+class TestGetProgressSpinner:
+    """Braille "dots2" on a UTF stream, ASCII "line" on any other stream."""
+
+    BRAILLE = "⣟"  # '⣟'
+
+    # Real text streams, not MagicMock: Console.file reads
+    # getattr(file, "rich_proxied_file", file), and a bare MagicMock
+    # would return an auto-created attribute there.
+    @staticmethod
+    def _console_on(encoding: str) -> Console:
+        return Console(file=io.TextIOWrapper(io.BytesIO(), encoding=encoding))
+
+    @staticmethod
+    def _frames(column: SpinnerColumn) -> list:
+        return list(column.spinner.frames)
+
+    def test_utf8_stream_gets_dots2_with_braille_finish(self):
+        column = get_progress_spinner(self._console_on("utf-8"))
+        frames = self._frames(column)
+        assert "".join(frames) == "⣾⣽⣻⢿⡿⣟⣯⣷"
+        assert self.BRAILLE in frames
+        # pyrefly: ignore [missing-attribute]
+        assert column.finished_text.plain == self.BRAILLE
+
+    def test_cp1252_stream_gets_ascii_line_spinner(self):
+        column = get_progress_spinner(self._console_on("cp1252"))
+        frames = self._frames(column)
+        assert frames == ["-", "\\", "|", "/"]
+        for frame in frames:
+            frame.encode("cp1252")  # must not raise
+
+    def test_stream_without_encoding_gets_ascii_line_spinner(self):
+        """rich reports "utf-8" for such a stream; the helper must not trust it."""
+        stream = MagicMock(spec=["write", "flush", "isatty"])
+        stream.isatty.return_value = False
+        column = get_progress_spinner(Console(file=stream))
+        assert self._frames(column) == ["-", "\\", "|", "/"]
