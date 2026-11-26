@@ -27,6 +27,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 import shutil
@@ -51,6 +52,8 @@ from search.scip_refs import (  # noqa: E402 - after the sys.path insert
 
 
 MANIFEST_FORMAT = 1
+# rust-analyzer's own output, overwritten on each run (kept after a failure).
+LOG_NAME = "rust-analyzer.log"
 
 Runner = Callable[[list[str], dict[str, str]], int]
 
@@ -66,8 +69,49 @@ def find_rust_analyzer(explicit: str | None = None) -> str | None:
     return shutil.which("rust-analyzer", path=str(cargo_bin))
 
 
-def _default_runner(cmd: list[str], env: dict[str, str]) -> int:
-    return subprocess.run(cmd, env=env, check=False).returncode
+def _default_runner(
+    cmd: list[str], env: dict[str, str], log_path: Path | None = None
+) -> int:
+    """Run ``cmd``; with ``log_path``, its stdout and stderr go to that file.
+
+    rust-analyzer writes thousands of known-bug lines during ``scip`` (ADR-0092),
+    so the console gets a summary (:func:`summarize_rust_analyzer_log`) instead.
+    """
+    if log_path is None:
+        return subprocess.run(cmd, env=env, check=False).returncode
+    with log_path.open("wb") as log:
+        return subprocess.run(
+            cmd, env=env, stdout=log, stderr=subprocess.STDOUT, check=False
+        ).returncode
+
+
+def summarize_rust_analyzer_log(log_path: Path) -> dict[str, int]:
+    """Count rust-analyzer's two known-bug messages in ``log_path`` (0 if no log).
+
+    ``outside_document``: "definition ... should have been in an SCIP document";
+    ``duplicate_symbols``: "Duplicate symbol:" entries. Neither loses a function
+    definition from the reference table (ADR-0092).
+    """
+    counts = {"outside_document": 0, "duplicate_symbols": 0}
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return counts
+    for line in text.splitlines():
+        if "should have been in an SCIP document" in line:
+            counts["outside_document"] += 1
+        elif line.lstrip().startswith("Duplicate symbol:"):
+            counts["duplicate_symbols"] += 1
+    return counts
+
+
+def _log_tail(log_path: Path, lines: int = 20) -> list[str]:
+    """The last ``lines`` lines of ``log_path``; empty if it cannot be read."""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return text.splitlines()[-lines:]
 
 
 def _version(rust_analyzer: str) -> str:
@@ -90,7 +134,7 @@ def make_scip_index(
     rust_analyzer: str,
     *,
     target_dir: Path | None = None,
-    runner: Runner = _default_runner,
+    runner: Runner | None = None,
     version: str | None = None,
     decode: bool = True,
 ) -> dict:
@@ -103,6 +147,7 @@ def make_scip_index(
         target_dir: ``CARGO_TARGET_DIR`` for the build scripts and proc macros
             rust-analyzer compiles; None leaves the environment unchanged.
         runner: Runs the command and returns its exit code (tests inject one).
+            None runs it with its output in ``<out_dir>/rust-analyzer.log``.
         version: rust-analyzer version text; None asks the executable.
         decode: Also write the reference table (``refs.sqlite``) from the index.
 
@@ -134,6 +179,8 @@ def make_scip_index(
     if target_dir is not None:
         env["CARGO_TARGET_DIR"] = str(target_dir)
     cmd = [rust_analyzer, "scip", str(project), "--output", str(tmp_index)]
+    if runner is None:
+        runner = functools.partial(_default_runner, log_path=out_dir / LOG_NAME)
     started = time.perf_counter()
     code = runner(cmd, env)
     wall = time.perf_counter() - started
@@ -265,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[INFO] Project: {project}")
     print(f"[INFO] rust-analyzer: {rust_analyzer}")
     print(f"[INFO] Output: {out_dir / INDEX_NAME}")
+    log_path = out_dir / LOG_NAME
+    print(f"[INFO] rust-analyzer log: {log_path}")
     print(
         "[INFO] Running rust-analyzer scip (large workspaces: ~10 min, ~16 GB RAM)..."
     )
@@ -274,11 +323,24 @@ def main(argv: list[str] | None = None) -> int:
         )
     except (FileNotFoundError, RuntimeError, OSError, ValueError, IndexError) as exc:
         print(f"[ERROR] {exc}")
+        if isinstance(exc, RuntimeError):
+            tail = _log_tail(log_path)
+            if tail:
+                print(f"[ERROR] Last {len(tail)} lines of {log_path}:")
+                for line in tail:
+                    print(f"  {line}")
         return 1
     print(
         f"[OK] SCIP index: {manifest['index_bytes'] / 1e6:.1f} MB, "
         f"{len(manifest['files'])} .rs files hashed, {manifest['wall_secs']:.0f} s"
     )
+    noise = summarize_rust_analyzer_log(log_path)
+    if any(noise.values()):
+        print(
+            f"[INFO] rust-analyzer reported {noise['outside_document']} definitions "
+            f"outside a SCIP document and {noise['duplicate_symbols']} duplicate "
+            "symbols (known rust-analyzer issues; call edges are not affected)"
+        )
     if manifest["changed_during_run"]:
         print(
             f"[WARN] {len(manifest['changed_during_run'])} .rs file(s) changed during the run "
