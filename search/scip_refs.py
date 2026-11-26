@@ -245,6 +245,7 @@ class ScipRefs:
         self._relative: dict[str, str | None] = {}
         self._by_file: dict[str, dict[int, list[tuple[str, int]]]] = {}
         self._defs: dict[int, tuple[tuple[str, int], ...]] = {}
+        self._with_rows: frozenset[str] | None = None
         self._project_key = os.path.normcase(os.path.normpath(str(project)))
 
     @classmethod
@@ -284,6 +285,27 @@ class ScipRefs:
         if not absolute.startswith(self._project_key + os.sep):
             return None
         return Path(os.path.relpath(path, self.project)).as_posix()
+
+    def is_hashed(self, relative: str) -> bool:
+        """True when the manifest has a hash for the file (it existed at the SCIP run)."""
+        return relative in self._files
+
+    def has_rows(self, relative: str) -> bool:
+        """True when the table holds a function reference or definition in the file.
+
+        rust-analyzer writes no document for a file outside the Cargo workspace
+        (an uncovered file), so such a file has no rows. A covered file with no
+        function reference or definition has none either; the table cannot
+        decide its calls in both cases.
+        """
+        if self._with_rows is None:
+            self._with_rows = frozenset(
+                file
+                for (file,) in self._con.execute(
+                    "SELECT file FROM refs UNION SELECT file FROM defs"
+                )
+            )
+        return relative in self._with_rows
 
     def is_fresh(self, relative: str) -> bool:
         """True when the file on disk still has the hash the manifest recorded."""

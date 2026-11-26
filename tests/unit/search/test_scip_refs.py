@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from search.graph_integration import _RustScipPass
 from search.scip_refs import (
     MANIFEST_NAME,
     REFS_NAME,
@@ -92,6 +95,8 @@ def scip_dir(tmp_path: Path) -> Path:
     (project / "src").mkdir(parents=True)
     (project / "src" / "lib.rs").write_text("// lib\n", encoding="utf-8")
     (project / "src" / "main.rs").write_text("// main\n", encoding="utf-8")
+    # Hashed, but rust-analyzer made no document for it (not a workspace member).
+    (project / "src" / "extra.rs").write_text("// extra\n", encoding="utf-8")
     out = tmp_path / "scip"
     out.mkdir()
     (out / "index.scip").write_bytes(_index_bytes())
@@ -204,3 +209,82 @@ def test_hash_matches_sha256(tmp_path: Path) -> None:
     assert hash_rust_files(tmp_path) == {
         "a.rs": hashlib.sha256(b"fn a() {}\n").hexdigest()
     }
+
+
+def test_reader_tells_hashed_from_covered_files(scip_dir: Path) -> None:
+    """A hashed file with no rows is an uncovered file (no SCIP document)."""
+    write_refs_table(scip_dir / "index.scip", scip_dir / REFS_NAME)
+    refs = ScipRefs.open(scip_dir)
+    assert refs is not None
+    try:
+        assert refs.is_hashed("src/extra.rs")
+        assert not refs.has_rows("src/extra.rs")
+        assert refs.has_rows("src/main.rs")  # refs and a definition
+        assert refs.has_rows("src/lib.rs")
+        assert not refs.is_hashed("src/missing.rs")
+    finally:
+        refs.close()
+
+
+class TestRustScipPassUncoveredFiles:
+    """`no_doc`: calls in a file that rust-analyzer made no document for."""
+
+    @pytest.fixture
+    def scip_pass(self, scip_dir: Path) -> Iterator[_RustScipPass]:
+        write_refs_table(scip_dir / "index.scip", scip_dir / REFS_NAME)
+        refs = ScipRefs.open(scip_dir)
+        assert refs is not None
+        scip_pass = _RustScipPass(refs, {})
+        yield scip_pass
+        scip_pass.close()
+
+    def test_uncovered_caller_counts_no_doc(self, scip_pass: _RustScipPass) -> None:
+        assert scip_pass.decide("src/extra.rs", 1, "helper") is None
+        assert scip_pass.decide("src/extra.rs", 1, "helper", in_macro=True) is None
+        assert scip_pass.counts["no_doc"] == 1
+        assert scip_pass.counts["no_ref"] == 0
+        assert scip_pass.macro_counts["no_doc"] == 1
+
+    def test_edited_uncovered_caller_is_not_stale(
+        self, scip_pass: _RustScipPass
+    ) -> None:
+        """Make SCIP Index cannot cover the file, so its edits are not stale."""
+        extra = scip_pass.refs.project / "src" / "extra.rs"
+        extra.write_text("// edited\n", encoding="utf-8")
+        assert scip_pass.decide("src/extra.rs", 1, "helper") is None
+        assert scip_pass.counts["no_doc"] == 1
+        assert scip_pass.counts["stale_caller"] == 0
+
+    def test_caller_missing_from_manifest_stays_stale(
+        self, scip_pass: _RustScipPass
+    ) -> None:
+        """A file made after the SCIP run: a new run can cover it."""
+        new = scip_pass.refs.project / "src" / "new.rs"
+        new.write_text("fn f() {}\n", encoding="utf-8")
+        assert scip_pass.decide("src/new.rs", 1, "helper") is None
+        assert scip_pass.counts["stale_caller"] == 1
+        assert scip_pass.counts["no_doc"] == 0
+
+    def test_covered_caller_without_a_ref_stays_no_ref(
+        self, scip_pass: _RustScipPass
+    ) -> None:
+        assert scip_pass.decide("src/main.rs", 1, "helper") is None
+        assert scip_pass.counts["no_ref"] == 1
+        assert scip_pass.counts["no_doc"] == 0
+
+    def test_stale_share_leaves_out_no_doc(
+        self, scip_pass: _RustScipPass, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """1 stale call of 10 is 10% (no warning) only when no_doc counts."""
+        (scip_pass.refs.project / "src" / "new.rs").write_text("\n", encoding="utf-8")
+        for _ in range(9):
+            scip_pass.decide("src/extra.rs", 1, "helper")
+        scip_pass.decide("src/new.rs", 1, "helper")
+        logger = logging.getLogger("test.scip_pass")
+        with caplog.at_level(logging.INFO, logger="test.scip_pass"):
+            scip_pass.log(logger)
+        messages = [r.getMessage() for r in caplog.records]
+        assert "no_ref=0 no_doc=9 (1 files) multi=0" in messages[0]
+        assert messages[1] == (
+            "[RUST_SCIP] SCIP table is stale for 1 files; run Make SCIP Index"
+        )

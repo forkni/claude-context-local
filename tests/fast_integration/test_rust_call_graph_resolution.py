@@ -648,6 +648,38 @@ class TestRustScipResolution:
         finally:
             h.teardown()
 
+    def test_uncovered_caller_file_counts_no_doc_not_stale(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """main.rs is hashed but has no rows (not a workspace member): its calls
+        are no_doc, and an edit to it is not a stale table."""
+        symbols = dict(_SYMBOLS)
+        symbols[_HELPER] = ("helper", [("src/e.rs", 1)])
+        edited = _SCIP_WS_FILES["src/main.rs"] + "// edited\n"
+        caplog.set_level(logging.INFO, logger="search.graph_integration")
+        h = _scip_graph(
+            tmp_path,
+            monkeypatch,
+            refs=[],
+            symbols=symbols,
+            edit={"src/main.rs": edited},
+        )
+        try:
+            lines = [
+                r.getMessage()
+                for r in caplog.records
+                if r.getMessage().startswith("[RUST_SCIP] resolved=")
+            ]
+            assert len(lines) == 1, lines
+            assert " no_ref=0 no_doc=3 (1 files) " in lines[0], lines[0]
+            assert " stale_caller=0 " in lines[0], lines[0]
+            assert self._stale_warnings(caplog) == []
+            run_id = h.resolved_chunk_id("src/main.rs", "function", "run")
+            calls = _calls_of(h, run_id)
+            assert sum(t.endswith(".tick") for t in calls) == 3, "D still decides"
+        finally:
+            h.teardown()
+
     def test_fresh_table_logs_no_stale_warning(self, tmp_path, monkeypatch, caplog):
         caplog.set_level(logging.INFO, logger="search.graph_integration")
         h = _scip_graph(tmp_path, monkeypatch, refs=_MAIN_REFS)

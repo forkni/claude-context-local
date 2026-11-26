@@ -225,6 +225,7 @@ class _RustScipPass:
             "resolved",
             "refused_external",
             "no_ref",
+            "no_doc",
             "multi",
             "dup_def",
             "stale_caller",
@@ -237,6 +238,8 @@ class _RustScipPass:
         self.macro_counts = dict.fromkeys(outcomes, 0)
         # Files whose hash no longer matches the manifest, for the stale warning.
         self._stale_files: set[str] = set()
+        # Hashed files with no rows (uncovered: not a Cargo workspace member).
+        self._uncovered_files: set[str] = set()
         self._started = time.perf_counter()
 
     @classmethod
@@ -263,6 +266,17 @@ class _RustScipPass:
         counts = self.macro_counts if in_macro else self.counts
         refs = self.refs
         caller = refs.relative(caller_file)
+        # Before the freshness check: a new SCIP run cannot cover an uncovered
+        # file, so an edit to it must not count toward the stale warning.
+        if (
+            caller is not None
+            and line
+            and refs.is_hashed(caller)
+            and not refs.has_rows(caller)
+        ):
+            counts["no_doc"] += 1
+            self._uncovered_files.add(caller)
+            return None
         if caller is None or not line or not refs.is_fresh(caller):
             counts["stale_caller"] += 1
             if caller is not None and line:
@@ -322,11 +336,13 @@ class _RustScipPass:
     def log(self, logger: logging.Logger) -> None:
         c = self.counts
         logger.info(
-            "[RUST_SCIP] resolved=%d refused_external=%d no_ref=%d multi=%d "
-            "dup_def=%d stale_caller=%d stale_def=%d unmapped=%d secs=%.1f",
+            "[RUST_SCIP] resolved=%d refused_external=%d no_ref=%d no_doc=%d (%d files) "
+            "multi=%d dup_def=%d stale_caller=%d stale_def=%d unmapped=%d secs=%.1f",
             c["resolved"],
             c["refused_external"],
             c["no_ref"],
+            c["no_doc"],
+            len(self._uncovered_files),
             c["multi"],
             c["dup_def"],
             c["stale_caller"],
@@ -335,8 +351,9 @@ class _RustScipPass:
             time.perf_counter() - self._started,
         )
         # The counters give call counts; this line says the table needs a
-        # refresh, once per build, when stale calls pass 10% of all decisions.
-        total = sum(c.values())
+        # refresh, once per build, when stale calls pass 10% of the decisions
+        # a table could make (calls in uncovered files are left out).
+        total = sum(c.values()) - c["no_doc"]
         if total and (c["stale_caller"] + c["stale_def"]) * 10 > total:
             logger.warning(
                 "[RUST_SCIP] SCIP table is stale for %d files; run Make SCIP Index",
@@ -346,12 +363,13 @@ class _RustScipPass:
         if any(m.values()):
             logger.info(
                 "[RUST_SCIP_MACRO] candidates=%d resolved=%d refused_external=%d "
-                "no_ref=%d multi=%d dup_def=%d stale_caller=%d stale_def=%d "
-                "unmapped=%d",
+                "no_ref=%d no_doc=%d multi=%d dup_def=%d stale_caller=%d "
+                "stale_def=%d unmapped=%d",
                 sum(m.values()),
                 m["resolved"],
                 m["refused_external"],
                 m["no_ref"],
+                m["no_doc"],
                 m["multi"],
                 m["dup_def"],
                 m["stale_caller"],
