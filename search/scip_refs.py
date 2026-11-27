@@ -67,6 +67,18 @@ def hash_rust_files(root: Path) -> dict[str, str]:
     return hashes
 
 
+def _hash_files(root: Path, relatives: frozenset[str]) -> dict[str, str]:
+    """``{relative: sha256 hex}`` for each of ``relatives`` that exists under ``root``."""
+    hashes: dict[str, str] = {}
+    for relative in relatives:
+        try:
+            data = (root / relative).read_bytes()
+        except OSError:
+            continue
+        hashes[relative] = hashlib.sha256(data).hexdigest()
+    return hashes
+
+
 def descriptor_name(symbol: str) -> str | None:
     """The function or method name a SCIP symbol ends in, else None.
 
@@ -378,6 +390,7 @@ def scip_status(
     *,
     last_indexed: datetime | None = None,
     rust_scip: bool = True,
+    indexed: frozenset[str] | None = None,
 ) -> str | None:
     """One-line state of a project's SCIP table for the launcher's project lists.
 
@@ -385,7 +398,9 @@ def scip_status(
     (``_RustScipPass.decide``): a covered file (hashed, with rows) counts as
     changed when its hash differs and as removed when it is gone; a file the
     manifest does not know counts as new; an uncovered file (hashed, no rows)
-    never counts, edited or not.
+    never counts, edited or not. With ``indexed``, only those files count:
+    the graph never sees a file the search index leaves out (a git worktree
+    under ``.claude/``, an excluded folder).
 
     Args:
         scip_dir: ``<storage>/scip`` of the project.
@@ -394,6 +409,8 @@ def scip_status(
             A table made after it gets :data:`REINDEX_HINT`: the graph reads
             the table only during a reindex. None = no hint.
         rust_scip: ``call_graph.rust_scip``. False gets :data:`SCIP_OFF_HINT`.
+        indexed: The ``.rs`` files the search index holds (relative, ``/``);
+            None counts every ``.rs`` file under ``project``.
 
     Returns:
         The status without a ``SCIP:`` label, or None when the project has no
@@ -415,9 +432,19 @@ def scip_status(
     except (OSError, ValueError, KeyError, TypeError):
         created = None
     try:
-        on_disk = hash_rust_files(project)
         covered = {p for p in refs.hashed_files if refs.has_rows(p)}
-        changed = sum(1 for p in covered if p in on_disk and not refs.is_fresh(p))
+        if indexed is None:
+            on_disk = hash_rust_files(project)
+        else:
+            # Hash only what the graph can see: no walk into worktrees or
+            # excluded folders (hyprzero: 4,430 indexed of 32,634 .rs files).
+            on_disk = _hash_files(project, indexed)
+            covered &= indexed
+        # Compare against the hashes just taken: no second read of each file,
+        # and the project on disk is the one checked (not the manifest's path).
+        changed = sum(
+            1 for p in covered if p in on_disk and on_disk[p] != refs._files[p]
+        )
         removed = sum(1 for p in covered if p not in on_disk)
         new = sum(1 for p in on_disk if not refs.is_hashed(p))
         hashed = len(refs.hashed_files)

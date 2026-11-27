@@ -83,6 +83,7 @@ def collect_projects(storage: Path) -> dict[str, dict]:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Print one ``|``-separated picker line per indexed project (format above)."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--scip", action="store_true", help="add the SCIP status")
     parser.add_argument(

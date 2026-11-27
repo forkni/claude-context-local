@@ -17,7 +17,7 @@ import functools
 import importlib.util
 import json
 import os
-import re
+import sqlite3
 import sys
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -27,8 +27,6 @@ from types import ModuleType
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-# <project>_<hash8>_<model slug>_<dim>d, the per-model storage folder name.
-_MODEL_DIR = re.compile(r"_([0-9a-f]{8})_(.+_\d+d)\Z")
 _OVERRIDES_NAME = "search_overrides.json"
 INDEX_WORKERS = 4
 
@@ -68,15 +66,21 @@ def rust_scip_enabled(model_dir: Path) -> bool:
 
     The base config (the file ``search/config_paths.py`` resolves), then the
     project's ``search_overrides.json`` (unless ``CLAUDE_DISABLE_PROJECT_OVERRIDES``
-    is set). A missing file or key gives False, the dataclass default.
+    is set or the base config has ``performance.enable_project_overrides`` false,
+    the same gates ``SearchConfigManager.load_config`` applies). A missing file
+    or key gives False, the dataclass default.
     """
     value = False
+    overrides_on = True
     paths = _load("_launcher_config_paths", "search/config_paths.py")
     if paths is not None:
         config = _read_json(Path(paths.resolve_config_path())) or {}
         value = bool((config.get("call_graph") or {}).get("rust_scip", value))
+        overrides_on = bool(
+            (config.get("performance") or {}).get("enable_project_overrides", True)
+        )
     disabled = os.environ.get("CLAUDE_DISABLE_PROJECT_OVERRIDES", "").strip().lower()
-    if disabled not in ("1", "true", "yes", "on"):
+    if overrides_on and disabled not in ("1", "true", "yes", "on", "enabled"):
         overrides = (_read_json(model_dir / _OVERRIDES_NAME) or {}).get("overrides")
         call_graph = (overrides or {}).get("call_graph") or {}
         if "rust_scip" in call_graph:
@@ -84,15 +88,25 @@ def rust_scip_enabled(model_dir: Path) -> bool:
     return value
 
 
+def _merkle_files(storage: Path, model_dir: Path, kind: str) -> list[Path]:
+    """``<storage>/merkle/<hash>*_<slug>_<dim>d_<kind>.json`` files for a model folder.
+
+    The storage folder is ``<project>_<hash8>_<model slug>_<dim>d``. The hash
+    comes from the folder's ``project_info.json``, so neither an 8-hex segment
+    in the project name nor an ``_`` in the model slug can mislead the split.
+    """
+    info = _read_json(model_dir / "project_info.json") or {}
+    short_hash = str(info.get("project_hash", ""))
+    marker = f"_{short_hash}_"
+    if not short_hash or marker not in model_dir.name:
+        return []
+    model_tail = model_dir.name.rsplit(marker, 1)[1]
+    return sorted((storage / "merkle").glob(f"{short_hash}*_{model_tail}_{kind}.json"))
+
+
 def last_indexed(storage: Path, model_dir: Path, project_path: str) -> datetime | None:
     """``last_snapshot`` from the project's Merkle metadata (naive local time), or None."""
-    match = _MODEL_DIR.search(model_dir.name)
-    if match is None:
-        return None
-    short_hash, model_tail = match.groups()
-    for meta_file in (storage / "merkle").glob(
-        f"{short_hash}*_{model_tail}_metadata.json"
-    ):
+    for meta_file in _merkle_files(storage, model_dir, "metadata"):
         meta = _read_json(meta_file)
         if not meta or not _same_path(str(meta.get("project_path", "")), project_path):
             continue
@@ -100,6 +114,34 @@ def last_indexed(storage: Path, model_dir: Path, project_path: str) -> datetime 
             return datetime.fromisoformat(meta["last_snapshot"])
         except (KeyError, TypeError, ValueError):
             return None
+    return None
+
+
+def indexed_rust_files(
+    storage: Path, model_dir: Path, project_path: str
+) -> frozenset[str] | None:
+    """The ``.rs`` files the search index holds (relative, ``/``), from its Merkle snapshot.
+
+    Only these files reach the call graph, so only they can make the SCIP table
+    stale: a git worktree or another excluded folder inside the project holds
+    ``.rs`` files that the index (and so the graph) never sees. None when there
+    is no snapshot (never indexed, or a reindex is running).
+    """
+    for snap_file in _merkle_files(storage, model_dir, "snapshot"):
+        dag = (_read_json(snap_file) or {}).get("dag") or {}
+        if not _same_path(str(dag.get("root_path", "")), project_path):
+            continue
+        found: set[str] = set()
+        stack = [dag.get("root_node")]
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            path = str(node.get("path", ""))
+            if node.get("is_file") and path.endswith(".rs"):
+                found.add(path.replace("\\", "/"))
+            stack.extend(node.get("children") or ())
+        return frozenset(found)
     return None
 
 
@@ -128,8 +170,9 @@ def scip_text(
             Path(project_path),
             last_indexed=last_indexed(storage, chosen, project_path),
             rust_scip=rust_scip_enabled(chosen),
+            indexed=indexed_rust_files(storage, chosen, project_path),
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError, sqlite3.Error):
         return "unreadable - run Make SCIP Index"
 
 

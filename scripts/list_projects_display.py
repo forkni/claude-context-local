@@ -16,6 +16,7 @@ from list_projects_parseable import collect_projects, get_storage_dir
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Print each indexed project with its models (and SCIP/index lines on request)."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--scip", action="store_true", help="show the SCIP status")
     parser.add_argument(

@@ -382,6 +382,17 @@ class TestScipStatus:
         assert status.endswith(SCIP_OFF_HINT)
         assert REINDEX_HINT not in status
 
+    def test_files_outside_the_index_never_count(self, table: Path) -> None:
+        """A git worktree under .claude/ holds .rs files the graph never sees."""
+        project = self._project(table)
+        worktree = project / ".claude" / "worktrees" / "wt" / "src"
+        worktree.mkdir(parents=True)
+        (worktree / "lib.rs").write_text("fn copy() {}\n", encoding="utf-8")
+        (project / "src" / "main.rs").write_text("// edit\n", encoding="utf-8")
+        indexed = frozenset({"src/lib.rs", "src/extra.rs"})  # main.rs excluded
+        assert self._status(table, indexed=indexed).startswith("up to date")
+        assert self._status(table).startswith("stale - 1 changed, 1 new, 0 removed")
+
     def test_text_is_safe_for_the_batch_launcher(self, table: Path) -> None:
         (self._project(table) / "src" / "new.rs").write_text("\n", encoding="utf-8")
         status = self._status(table, rust_scip=False)

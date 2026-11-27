@@ -283,6 +283,107 @@ class TestScipHintInputs:
         )
         assert scripts["status"].last_indexed(storage, model_dir, str(project)) is None
 
+    def test_last_indexed_uses_the_recorded_hash(
+        self, scripts, storage: Path, tmp_path: Path
+    ) -> None:
+        """An 8-hex project-name segment and an ``_`` in the slug do not mislead it."""
+        project = tmp_path / "rs_project"
+        project.mkdir()
+        model_dir = storage / "projects" / "my_deadbeef_app_ab12cd34_odd_slug_8d"
+        model_dir.mkdir(parents=True)
+        (model_dir / "project_info.json").write_text(
+            json.dumps({"project_path": str(project), "project_hash": "ab12cd34"}),
+            encoding="utf-8",
+        )
+        meta = storage / "merkle" / "ab12cd3400000000_odd_slug_8d_metadata.json"
+        meta.write_text(
+            json.dumps(
+                {"project_path": str(project), "last_snapshot": "2026-11-27T15:40:00"}
+            ),
+            encoding="utf-8",
+        )
+        assert scripts["status"].last_indexed(storage, model_dir, str(project)) == (
+            datetime(2026, 11, 27, 15, 40)
+        )
+
+    def test_indexed_rust_files_from_the_merkle_snapshot(
+        self, scripts, storage: Path, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "rs_project"
+        project.mkdir()
+        model_dir = _add_project(storage, project)
+        tree = {
+            "path": "",
+            "is_file": False,
+            "children": [
+                {
+                    "path": "src",
+                    "is_file": False,
+                    "children": [
+                        {"path": "src\\lib.rs", "is_file": True, "children": []},
+                        {"path": "src\\notes.md", "is_file": True, "children": []},
+                    ],
+                },
+            ],
+        }
+        snap = storage / "merkle" / "1a2b3c4d00000000_test-model_8d_snapshot.json"
+        snap.write_text(
+            json.dumps({"dag": {"root_path": str(project), "root_node": tree}}),
+            encoding="utf-8",
+        )
+        assert scripts["status"].indexed_rust_files(
+            storage, model_dir, str(project)
+        ) == frozenset({"src/lib.rs"})
+
+    def test_no_snapshot_means_no_index_filter(
+        self, scripts, storage: Path, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "rs_project"
+        project.mkdir()
+        model_dir = _add_project(storage, project)
+        assert (
+            scripts["status"].indexed_rust_files(storage, model_dir, str(project))
+            is None
+        )
+
+    def test_global_gate_turns_project_overrides_off(
+        self, scripts, base_config: Path, tmp_path: Path, monkeypatch
+    ) -> None:
+        base_config.write_text(
+            json.dumps(
+                {
+                    "call_graph": {"rust_scip": True},
+                    "performance": {"enable_project_overrides": False},
+                }
+            ),
+            "utf-8",
+        )
+        (tmp_path / "search_overrides.json").write_text(
+            json.dumps({"overrides": {"call_graph": {"rust_scip": False}}}), "utf-8"
+        )
+        monkeypatch.delenv("CLAUDE_DISABLE_PROJECT_OVERRIDES", raising=False)
+        assert scripts["status"].rust_scip_enabled(tmp_path) is True
+
+    def test_damaged_reference_table_is_unreadable(
+        self, scripts, storage: Path, tmp_path: Path
+    ) -> None:
+        """A corrupt refs.sqlite shows one 'unreadable' line, not a broken list."""
+        project = tmp_path / "rs_project"
+        project.mkdir()
+        (project / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+        (project / "lib.rs").write_text("fn a() {}\n", encoding="utf-8")
+        model_dir = _add_project(storage, project)
+        scip = model_dir / "scip"
+        scip.mkdir()
+        (scip / "manifest.json").write_text(
+            json.dumps({"project_path": str(project), "files": {"lib.rs": "0" * 64}}),
+            encoding="utf-8",
+        )
+        (scip / "refs.sqlite").write_bytes(b"not a sqlite database" * 64)
+        assert scripts["status"].scip_text(storage, str(project), [model_dir]) == (
+            "unreadable - run Make SCIP Index"
+        )
+
 
 class TestDisplay:
     def test_scip_and_index_lines(
