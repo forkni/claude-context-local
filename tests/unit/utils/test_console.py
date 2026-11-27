@@ -20,6 +20,7 @@ down that choice, and that Braille really is the cp1252 encode hazard while
 """
 
 import io
+import re
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -27,7 +28,8 @@ import pytest
 from rich.console import Console
 from rich.progress import SpinnerColumn
 
-from utils.console import get_progress_console, get_progress_spinner
+from utils import console as console_module
+from utils.console import get_progress_console, get_progress_spinner, phase_spinner
 
 
 class TestGetProgressConsole:
@@ -142,3 +144,38 @@ class TestGetProgressSpinner:
         stream.isatty.return_value = False
         column = get_progress_spinner(Console(file=stream))
         assert self._frames(column) == ["-", "\\", "|", "/"]
+
+
+class _Utf8Buffer(io.StringIO):
+    encoding = "utf-8"
+
+
+class TestPhaseSpinner:
+    """`phase_spinner`: a spinner + elapsed line for steps with no progress count."""
+
+    def test_non_terminal_draws_nothing(self, monkeypatch):
+        buf = _Utf8Buffer()
+        monkeypatch.setattr(
+            console_module, "get_progress_console", lambda: Console(file=buf)
+        )
+        ran = []
+        with phase_spinner("Saving index..."):
+            ran.append(True)
+        assert ran == [True]
+        assert buf.getvalue() == ""
+
+    def test_terminal_ends_with_the_finished_glyph_and_time(self, monkeypatch):
+        buf = _Utf8Buffer()
+        console = Console(file=buf, force_terminal=True, width=80, color_system=None)
+        monkeypatch.setattr(console_module, "get_progress_console", lambda: console)
+        with phase_spinner("Building graph..."):
+            pass
+        plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "\n", buf.getvalue())
+        frames = [f.strip() for f in plain.replace("\r", "\n").split("\n") if f.strip()]
+        assert frames[-1] == "⣟ Building graph... (0s)"
+
+    def test_body_errors_propagate(self, monkeypatch):
+        console = Console(file=_Utf8Buffer(), force_terminal=True)
+        monkeypatch.setattr(console_module, "get_progress_console", lambda: console)
+        with pytest.raises(OSError, match="disk full"), phase_spinner("Saving..."):
+            raise OSError("disk full")

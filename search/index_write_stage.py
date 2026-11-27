@@ -15,6 +15,7 @@ from chunking.python_ast_chunker import CodeChunk
 from embeddings.chunk_cache import ChunkEmbeddingCache, PassKind, resolve_chunk_cache
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
+from utils.console import phase_spinner
 
 from .call_edge_injection import InjectionStats, inject_call_edges
 from .config import get_search_config
@@ -304,7 +305,8 @@ class IndexWriteStage:
         self._snapshot_manager.save_snapshot(dag, metadata)
 
         logger.info(f"[{log_prefix}] Saving index...")
-        self._indexer.save_indices()
+        with phase_spinner("Saving index..."):
+            self._indexer.save_indices()
         logger.info(f"[{log_prefix}] Index saved")
 
         bm25_resynced, bm25_resync_count = self._indexer.resync_if_desynced(log_prefix)

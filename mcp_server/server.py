@@ -197,6 +197,27 @@ class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
         super().handleError(record)
 
 
+class _CurrentStderrHandler(logging.StreamHandler):
+    """A ``StreamHandler`` that writes to ``sys.stderr`` as it is at emit time.
+
+    A plain ``StreamHandler()`` keeps the stream it saw when it was made, so
+    while a rich spinner draws (``utils.console.phase_spinner``) log lines
+    would bypass rich's ``sys.stderr`` redirect and break the spinner line.
+    Looking the stream up per write lets rich print each line above it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(sys.stderr)
+
+    @property  # type: ignore[override]
+    def stream(self) -> Any:
+        return sys.stderr
+
+    @stream.setter
+    def stream(self, value: Any) -> None:
+        """Ignored: the stream is always the current ``sys.stderr``."""
+
+
 def _configure_logging() -> None:
     """Configure root-logger handlers exactly once regardless of how many times this
     module body executes (guards against the -m double-import trap)."""
@@ -206,7 +227,7 @@ def _configure_logging() -> None:
 
     _enable_windows_ansi()
 
-    console_handler = logging.StreamHandler()
+    console_handler = _CurrentStderrHandler()
     console_handler.setLevel(log_level)
     console_handler.setFormatter(ColorFormatter(console_format, datefmt="%H:%M:%S"))
 

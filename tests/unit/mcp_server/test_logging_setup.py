@@ -93,6 +93,39 @@ class TestConfigureLoggingIdempotent:
                 root.addHandler(h)
 
 
+class TestConsoleHandlerFollowsStderr:
+    """The console handler writes to the current sys.stderr (rich spinner redirect)."""
+
+    def test_writes_to_the_stderr_of_emit_time(self, monkeypatch) -> None:
+        from mcp_server.server import _CurrentStderrHandler
+
+        handler = _CurrentStderrHandler()
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        replaced = __import__("io").StringIO()
+        monkeypatch.setattr(sys, "stderr", replaced)
+        handler.emit(_make_record("after the swap"))
+        assert replaced.getvalue() == "after the swap\n"
+
+    def test_setting_the_stream_is_ignored(self) -> None:
+        from mcp_server.server import _CurrentStderrHandler
+
+        handler = _CurrentStderrHandler()
+        handler.setStream(__import__("io").StringIO())
+        assert handler.stream is sys.stderr
+
+    def test_root_console_handler_is_the_following_kind(self) -> None:
+        from mcp_server.server import _CurrentStderrHandler, _SafeRotatingFileHandler
+
+        stream_handlers = [
+            h
+            for h in logging.getLogger().handlers
+            if isinstance(h, logging.StreamHandler)
+            and not isinstance(h, _SafeRotatingFileHandler)
+            and type(h).__module__ == "mcp_server.server"
+        ]
+        assert all(isinstance(h, _CurrentStderrHandler) for h in stream_handlers)
+
+
 class TestFaissLoaderSuppressed:
     """The Windows faiss wheel has no AVX2 build; faiss.loader's INFO fallback noise
     ("Could not load library with AVX2 support") must not reach the console."""

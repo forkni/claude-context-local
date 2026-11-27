@@ -28,6 +28,7 @@ from graph.traversal_policy import TraversalPolicy
 from search.config import SearchMode, get_search_config
 from search.graph_integration import GraphIntegration
 from search.metadata import MetadataStore
+from utils.console import phase_spinner
 from utils.observability import traced_block
 from utils.otel_attributes import (
     ATTR_CAPTURE_QUERY,
@@ -1250,7 +1251,8 @@ class HybridSearcher(BaseSearcher):
 
             # Populate call graph via the GraphIntegration seam
             if self._graph is not None:
-                self._graph.populate_from_embeddings(embedding_results)
+                with phase_spinner("Building graph..."):
+                    self._graph.populate_from_embeddings(embedding_results)
 
             self._logger.info(
                 f"[ADD_EMBEDDINGS] Successfully added {len(embedding_results)} embeddings to hybrid index"

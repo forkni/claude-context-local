@@ -1,10 +1,15 @@
 """Encoding-aware rich Console and spinner factories for progress displays."""
 
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from rich.console import Console
-from rich.progress import SpinnerColumn
+from rich.progress import Progress, ProgressColumn, SpinnerColumn, Task, TextColumn
+from rich.text import Text
+
+from utils.progress import _format_duration
 
 
 _UNICODE_ENCODINGS = ("utf8", "utf16", "utf32")
@@ -49,3 +54,40 @@ def get_progress_spinner(console: Console) -> SpinnerColumn:
     if _stream_can_unicode(console.file):
         return SpinnerColumn(spinner_name="dots2", finished_text="⣟")
     return SpinnerColumn(spinner_name="line")
+
+
+class _ElapsedColumn(ProgressColumn):
+    """``(24s)`` / ``(1m05s)``: plain text, like the count columns of the other bars."""
+
+    def render(self, task: Task) -> Text:
+        return Text(f"({_format_duration(task.elapsed or 0.0)})")
+
+
+@contextmanager
+def phase_spinner(description: str) -> Iterator[None]:
+    """Show ``⣾ <description> (24s)`` while a step with no progress count runs.
+
+    For long steps that report nothing until they end (graph build, index
+    save). Same spinner and description style as the chunking and embedding
+    bars; the line stays with the finished glyph and the total time. Log lines
+    written during the step print above the spinner, because the console log
+    handler writes to the current ``sys.stderr``, which rich redirects while
+    the spinner draws (``mcp_server/server.py`` ``_CurrentStderrHandler``).
+
+    Draws nothing when stdout is not a terminal (pipes, MCP stdio).
+    """
+    console = get_progress_console()
+    if not console.is_terminal:
+        yield
+        return
+    with Progress(
+        get_progress_spinner(console),
+        TextColumn("[progress.description]{task.description}"),
+        _ElapsedColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        # A total keeps rich's spinner on its running frames until the step ends.
+        task = progress.add_task(description, total=1)
+        yield
+        progress.update(task, completed=1)
