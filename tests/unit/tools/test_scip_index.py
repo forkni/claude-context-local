@@ -278,6 +278,7 @@ def test_default_runner_with_a_timer_returns_the_exit_code(
         (634.0, 634.0, "over estimate"),
         (900.0, 634.0, "over estimate"),
     ],
+    ids=["no-estimate", "start", "last-minute", "at-estimate", "past-estimate"],
 )
 def test_time_left(elapsed: float, estimate: float | None, left: str) -> None:
     assert scip_index._time_left(elapsed, estimate) == left
