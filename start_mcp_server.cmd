@@ -1118,7 +1118,7 @@ echo Only changed files will be processed (fast).
 echo.
 
 REM Get project selection
-call :select_indexed_project "re-index incrementally"
+call :select_indexed_project "re-index incrementally" index
 if errorlevel 1 goto project_management_menu
 
 echo.
@@ -1157,7 +1157,7 @@ echo Use this if you see "No changes detected" but files should be indexed.
 echo.
 
 REM Get project selection
-call :select_indexed_project "force reindex (full)"
+call :select_indexed_project "force reindex (full)" index
 if errorlevel 1 goto project_management_menu
 
 echo.
@@ -1198,7 +1198,7 @@ echo Close memory-heavy apps first. Set call_graph.rust_scip to true, then reind
 echo.
 
 REM Get project selection
-call :select_indexed_project "make a SCIP index for"
+call :select_indexed_project "make a SCIP index for" scip
 if errorlevel 1 goto project_management_menu
 
 if not exist "%SELECTED_PROJECT_PATH%\Cargo.toml" goto scip_no_cargo
@@ -1236,7 +1236,7 @@ goto project_management_menu
 echo.
 echo === Indexed Projects ===
 echo.
-".\.venv\Scripts\python.exe" scripts\list_projects_display.py 2>nul
+".\.venv\Scripts\python.exe" scripts\list_projects_display.py --scip --freshness 2>nul
 if errorlevel 1 (
     echo [ERROR] Could not retrieve project list
     echo [INFO] Storage directory may not exist yet
@@ -3087,15 +3087,23 @@ REM ============================================================================
 
 :select_indexed_project
 REM Reusable project selection logic with grouped display
-REM Usage: call :select_indexed_project "action description"
+REM Usage: call :select_indexed_project "action description" [scip ^| index ^| "scip index"]
+REM   scip  = show each project's SCIP table state (up to date / stale / none)
+REM   index = show each project's search-index state (slower: loads the index check)
 REM Sets: SELECTED_PROJECT_PATH, SELECTED_PROJECT_NAME, SELECTED_PROJECT_MODELS
 REM Returns: errorlevel 0 on success, 1 on cancel
 
 set "ACTION_DESC=%~1"
+REM Underscores keep the variable defined when no 2nd argument is given.
+set "SELECT_OPTS=_%~2_"
+set "SELECT_ARGS="
+if /i not "%SELECT_OPTS%"=="%SELECT_OPTS:scip=%" set "SELECT_ARGS=%SELECT_ARGS% --scip"
+if /i not "%SELECT_OPTS%"=="%SELECT_OPTS:index=%" set "SELECT_ARGS=%SELECT_ARGS% --freshness"
+if /i not "%SELECT_OPTS%"=="%SELECT_OPTS:index=%" echo [INFO] Checking index freshness...
 
-REM Get grouped project list
+REM Get grouped project list (fields: index|name|path|models|scip|index_status, "-" = none)
 set "TEMP_PROJECTS=%TEMP%\mcp_projects_select_grouped.txt"
-call ".\.venv\Scripts\python.exe" scripts\list_projects_parseable.py > "%TEMP_PROJECTS%" 2>nul
+call ".\.venv\Scripts\python.exe" scripts\list_projects_parseable.py %SELECT_ARGS% > "%TEMP_PROJECTS%" 2>nul
 
 REM Check if any projects exist
 findstr /R "." "%TEMP_PROJECTS%" >nul 2>&1
@@ -3110,10 +3118,12 @@ if errorlevel 1 (
 REM Display grouped projects
 echo Select project to %ACTION_DESC%:
 echo.
-for /f "tokens=1,2,3,4 delims=|" %%a in (%TEMP_PROJECTS%) do (
+for /f "tokens=1-6 delims=|" %%a in (%TEMP_PROJECTS%) do (
     echo   %%a. %%b
     echo      Path: %%c
     echo      Models: %%d
+    if not "%%e"=="-" if not "%%e"=="" echo      SCIP: %%e
+    if not "%%f"=="-" if not "%%f"=="" echo      Index: %%f
     echo.
 )
 echo   0. Cancel

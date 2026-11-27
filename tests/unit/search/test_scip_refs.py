@@ -7,6 +7,7 @@ import json
 import logging
 import sqlite3
 from collections.abc import Iterator
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -15,10 +16,13 @@ from search.graph_integration import _RustScipPass
 from search.scip_refs import (
     MANIFEST_NAME,
     REFS_NAME,
+    REINDEX_HINT,
+    SCIP_OFF_HINT,
     ScipRefs,
     descriptor_name,
     hash_rust_files,
     iter_occurrences,
+    scip_status,
     write_refs_table,
 )
 
@@ -288,3 +292,98 @@ class TestRustScipPassUncoveredFiles:
         assert messages[1] == (
             "[RUST_SCIP] SCIP table is stale for 1 files; run Make SCIP Index"
         )
+
+
+class TestScipStatus:
+    """`scip_status`: the launcher's SCIP line, on the graph build's predicates."""
+
+    CREATED = "2026-11-24T12:05:00+00:00"
+
+    @pytest.fixture
+    def table(self, scip_dir: Path) -> Path:
+        """``scip_dir`` with a reference table and a ``created`` time."""
+        write_refs_table(scip_dir / "index.scip", scip_dir / REFS_NAME)
+        manifest = json.loads((scip_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
+        manifest["created"] = self.CREATED
+        (scip_dir / MANIFEST_NAME).write_text(json.dumps(manifest), encoding="utf-8")
+        return scip_dir
+
+    @staticmethod
+    def _project(scip_dir: Path) -> Path:
+        return scip_dir.parent / "ws"
+
+    def _made(self) -> str:
+        created = datetime.fromisoformat(self.CREATED)
+        return created.astimezone().strftime("%Y-%m-%d %H:%M")
+
+    def _status(self, table: Path, **kwargs: object) -> str:
+        status = scip_status(table, self._project(table), **kwargs)  # type: ignore[arg-type]
+        assert status is not None
+        return status
+
+    def test_up_to_date(self, table: Path) -> None:
+        assert self._status(table) == f"up to date (made {self._made()}, 3 .rs files)"
+
+    def test_changed_covered_file(self, table: Path) -> None:
+        (self._project(table) / "src" / "lib.rs").write_text("// edit\n", "utf-8")
+        assert self._status(table) == (
+            f"stale - 1 changed, 0 new, 0 removed since {self._made()}"
+        )
+
+    def test_new_file(self, table: Path) -> None:
+        (self._project(table) / "src" / "new.rs").write_text("\n", encoding="utf-8")
+        assert self._status(table).startswith("stale - 0 changed, 1 new, 0 removed")
+
+    def test_removed_covered_file(self, table: Path) -> None:
+        (self._project(table) / "src" / "main.rs").unlink()
+        assert self._status(table).startswith("stale - 0 changed, 0 new, 1 removed")
+
+    def test_edited_or_removed_uncovered_file_never_counts(self, table: Path) -> None:
+        extra = self._project(table) / "src" / "extra.rs"
+        extra.write_text("// edit\n", encoding="utf-8")
+        assert self._status(table).startswith("up to date")
+        extra.unlink()
+        assert self._status(table).startswith("up to date")
+
+    def test_no_reference_table(self, scip_dir: Path) -> None:
+        assert self._status(scip_dir) == (
+            "incomplete (no reference table) - run Make SCIP Index"
+        )
+
+    def test_no_manifest_in_cargo_workspace(self, tmp_path: Path) -> None:
+        (tmp_path / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+        assert scip_status(tmp_path / "scip", tmp_path) == "none"
+
+    def test_no_manifest_outside_rust(self, tmp_path: Path) -> None:
+        assert scip_status(tmp_path / "scip", tmp_path) is None
+
+    def test_table_newer_than_index_gets_reindex_hint(self, table: Path) -> None:
+        before = datetime.fromisoformat(self.CREATED) - timedelta(minutes=1)
+        assert self._status(table, last_indexed=before).endswith(REINDEX_HINT)
+
+    def test_table_older_than_index_gets_no_hint(self, table: Path) -> None:
+        after = datetime.fromisoformat(self.CREATED) + timedelta(minutes=1)
+        assert not self._status(table, last_indexed=after).endswith(REINDEX_HINT)
+
+    def test_no_index_time_gets_no_hint(self, table: Path) -> None:
+        assert not self._status(table, last_indexed=None).endswith(REINDEX_HINT)
+
+    def test_naive_index_time_is_local(self, table: Path) -> None:
+        """`last_snapshot` is naive local time; `created` is UTC."""
+        created = datetime.fromisoformat(self.CREATED)
+        after = (created + timedelta(seconds=30)).astimezone().replace(tzinfo=None)
+        before = (created - timedelta(seconds=30)).astimezone().replace(tzinfo=None)
+        assert not self._status(table, last_indexed=after).endswith(REINDEX_HINT)
+        assert self._status(table, last_indexed=before).endswith(REINDEX_HINT)
+
+    def test_rust_scip_off_replaces_the_hint(self, table: Path) -> None:
+        before = datetime.fromisoformat(self.CREATED) - timedelta(minutes=1)
+        status = self._status(table, last_indexed=before, rust_scip=False)
+        assert status.endswith(SCIP_OFF_HINT)
+        assert REINDEX_HINT not in status
+
+    def test_text_is_safe_for_the_batch_launcher(self, table: Path) -> None:
+        (self._project(table) / "src" / "new.rs").write_text("\n", encoding="utf-8")
+        status = self._status(table, rust_scip=False)
+        assert "|" not in status
+        assert "!" not in status

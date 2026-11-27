@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -253,12 +254,93 @@ def test_default_runner_writes_the_child_output_to_the_log(tmp_path: Path) -> No
     assert "to-stderr" in text
 
 
+@pytest.mark.parametrize("estimate", [None, 600.0], ids=["no-estimate", "estimate"])
+def test_default_runner_with_a_timer_returns_the_exit_code(
+    tmp_path: Path, estimate: float | None
+) -> None:
+    log = tmp_path / scip_index.LOG_NAME
+    code = scip_index._default_runner(
+        [sys.executable, "-c", "print('done'); raise SystemExit(2)"],
+        dict(os.environ),
+        log_path=log,
+        estimate_secs=estimate,
+    )
+    assert code == 2
+    assert "done" in log.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "estimate", "left"),
+    [
+        (0.0, None, ""),
+        (0.0, 634.0, "~11 min left"),
+        (600.0, 634.0, "~1 min left"),
+        (634.0, 634.0, "over estimate"),
+        (900.0, 634.0, "over estimate"),
+    ],
+)
+def test_time_left(elapsed: float, estimate: float | None, left: str) -> None:
+    assert scip_index._time_left(elapsed, estimate) == left
+
+
+def test_last_run_reads_the_previous_manifest(tmp_path: Path) -> None:
+    (tmp_path / scip_index.MANIFEST_NAME).write_text(
+        json.dumps({"wall_secs": 634.2, "created": "2026-11-24T12:00:00+00:00"}),
+        encoding="utf-8",
+    )
+    wall, day = scip_index._last_run(tmp_path)
+    assert wall == 634.2
+    assert day == (
+        datetime.fromisoformat("2026-11-24T12:00:00+00:00")
+        .astimezone()
+        .strftime("%Y-%m-%d")
+    )
+
+
+def test_last_run_without_a_manifest_is_none(tmp_path: Path) -> None:
+    assert scip_index._last_run(tmp_path) is None
+
+
+def test_cli_prints_the_last_run_estimate(
+    workspace: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    out = tmp_path / "scip"
+    out.mkdir()
+    (out / scip_index.MANIFEST_NAME).write_text(
+        json.dumps({"wall_secs": 634.0, "created": "2026-11-24T12:00:00+00:00"}),
+        encoding="utf-8",
+    )
+    seen: dict[str, float | None] = {}
+
+    def fake(
+        cmd: list[str],
+        env: dict[str, str],
+        log_path: Path | None = None,
+        estimate_secs: float | None = None,
+    ) -> int:
+        seen["estimate"] = estimate_secs
+        return _index_runner(cmd, env)
+
+    monkeypatch.setattr(scip_index, "find_rust_analyzer", lambda explicit=None: "ra")
+    monkeypatch.setattr(scip_index, "_storage_scip_dir", lambda project: out)
+    monkeypatch.setattr(scip_index, "_version", lambda ra: "ra 1")
+    monkeypatch.setattr(scip_index, "_default_runner", fake)
+    assert scip_index.main(["--path", str(workspace)]) == 0
+    assert "[INFO] Last run: 10m34s on " in capsys.readouterr().out
+    assert seen["estimate"] == 634.0
+
+
 def test_default_run_logs_into_the_output_dir(
     workspace: Path, tmp_path: Path, monkeypatch
 ) -> None:
     seen: dict[str, Path | None] = {}
 
-    def fake(cmd: list[str], env: dict[str, str], log_path: Path | None = None) -> int:
+    def fake(
+        cmd: list[str],
+        env: dict[str, str],
+        log_path: Path | None = None,
+        estimate_secs: float | None = None,
+    ) -> int:
         seen["log_path"] = log_path
         return _index_runner(cmd, env)
 
@@ -274,7 +356,12 @@ def _cli_run(
     """main() with a fake rust-analyzer that writes ``log_text`` to its log."""
     out = tmp_path / "scip"
 
-    def fake(cmd: list[str], env: dict[str, str], log_path: Path | None = None) -> int:
+    def fake(
+        cmd: list[str],
+        env: dict[str, str],
+        log_path: Path | None = None,
+        estimate_secs: float | None = None,
+    ) -> int:
         assert log_path is not None
         log_path.write_text(log_text, encoding="utf-8")
         if code == 0:

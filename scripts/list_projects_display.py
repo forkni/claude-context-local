@@ -1,27 +1,28 @@
 """List indexed projects grouped by path with model details.
 
 STANDALONE VERSION - No ML imports to avoid PyTorch crash.
-Uses only Python stdlib.
+Uses only Python stdlib (``--freshness`` is the exception: it loads the
+server's index check, see ``project_status.index_statuses``).
+
+``--scip`` adds a ``SCIP:`` line (Rust SCIP table state) and ``--freshness``
+an ``Index:`` line per model (search index current or stale).
 """
 
-import json
-import os
+import argparse
 import sys
-from pathlib import Path
+
+import project_status
+from list_projects_parseable import collect_projects, get_storage_dir
 
 
-def get_storage_dir():
-    """Get storage directory without importing from mcp_server.
-
-    Replicates logic from mcp_server.server.get_storage_dir().
-    """
-    storage_path = os.getenv(
-        "CODE_SEARCH_STORAGE", str(Path.home() / ".claude_code_search")
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--scip", action="store_true", help="show the SCIP status")
+    parser.add_argument(
+        "--freshness", action="store_true", help="show the search-index status"
     )
-    return Path(storage_path)
+    args = parser.parse_args(argv)
 
-
-def main():
     try:
         storage = get_storage_dir()
     except (AttributeError, KeyError, RuntimeError):
@@ -29,59 +30,32 @@ def main():
         print("No indexed projects found.\n")
         return
 
-    projects_dir = storage / "projects"
-
-    if not projects_dir.exists():
+    projects = list(collect_projects(storage).values())
+    if not projects:
         print("No indexed projects found.\n")
         return
 
-    projects_by_path = {}
+    index_lines: list[list[tuple[str, str]]] = [[] for _ in projects]
+    if args.freshness:
+        print("[INFO] Checking index freshness...\n", flush=True)
+        index_lines = project_status.index_statuses(
+            [(p["path"], p["model_dims"]) for p in projects]
+        )
 
-    for project_dir in projects_dir.iterdir():
-        if not project_dir.is_dir():
-            continue
-        info_file = project_dir / "project_info.json"
-        if not info_file.exists():
-            continue
+    total_indices = sum(len(p["models"]) for p in projects)
+    print(f"Found {len(projects)} projects with {total_indices} model indices:\n")
 
-        try:
-            with open(info_file, encoding="utf-8") as f:
-                info = json.load(f)
-        except (json.JSONDecodeError, KeyError):
-            # Skip malformed project_info.json
-            continue
-
-        path = info.get("project_path")
-        if not path:
-            continue
-
-        if path not in projects_by_path:
-            projects_by_path[path] = {
-                "name": info.get("project_name", "Unknown"),
-                "path": path,
-                "models": [],
-            }
-
-        # Get model short name and dimension
-        model_full = info.get("embedding_model", "unknown")
-        model_short = model_full.split("/")[-1]
-        dimension = info.get("model_dimension", 0)
-
-        projects_by_path[path]["models"].append(f"{model_short} ({dimension}d)")
-
-    if not projects_by_path:
-        print("No indexed projects found.\n")
-        return
-
-    total_indices = sum(len(p["models"]) for p in projects_by_path.values())
-    print(
-        f"Found {len(projects_by_path)} projects with {total_indices} model indices:\n"
-    )
-
-    for i, (_path, info) in enumerate(projects_by_path.items(), 1):
+    for i, (info, statuses) in enumerate(zip(projects, index_lines, strict=True), 1):
         print(f"  {i}. {info['name']}")
         print(f"     Path: {info['path']}")
         print(f"     Models: {', '.join(info['models'])}")
+        if args.scip:
+            scip = project_status.scip_text(storage, info["path"], info["dirs"])
+            if scip is not None:
+                print(f"     SCIP: {scip}")
+        for name, text in statuses:
+            label = "Index" if len(statuses) == 1 else f"Index ({name})"
+            print(f"     {label}: {text}")
         print()
 
 

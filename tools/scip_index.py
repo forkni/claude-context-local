@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -49,11 +50,14 @@ from search.scip_refs import (  # noqa: E402 - after the sys.path insert
     hash_rust_files,
     write_refs_table,
 )
+from utils.progress import _format_duration  # noqa: E402 - after the sys.path insert
 
 
 MANIFEST_FORMAT = 1
 # rust-analyzer's own output, overwritten on each run (kept after a failure).
 LOG_NAME = "rust-analyzer.log"
+# How often the timer bar checks whether rust-analyzer has exited.
+POLL_SECS = 0.5
 
 Runner = Callable[[list[str], dict[str, str]], int]
 
@@ -69,20 +73,109 @@ def find_rust_analyzer(explicit: str | None = None) -> str | None:
     return shutil.which("rust-analyzer", path=str(cargo_bin))
 
 
+def _time_left(elapsed: float, estimate_secs: float | None) -> str:
+    """``~N min left`` against the estimate, ``over estimate`` past it, else empty."""
+    if estimate_secs is None:
+        return ""
+    remaining = estimate_secs - elapsed
+    if remaining <= 0:
+        return "over estimate"
+    return f"~{math.ceil(remaining / 60)} min left"
+
+
 def _default_runner(
-    cmd: list[str], env: dict[str, str], log_path: Path | None = None
+    cmd: list[str],
+    env: dict[str, str],
+    log_path: Path | None = None,
+    estimate_secs: float | None = None,
 ) -> int:
     """Run ``cmd``; with ``log_path``, its stdout and stderr go to that file.
 
     rust-analyzer writes thousands of known-bug lines during ``scip`` (ADR-0092),
     so the console gets a summary (:func:`summarize_rust_analyzer_log`) instead.
+    While it runs, a terminal shows a timer bar: rust-analyzer reports no
+    progress, so the bar fills against ``estimate_secs`` (the last run's time);
+    with no estimate the bar stays empty and only the elapsed time moves.
+
+    The columns and colors match the chunking and embedding bars
+    (``search/parallel_chunker.py``, ``embeddings/embedder.py``): spinner,
+    description, bar, percentage, then plain text in parentheses. The bar
+    never pulses, stops at 99% while rust-analyzer still runs past the
+    estimate, and turns green at 100% when it exits with code 0.
     """
     if log_path is None:
         return subprocess.run(cmd, env=env, check=False).returncode
+    from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn
+
+    from utils.console import get_progress_console, get_progress_spinner
+
+    console = get_progress_console()
+    columns = [
+        get_progress_spinner(console),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+    ]
+    if estimate_secs is not None:
+        columns.append(TaskProgressColumn())
+    columns.append(TextColumn("({task.fields[timing]})"))
+    # A total keeps the bar out of rich's pulse animation, which has its own
+    # colors. With no estimate, 1 "unit" that is never reached = an empty bar.
+    total = estimate_secs if estimate_secs is not None else 1.0
+    ceiling = total * 0.99
     with log_path.open("wb") as log:
-        return subprocess.run(
-            cmd, env=env, stdout=log, stderr=subprocess.STDOUT, check=False
-        ).returncode
+        proc = subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            with Progress(
+                *columns,
+                console=console,
+                transient=False,
+                disable=not console.is_terminal,
+            ) as progress:
+                task = progress.add_task(
+                    "rust-analyzer scip...",
+                    total=total,
+                    timing=_timing(0.0, estimate_secs),
+                )
+                started = time.perf_counter()
+                while proc.poll() is None:
+                    elapsed = time.perf_counter() - started
+                    progress.update(
+                        task,
+                        completed=min(elapsed, ceiling) if estimate_secs else 0.0,
+                        timing=_timing(elapsed, estimate_secs),
+                    )
+                    time.sleep(POLL_SECS)
+                elapsed = time.perf_counter() - started
+                progress.update(
+                    task,
+                    completed=total if proc.returncode == 0 else None,
+                    timing=_format_duration(elapsed),
+                )
+        except BaseException:
+            proc.kill()
+            proc.wait()
+            raise
+    return proc.returncode
+
+
+def _timing(elapsed: float, estimate_secs: float | None) -> str:
+    """Text for the bar's last column: ``52s, ~12 min left`` or just ``52s``."""
+    left = _time_left(elapsed, estimate_secs)
+    duration = _format_duration(elapsed)
+    return f"{duration}, {left}" if left else duration
+
+
+def _last_run(out_dir: Path) -> tuple[float, str] | None:
+    """``(wall_secs, local date)`` of the previous run, from its manifest; else None."""
+    try:
+        manifest = json.loads((out_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
+        wall = float(manifest["wall_secs"])
+        created = datetime.fromisoformat(manifest["created"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if wall <= 0:
+        return None
+    return wall, created.astimezone().strftime("%Y-%m-%d")
 
 
 def summarize_rust_analyzer_log(log_path: Path) -> dict[str, int]:
@@ -137,6 +230,7 @@ def make_scip_index(
     runner: Runner | None = None,
     version: str | None = None,
     decode: bool = True,
+    estimate_secs: float | None = None,
 ) -> dict:
     """Run ``rust-analyzer scip`` on ``project`` and write the index and manifest.
 
@@ -150,6 +244,8 @@ def make_scip_index(
             None runs it with its output in ``<out_dir>/rust-analyzer.log``.
         version: rust-analyzer version text; None asks the executable.
         decode: Also write the reference table (``refs.sqlite``) from the index.
+        estimate_secs: Expected run time for the default runner's timer bar
+            (the last run's ``wall_secs``); None shows elapsed time only.
 
     The three output files are written under temporary names and renamed only
     after all of them exist: index, then table, then the manifest last, so the
@@ -180,7 +276,9 @@ def make_scip_index(
         env["CARGO_TARGET_DIR"] = str(target_dir)
     cmd = [rust_analyzer, "scip", str(project), "--output", str(tmp_index)]
     if runner is None:
-        runner = functools.partial(_default_runner, log_path=out_dir / LOG_NAME)
+        runner = functools.partial(
+            _default_runner, log_path=out_dir / LOG_NAME, estimate_secs=estimate_secs
+        )
     started = time.perf_counter()
     code = runner(cmd, env)
     wall = time.perf_counter() - started
@@ -314,12 +412,23 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[INFO] Output: {out_dir / INDEX_NAME}")
     log_path = out_dir / LOG_NAME
     print(f"[INFO] rust-analyzer log: {log_path}")
+    last = _last_run(out_dir)
+    if last is not None:
+        wall, day = last
+        print(
+            f"[INFO] Last run: {_format_duration(wall)} on {day}, "
+            f"so expect about {math.ceil(wall / 60)} min."
+        )
     print(
         "[INFO] Running rust-analyzer scip (large workspaces: ~10 min, ~16 GB RAM)..."
     )
     try:
         manifest = make_scip_index(
-            project, out_dir, rust_analyzer, target_dir=target_dir
+            project,
+            out_dir,
+            rust_analyzer,
+            target_dir=target_dir,
+            estimate_secs=last[0] if last is not None else None,
         )
     except (FileNotFoundError, RuntimeError, OSError, ValueError, IndexError) as exc:
         print(f"[ERROR] {exc}")

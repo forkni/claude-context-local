@@ -31,6 +31,7 @@ import os
 import re
 import sqlite3
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 
 
@@ -286,6 +287,11 @@ class ScipRefs:
             return None
         return Path(os.path.relpath(path, self.project)).as_posix()
 
+    @property
+    def hashed_files(self) -> frozenset[str]:
+        """Every file the manifest has a hash for (relative, ``/``)."""
+        return frozenset(self._files)
+
     def is_hashed(self, relative: str) -> bool:
         """True when the manifest has a hash for the file (it existed at the SCIP run)."""
         return relative in self._files
@@ -355,3 +361,80 @@ class ScipRefs:
             )
             self._defs[symbol_id] = found
         return found
+
+
+REINDEX_HINT = " - reindex to use it"
+SCIP_OFF_HINT = " - not used (call_graph.rust_scip is off)"
+
+
+def _local_minute(moment: datetime) -> str:
+    """``moment`` in local time as ``YYYY-MM-DD HH:MM`` (naive = already local)."""
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def scip_status(
+    scip_dir: Path,
+    project: Path,
+    *,
+    last_indexed: datetime | None = None,
+    rust_scip: bool = True,
+) -> str | None:
+    """One-line state of a project's SCIP table for the launcher's project lists.
+
+    Classifies files with the same predicates the graph build uses
+    (``_RustScipPass.decide``): a covered file (hashed, with rows) counts as
+    changed when its hash differs and as removed when it is gone; a file the
+    manifest does not know counts as new; an uncovered file (hashed, no rows)
+    never counts, edited or not.
+
+    Args:
+        scip_dir: ``<storage>/scip`` of the project.
+        project: Project root on disk.
+        last_indexed: When the search index was last built (naive = local time).
+            A table made after it gets :data:`REINDEX_HINT`: the graph reads
+            the table only during a reindex. None = no hint.
+        rust_scip: ``call_graph.rust_scip``. False gets :data:`SCIP_OFF_HINT`.
+
+    Returns:
+        The status without a ``SCIP:`` label, or None when the project has no
+        table and no ``Cargo.toml`` (not a Rust workspace). The text never
+        holds ``|`` or ``!`` (the batch launcher splits on ``|`` and expands ``!``).
+    """
+    manifest_path = scip_dir / MANIFEST_NAME
+    if not manifest_path.is_file():
+        return "none" if (project / "Cargo.toml").is_file() else None
+    refs = ScipRefs.open(scip_dir)
+    if refs is None:
+        if not (scip_dir / REFS_NAME).is_file():
+            return "incomplete (no reference table) - run Make SCIP Index"
+        return "unreadable - run Make SCIP Index"
+    try:
+        created = datetime.fromisoformat(
+            json.loads(manifest_path.read_text(encoding="utf-8"))["created"]
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        created = None
+    try:
+        on_disk = hash_rust_files(project)
+        covered = {p for p in refs.hashed_files if refs.has_rows(p)}
+        changed = sum(1 for p in covered if p in on_disk and not refs.is_fresh(p))
+        removed = sum(1 for p in covered if p not in on_disk)
+        new = sum(1 for p in on_disk if not refs.is_hashed(p))
+        hashed = len(refs.hashed_files)
+    finally:
+        refs.close()
+
+    made = _local_minute(created) if created is not None else "an unknown time"
+    if changed or removed or new:
+        text = f"stale - {changed} changed, {new} new, {removed} removed since {made}"
+    else:
+        text = f"up to date (made {made}, {hashed} .rs files)"
+    if not rust_scip:
+        return text + SCIP_OFF_HINT
+    if (
+        created is not None
+        and last_indexed is not None
+        and created.astimezone() > last_indexed.astimezone()
+    ):
+        return text + REINDEX_HINT
+    return text
