@@ -85,7 +85,7 @@ class TestParseableOutput:
         (project / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
         _add_project(storage, project)
         scripts["parseable"].main(["--scip"])
-        assert _fields(capsys.readouterr().out)[0][4:] == ["none", "-"]
+        assert _fields(capsys.readouterr().out)[0][4:] == ["NONE", "-"]
 
     def test_scip_dash_for_a_non_rust_project(
         self, scripts, storage: Path, tmp_path: Path, capsys
@@ -105,10 +105,37 @@ class TestParseableOutput:
         monkeypatch.setattr(
             scripts["status"],
             "index_statuses",
-            lambda projects: [[("Test-Model", "up to date")] for _ in projects],
+            lambda projects: [[("Test-Model", "CURRENT")] for _ in projects],
         )
         scripts["parseable"].main(["--freshness"])
-        assert _fields(capsys.readouterr().out)[0][4:] == ["-", "up to date"]
+        assert _fields(capsys.readouterr().out)[0][4:] == ["-", ": CURRENT"]
+
+    def test_colour_flag_colours_both_fields(
+        self, scripts, storage: Path, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        project = tmp_path / "rs_project"
+        project.mkdir()
+        (project / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+        _add_project(storage, project)
+        monkeypatch.setattr(
+            scripts["status"],
+            "index_statuses",
+            lambda projects: [[("Test-Model", "CURRENT")] for _ in projects],
+        )
+        scripts["parseable"].main(["--scip", "--freshness", "--colour"])
+        scip, index = _fields(capsys.readouterr().out)[0][4:]
+        assert scip == "\x1b[93mNONE\x1b[0m"
+        assert index == ": \x1b[94mCURRENT\x1b[0m"
+
+    def test_no_colour_without_the_flag(
+        self, scripts, storage: Path, tmp_path: Path, capsys
+    ) -> None:
+        project = tmp_path / "rs_project"
+        project.mkdir()
+        (project / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+        _add_project(storage, project)
+        scripts["parseable"].main(["--scip"])
+        assert "\x1b" not in capsys.readouterr().out
 
     def test_no_flag_run_imports_neither_torch_nor_the_index_check(
         self, storage: Path, tmp_path: Path
@@ -135,15 +162,23 @@ class TestParseableOutput:
         }
         assert "torch" not in imported
         assert "mcp_server.index_freshness" not in imported
-        assert result.stdout.strip().endswith("|none|-")
+        assert result.stdout.strip().endswith("|NONE|-")
 
 
 class TestIndexStatuses:
     @pytest.fixture
-    def freshness(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
-        """Results that the patched ``compute_index_freshness`` returns, by project path."""
-        import mcp_server.index_freshness as index_freshness
+    def freshness(self, scripts, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+        """Results that the patched ``compute_index_freshness`` returns, by project path.
 
+        Threads stand in for the worker processes: a patch does not reach a
+        spawned process.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        import mcp_server.index_freshness as index_freshness
+        from mcp_server import freshness_batch
+
+        monkeypatch.setattr(freshness_batch, "_make_pool", ThreadPoolExecutor)
         results: dict[str, object] = {}
 
         def fake(path: str, *, model_slug: str | None, dimension: int | None):
@@ -161,7 +196,7 @@ class TestIndexStatuses:
 
     def test_up_to_date(self, scripts, freshness, tmp_path: Path) -> None:
         freshness[str(tmp_path)] = {"index_is_current": True, "pending_changes": {}}
-        assert self._status(scripts, str(tmp_path)) == "up to date"
+        assert self._status(scripts, str(tmp_path)) == "CURRENT"
 
     def test_stale_with_counts(self, scripts, freshness, tmp_path: Path) -> None:
         freshness[str(tmp_path)] = {
@@ -169,19 +204,19 @@ class TestIndexStatuses:
             "pending_changes": {"added": 1, "modified": 2, "removed": 0},
         }
         assert self._status(scripts, str(tmp_path)) == (
-            "stale - 1 added, 2 modified, 0 removed"
+            "STALE - 1 added, 2 modified, 0 removed"
         )
 
     def test_no_snapshot_is_unknown(self, scripts, freshness, tmp_path: Path) -> None:
         freshness[str(tmp_path)] = None
-        assert self._status(scripts, str(tmp_path)) == "unknown"
+        assert self._status(scripts, str(tmp_path)) == "UNKNOWN"
 
     def test_failure_is_unknown(self, scripts, freshness, tmp_path: Path) -> None:
         freshness[str(tmp_path)] = OSError("locked")
-        assert self._status(scripts, str(tmp_path)) == "unknown"
+        assert self._status(scripts, str(tmp_path)) == "UNKNOWN"
 
     def test_missing_path(self, scripts, freshness, tmp_path: Path) -> None:
-        assert self._status(scripts, str(tmp_path / "gone")) == "path not found"
+        assert self._status(scripts, str(tmp_path / "gone")) == "PATH NOT FOUND"
 
     def test_keeps_project_order(self, scripts, freshness, tmp_path: Path) -> None:
         paths = []
@@ -195,22 +230,82 @@ class TestIndexStatuses:
             paths.append((str(path), [("org/Test-Model", 8)]))
         rows = scripts["status"].index_statuses(paths)
         assert [row[0][1] for row in rows] == [
-            "up to date" if i % 2 == 0 else f"stale - {i} added, 0 modified, 0 removed"
+            "CURRENT" if i % 2 == 0 else f"STALE - {i} added, 0 modified, 0 removed"
             for i in range(6)
         ]
 
-    def test_index_field_joins_several_models(self, scripts) -> None:
+    def test_pool_failure_checks_one_by_one(
+        self, scripts, freshness, tmp_path: Path, monkeypatch
+    ) -> None:
+        def no_pool(workers: int):
+            raise OSError("no processes")
+
+        from mcp_server import freshness_batch
+
+        monkeypatch.setattr(freshness_batch, "_make_pool", no_pool)
+        paths = []
+        for i in range(2):
+            path = tmp_path / f"p{i}"
+            path.mkdir()
+            freshness[str(path)] = {"index_is_current": True, "pending_changes": {}}
+            paths.append((str(path), [("org/Test-Model", 8), ("org/Other", 16)]))
+        rows = scripts["status"].index_statuses(paths)
+        assert rows == [[("Test-Model", "CURRENT"), ("Other", "CURRENT")]] * 2
+
+    def test_index_field_one_row_per_model(self, scripts) -> None:
         field = scripts["status"].index_field(
             [
-                ("F2LLM-v2-0.6B", "up to date"),
-                ("bge-m3", "stale - 0 added, 2 modified, 0 removed"),
+                ("F2LLM-v2-0.6B", "CURRENT"),
+                ("bge-m3", "STALE - 0 added, 2 modified, 0 removed"),
             ]
         )
-        assert (
-            field
-            == "F2LLM-v2-0.6B up to date; bge-m3 stale - 0 added, 2 modified, 0 removed"
+        assert field.split(";;") == [
+            " (F2LLM-v2-0.6B): CURRENT",
+            " (bge-m3): STALE - 0 added, 2 modified, 0 removed",
+        ]
+        assert scripts["status"].index_field([("only", "CURRENT")]) == ": CURRENT"
+
+    def test_index_field_colour(self, scripts) -> None:
+        field = scripts["status"].index_field(
+            [("A", "STALE - 1 added, 0 modified, 0 removed"), ("B", "UNKNOWN")],
+            colour=True,
         )
-        assert scripts["status"].index_field([("only", "up to date")]) == "up to date"
+        assert field == (
+            " (A): \x1b[91mSTALE\x1b[0m - 1 added, 0 modified, 0 removed"
+            ";; (B): \x1b[93mUNKNOWN\x1b[0m"
+        )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("STALE - 2 changed", "\x1b[91mSTALE\x1b[0m - 2 changed"),
+        ("CURRENT (made x)", "\x1b[94mCURRENT\x1b[0m (made x)"),
+        ("CURRENT", "\x1b[94mCURRENT\x1b[0m"),
+        ("PATH NOT FOUND", "\x1b[93mPATH NOT FOUND\x1b[0m"),
+        ("INCOMPLETE (no ref)", "\x1b[93mINCOMPLETE\x1b[0m (no ref)"),
+        ("NONE", "\x1b[93mNONE\x1b[0m"),
+        ("CURRENTLY odd", "CURRENTLY odd"),
+        ("-", "-"),
+    ],
+    ids=[
+        "stale",
+        "current-with-detail",
+        "current",
+        "multi-word",
+        "incomplete",
+        "none",
+        "word-prefix-not-matched",
+        "placeholder",
+    ],
+)
+def test_colourize(text: str, expected: str) -> None:
+    sys.path.insert(0, str(SCRIPTS))
+    try:
+        import project_status
+    finally:
+        sys.path.remove(str(SCRIPTS))
+    assert project_status.colourize(text) == expected
 
 
 class TestScipHintInputs:
@@ -480,7 +575,7 @@ class TestScipHintInputs:
         )
         (scip / "refs.sqlite").write_bytes(b"not a sqlite database" * 64)
         assert scripts["status"].scip_text(storage, str(project), [model_dir]) == (
-            "unreadable - run Make SCIP Index"
+            "UNREADABLE - run Make SCIP Index"
         )
 
 
@@ -496,13 +591,13 @@ class TestDisplay:
             scripts["status"],
             "index_statuses",
             lambda projects: [
-                [("Test-Model", "stale - 1 added, 0 modified, 0 removed")]
+                [("Test-Model", "STALE - 1 added, 0 modified, 0 removed")]
             ],
         )
         scripts["display"].main(["--scip", "--freshness"])
         out = capsys.readouterr().out
-        assert "     SCIP: none\n" in out
-        assert "     Index: stale - 1 added, 0 modified, 0 removed\n" in out
+        assert "     SCIP: NONE\n" in out  # not a console: no colour codes
+        assert "     Index: STALE - 1 added, 0 modified, 0 removed\n" in out
 
     def test_one_line_per_model(
         self, scripts, storage: Path, tmp_path: Path, monkeypatch, capsys
@@ -513,10 +608,10 @@ class TestDisplay:
         monkeypatch.setattr(
             scripts["status"],
             "index_statuses",
-            lambda projects: [[("A", "up to date"), ("B", "unknown")]],
+            lambda projects: [[("A", "CURRENT"), ("B", "UNKNOWN")]],
         )
         scripts["display"].main(["--freshness"])
         out = capsys.readouterr().out
-        assert "     Index (A): up to date\n" in out
-        assert "     Index (B): unknown\n" in out
+        assert "     Index (A): CURRENT\n" in out
+        assert "     Index (B): UNKNOWN\n" in out
         assert "SCIP:" not in out

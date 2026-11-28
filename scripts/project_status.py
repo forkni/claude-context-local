@@ -6,7 +6,7 @@ and ``list_projects_display.py`` (Project Management > List Indexed Projects).
 The SCIP part is stdlib only: it loads ``search/scip_refs.py`` and
 ``search/config_paths.py`` by file path, so ``search/__init__.py`` (which imports
 torch) never runs. The index part (:func:`index_statuses`) imports
-``mcp_server.index_freshness`` lazily; that import loads torch, so only the
+``mcp_server.index_freshness`` lazily (about 0.3 s, torch-free), so only the
 ``--freshness`` flag pays for it.
 """
 
@@ -21,10 +21,10 @@ import re
 import sqlite3
 import sys
 from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
+from typing import TextIO
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -219,17 +219,28 @@ def scip_text(
             indexed=indexed_rust_files(storage, chosen, project_path),
         )
     except (OSError, ValueError, sqlite3.Error):
-        return "unreadable - run Make SCIP Index"
+        return "UNREADABLE - run Make SCIP Index"
 
 
-def _index_text(result: dict | None) -> str:
-    if result is None:
-        return "unknown"
-    if result["index_is_current"]:
-        return "up to date"
-    pending = result["pending_changes"]
+def _index_text(result: dict, path: str) -> str:
+    """Status text for one ``freshness_batch`` result."""
+    state = result.get("state")
+    if state == "missing":
+        return "PATH NOT FOUND"
+    if state != "ok":
+        print(
+            f"[WARN] Index check failed for {path}: {result.get('message')}",
+            file=sys.stderr,
+        )
+        return "UNKNOWN"
+    verdict = result.get("verdict")
+    if verdict is None:
+        return "UNKNOWN"
+    if verdict["index_is_current"]:
+        return "CURRENT"
+    pending = verdict["pending_changes"]
     return (
-        f"stale - {pending['added']} added, {pending['modified']} modified, "
+        f"STALE - {pending['added']} added, {pending['modified']} modified, "
         f"{pending['removed']} removed"
     )
 
@@ -240,49 +251,101 @@ def index_statuses(
     """Index freshness per model, for each ``(project_path, [(model, dim), ...])``.
 
     Returns, in the same order, ``[(model short name, status text), ...]`` per
-    project. Uses the server's Merkle check (``compute_index_freshness``,
-    ADR-0058) in ``INDEX_WORKERS`` threads. Anything the import or the check
-    prints goes to stderr, so stdout keeps only the caller's lines.
+    project. Runs the server's Merkle check (``compute_index_freshness``,
+    ADR-0058) through ``mcp_server.freshness_batch.check_many``: a process pool
+    of up to ``INDEX_WORKERS``, one by one if the pool fails. Anything the
+    import or the check prints goes to stderr, so stdout keeps only the
+    caller's lines.
     """
     with contextlib.redirect_stdout(sys.stderr):
         try:
             if str(REPO_ROOT) not in sys.path:
                 sys.path.insert(0, str(REPO_ROOT))
-            from mcp_server.index_freshness import compute_index_freshness
+            import mcp_server.index_freshness  # noqa: F401 - fail fast, before any worker starts
+            from mcp_server import freshness_batch
             from search.config import get_model_slug
-        except Exception as exc:  # noqa: BLE001 - optional display: any import failure -> "unknown"
+        except Exception as exc:  # noqa: BLE001 - optional display: any import failure -> "UNKNOWN"
             print(f"[WARN] Index freshness unavailable: {exc}", file=sys.stderr)
             return [
-                [(model.split("/")[-1], "unknown") for model, _dim in models]
+                [(model.split("/")[-1], "UNKNOWN") for model, _dim in models]
                 for _path, models in projects
             ]
 
-        def check(path: str, model: str, dim: int) -> str:
-            if not os.path.isdir(path):
-                return "path not found"
-            try:
-                return _index_text(
-                    compute_index_freshness(
-                        path, model_slug=get_model_slug(model), dimension=dim
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001 - one project's failure must not hide the others
-                print(f"[WARN] Index check failed for {path}: {exc}", file=sys.stderr)
-                return "unknown"
-
-        with ThreadPoolExecutor(max_workers=INDEX_WORKERS) as pool:
-            futures = [
-                [
-                    (model.split("/")[-1], pool.submit(check, path, model, dim))
-                    for model, dim in models
-                ]
-                for path, models in projects
+        jobs = [
+            (path, get_model_slug(model), dim)
+            for path, models in projects
+            for model, dim in models
+        ]
+        results = freshness_batch.check_many(jobs, workers=INDEX_WORKERS)
+        texts = iter(
+            [
+                _index_text(result, job[0])
+                for job, result in zip(jobs, results, strict=True)
             ]
-            return [[(name, f.result()) for name, f in row] for row in futures]
+        )
+        return [
+            [(model.split("/")[-1], next(texts)) for model, _dim in models]
+            for _path, models in projects
+        ]
 
 
-def index_field(statuses: list[tuple[str, str]]) -> str:
-    """One picker field: the status alone for one model, else ``model status; ...``."""
+INDEX_ROW_SEPARATOR = ";;"
+
+
+def index_field(statuses: list[tuple[str, str]], *, colour: bool = False) -> str:
+    """One picker field: the text after ``Index`` for each model's row.
+
+    One model gives ``": CURRENT"``; several give ``" (A): CURRENT;; (B): STALE - ..."``,
+    and the launcher prints one ``Index`` row per item (``INDEX_ROW_SEPARATOR``).
+    """
+    paint = colourize if colour else str
     if len(statuses) == 1:
-        return statuses[0][1]
-    return "; ".join(f"{name} {text}" for name, text in statuses)
+        return f": {paint(statuses[0][1])}"
+    return INDEX_ROW_SEPARATOR.join(
+        f" ({name}): {paint(text)}" for name, text in statuses
+    )
+
+
+# Leading state word -> ANSI colour: STALE red, CURRENT blue, the rest yellow.
+STATE_COLOURS = {
+    "PATH NOT FOUND": "93",
+    "INCOMPLETE": "93",
+    "UNREADABLE": "93",
+    "UNKNOWN": "93",
+    "CURRENT": "94",
+    "STALE": "91",
+    "NONE": "93",
+}
+
+
+def colourize(text: str) -> str:
+    """Colour the leading state word of a status text; the rest stays plain."""
+    for word, code in STATE_COLOURS.items():
+        if text == word or text.startswith(word + " "):
+            return f"\x1b[{code}m{word}\x1b[0m{text[len(word) :]}"
+    return text
+
+
+def enable_ansi(stream: TextIO | None = None) -> bool:
+    """True when ``stream`` (default stdout) is a console that shows ANSI colour.
+
+    On Windows this turns on the console's virtual-terminal mode. False when
+    ``NO_COLOR`` is set, the stream is not a console, or the mode cannot be set.
+    """
+    stream = sys.stdout if stream is None else stream
+    if os.environ.get("NO_COLOR") or not getattr(stream, "isatty", lambda: False)():
+        return False
+    if os.name != "nt":
+        return True
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+    mode = wintypes.DWORD()
+    if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+        return False
+    vt_processing = 0x0004  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    if mode.value & vt_processing:
+        return True
+    return bool(kernel32.SetConsoleMode(handle, mode.value | vt_processing))

@@ -423,12 +423,12 @@ def scip_status(
     """
     manifest_path = scip_dir / MANIFEST_NAME
     if not manifest_path.is_file():
-        return "none" if (project / "Cargo.toml").is_file() else None
+        return "NONE" if (project / "Cargo.toml").is_file() else None
     refs = ScipRefs.open(scip_dir)
     if refs is None:
         if not (scip_dir / REFS_NAME).is_file():
-            return "incomplete (no reference table) - run Make SCIP Index"
-        return "unreadable - run Make SCIP Index"
+            return "INCOMPLETE (no reference table) - run Make SCIP Index"
+        return "UNREADABLE - run Make SCIP Index"
     try:
         created = datetime.fromisoformat(
             json.loads(manifest_path.read_text(encoding="utf-8"))["created"]
@@ -461,9 +461,9 @@ def scip_status(
 
     made = _local_minute(created) if created is not None else "an unknown time"
     if changed or removed or new:
-        text = f"stale - {changed} changed, {new} new, {removed} removed since {made}"
+        text = f"STALE - {changed} changed, {new} new, {removed} removed since {made}"
     else:
-        text = f"up to date (made {made}, {hashed} .rs files)"
+        text = f"CURRENT (made {made}, {hashed} .rs files)"
     if not rust_scip:
         return text + SCIP_OFF_HINT
     if (

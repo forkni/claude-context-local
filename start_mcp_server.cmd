@@ -3100,8 +3100,11 @@ set "SELECT_ARGS="
 if /i not "%SELECT_OPTS%"=="%SELECT_OPTS:scip=%" set "SELECT_ARGS=%SELECT_ARGS% --scip"
 if /i not "%SELECT_OPTS%"=="%SELECT_OPTS:index=%" set "SELECT_ARGS=%SELECT_ARGS% --freshness"
 if /i not "%SELECT_OPTS%"=="%SELECT_OPTS:index=%" echo [INFO] Checking index freshness...
+REM --colour: ANSI colour on the state words (STALE red, CURRENT blue); echo shows it.
+if defined SELECT_ARGS set "SELECT_ARGS=%SELECT_ARGS% --colour"
 
 REM Get grouped project list (fields: index|name|path|models|scip|index_status, "-" = none)
+REM index_status: the text after "Index" per model row, rows separated by ";;"
 set "TEMP_PROJECTS=%TEMP%\mcp_projects_select_grouped.txt"
 call ".\.venv\Scripts\python.exe" scripts\list_projects_parseable.py %SELECT_ARGS% > "%TEMP_PROJECTS%" 2>nul
 
@@ -3123,7 +3126,10 @@ for /f "tokens=1-6 delims=|" %%a in (%TEMP_PROJECTS%) do (
     echo      Path: %%c
     echo      Models: %%d
     if not "%%e"=="-" if not "%%e"=="" echo      SCIP: %%e
-    if not "%%f"=="-" if not "%%f"=="" echo      Index: %%f
+    if not "%%f"=="-" if not "%%f"=="" (
+        set "INDEX_FIELD=%%f"
+        for %%m in ("!INDEX_FIELD:;;=" "!") do echo      Index%%~m
+    )
     echo.
 )
 echo   0. Cancel

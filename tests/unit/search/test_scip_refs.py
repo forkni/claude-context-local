@@ -322,37 +322,37 @@ class TestScipStatus:
         return status
 
     def test_up_to_date(self, table: Path) -> None:
-        assert self._status(table) == f"up to date (made {self._made()}, 3 .rs files)"
+        assert self._status(table) == f"CURRENT (made {self._made()}, 3 .rs files)"
 
     def test_changed_covered_file(self, table: Path) -> None:
         (self._project(table) / "src" / "lib.rs").write_text("// edit\n", "utf-8")
         assert self._status(table) == (
-            f"stale - 1 changed, 0 new, 0 removed since {self._made()}"
+            f"STALE - 1 changed, 0 new, 0 removed since {self._made()}"
         )
 
     def test_new_file(self, table: Path) -> None:
         (self._project(table) / "src" / "new.rs").write_text("\n", encoding="utf-8")
-        assert self._status(table).startswith("stale - 0 changed, 1 new, 0 removed")
+        assert self._status(table).startswith("STALE - 0 changed, 1 new, 0 removed")
 
     def test_removed_covered_file(self, table: Path) -> None:
         (self._project(table) / "src" / "main.rs").unlink()
-        assert self._status(table).startswith("stale - 0 changed, 0 new, 1 removed")
+        assert self._status(table).startswith("STALE - 0 changed, 0 new, 1 removed")
 
     def test_edited_or_removed_uncovered_file_never_counts(self, table: Path) -> None:
         extra = self._project(table) / "src" / "extra.rs"
         extra.write_text("// edit\n", encoding="utf-8")
-        assert self._status(table).startswith("up to date")
+        assert self._status(table).startswith("CURRENT")
         extra.unlink()
-        assert self._status(table).startswith("up to date")
+        assert self._status(table).startswith("CURRENT")
 
     def test_no_reference_table(self, scip_dir: Path) -> None:
         assert self._status(scip_dir) == (
-            "incomplete (no reference table) - run Make SCIP Index"
+            "INCOMPLETE (no reference table) - run Make SCIP Index"
         )
 
     def test_no_manifest_in_cargo_workspace(self, tmp_path: Path) -> None:
         (tmp_path / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
-        assert scip_status(tmp_path / "scip", tmp_path) == "none"
+        assert scip_status(tmp_path / "scip", tmp_path) == "NONE"
 
     def test_no_manifest_outside_rust(self, tmp_path: Path) -> None:
         assert scip_status(tmp_path / "scip", tmp_path) is None
@@ -391,9 +391,9 @@ class TestScipStatus:
         (project / "src" / "main.rs").write_text("// edit\n", encoding="utf-8")
         indexed = frozenset({"src/lib.rs", "src/extra.rs"})  # main.rs excluded
         assert self._status(table, indexed=indexed) == (
-            f"up to date (made {self._made()}, 2 .rs files)"  # count = checked files
+            f"CURRENT (made {self._made()}, 2 .rs files)"  # count = checked files
         )
-        assert self._status(table).startswith("stale - 1 changed, 1 new, 0 removed")
+        assert self._status(table).startswith("STALE - 1 changed, 1 new, 0 removed")
 
     def test_text_is_safe_for_the_batch_launcher(self, table: Path) -> None:
         (self._project(table) / "src" / "new.rs").write_text("\n", encoding="utf-8")

@@ -5,11 +5,14 @@ Uses only Python stdlib (``--freshness`` is the exception: it loads the
 server's index check, see ``project_status.index_statuses``).
 
 Output format: index|project_name|project_path|models_list|scip|index_status
-Example: 1|myproject|F:/Projects/MyProject|bge-m3 (1024d)|up to date (made ...)|-
+Example: 1|myproject|F:/Projects/MyProject|bge-m3 (1024d)|CURRENT (made ...)|-
 
 ``scip`` needs ``--scip`` and ``index_status`` needs ``--freshness``. A field
 with no text is ``-``, never empty: ``for /f`` in the launcher merges empty
-fields and would shift the next one into its place.
+fields and would shift the next one into its place. ``index_status`` is the
+text after ``Index`` on each row (``project_status.index_field``): ``: CURRENT``
+for one model, `` (A): CURRENT;; (B): STALE - ...`` for several.
+``--colour`` adds ANSI colour to the state words (cmd.exe's ``echo`` shows it).
 """
 
 import argparse
@@ -89,6 +92,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--freshness", action="store_true", help="add the search-index status"
     )
+    parser.add_argument(
+        "--colour", action="store_true", help="colour the state words (ANSI)"
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -103,16 +109,19 @@ def main(argv: list[str] | None = None) -> None:
         statuses = project_status.index_statuses(
             [(p["path"], p["model_dims"]) for p in projects]
         )
-        index_fields = [project_status.index_field(s) or EMPTY for s in statuses]
+        index_fields = [
+            project_status.index_field(s, colour=args.colour) if s else EMPTY
+            for s in statuses
+        ]
 
     # Output format: index|name|path|models|scip|index_status
     for i, (info, index_text) in enumerate(zip(projects, index_fields, strict=True), 1):
         models_str = ", ".join(info["models"])
         scip = EMPTY
         if args.scip:
-            scip = (
-                project_status.scip_text(storage, info["path"], info["dirs"]) or EMPTY
-            )
+            text = project_status.scip_text(storage, info["path"], info["dirs"])
+            if text:
+                scip = project_status.colourize(text) if args.colour else text
         print(f"{i}|{info['name']}|{info['path']}|{models_str}|{scip}|{index_text}")
 
 

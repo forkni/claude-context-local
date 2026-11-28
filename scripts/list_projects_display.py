@@ -43,6 +43,7 @@ def main(argv: list[str] | None = None) -> None:
             [(p["path"], p["model_dims"]) for p in projects]
         )
 
+    paint = project_status.colourize if project_status.enable_ansi() else str
     total_indices = sum(len(p["models"]) for p in projects)
     print(f"Found {len(projects)} projects with {total_indices} model indices:\n")
 
@@ -53,10 +54,10 @@ def main(argv: list[str] | None = None) -> None:
         if args.scip:
             scip = project_status.scip_text(storage, info["path"], info["dirs"])
             if scip is not None:
-                print(f"     SCIP: {scip}")
+                print(f"     SCIP: {paint(scip)}")
         for name, text in statuses:
             label = "Index" if len(statuses) == 1 else f"Index ({name})"
-            print(f"     {label}: {text}")
+            print(f"     {label}: {paint(text)}")
         print()
 
 
