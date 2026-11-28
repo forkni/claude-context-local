@@ -82,6 +82,16 @@ Exposed via two MCP tools, on the model/detector layer's per-model resolution:
   When enabled, per-project/per-model checks are fanned out with `asyncio.gather` over
   `asyncio.to_thread`, bounded by the slowest single project rather than their sum (measured
   ~2.5s for the same 13 projects, vs. 13.87s sequential).
+  - **Update 2026-11-27:** the threads are gone. The check is Python that holds the GIL, so
+    on 16 projects one thread per check took 1.9 s against 1.6 s for one loop. The checks now
+    run in a torch-free child process with its own 4-process pool (`mcp_server/freshness_batch.py`,
+    1.2 s), and one by one in the server if the child fails. A pool inside the server is not an
+    option: it runs as `-m mcp_server.server`, so each spawned worker would re-import it (4.8 s).
+    The same day, `build_change_detector` stopped calling `get_project_storage_dir`, which
+    created the configured model's storage folder on every check and read that model's
+    filters when another model was checked (a false stale verdict when two models of one
+    project have different filters). It now uses the lookup-only `find_project_storage_dir`
+    for the checked model.
 
 `get_snapshot_path` / `load_snapshot` / `has_snapshot` on `SnapshotManager` gained an optional
 `model_slug` parameter (mirroring what a prior fix already gave `get_metadata_path`/

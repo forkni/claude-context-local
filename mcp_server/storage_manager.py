@@ -254,6 +254,51 @@ def get_project_storage_dir(
     return project_dir
 
 
+def find_project_storage_dir(
+    project_path: str,
+    *,
+    model_slug: str | None = None,
+    dimension: int | None = None,
+) -> Path | None:
+    """The existing storage dir of *project_path* for one model, or None.
+
+    Side-effect free, unlike :func:`get_project_storage_dir`: it never creates
+    a directory or writes ``project_info.json``, so read-only callers (the
+    freshness check, ADR-0058) can use it. ``model_slug``/``dimension`` default
+    to the configured model's, each on its own (the rule ``ChangeDetector``
+    documents for the same two parameters).
+
+    Args:
+        project_path: Path to the project
+        model_slug: Model slug of the storage dir; None for the configured model's
+        dimension: Model dimension; None for the configured model's
+
+    Returns:
+        The model's storage dir (drive-agnostic or legacy hash), or None if it
+        does not exist or the configured model is not in MODEL_REGISTRY.
+    """
+    if model_slug is None or dimension is None:
+        model_name = get_search_config().embedding.model_name
+        model_config = MODEL_REGISTRY.get(model_name)
+        if model_config is None:
+            return None
+        if model_slug is None:
+            model_slug = get_model_slug(model_name)
+        if dimension is None:
+            dimension = cast(
+                int, model_config.get("truncate_dim") or model_config["dimension"]
+            )
+    resolved = Path(project_path).resolve()
+    return _find_existing_project_dir(
+        get_storage_dir() / "projects",
+        resolved.name,
+        compute_drive_agnostic_hash(str(resolved)),
+        compute_legacy_hash(str(resolved)),
+        model_slug,
+        dimension,
+    )
+
+
 def get_canonical_project_info(project_path: str) -> Path | None:
     """Find the project_info.json that reflects the currently configured model.
 
@@ -275,31 +320,19 @@ def get_canonical_project_info(project_path: str) -> Path | None:
     Returns:
         Path to an existing project_info.json, or None if no model dir has one yet.
     """
-    base_dir = get_storage_dir()
-    projects_dir = base_dir / "projects"
+    # Prefer the current model's own dir, when it exists.
+    current_dir = find_project_storage_dir(project_path)
+    if current_dir is not None:
+        info = current_dir / "project_info.json"
+        if info.exists():
+            return info
+
+    # Fallback: first existing project_info.json across any other model dir.
+    projects_dir = get_storage_dir() / "projects"
     resolved = Path(project_path).resolve()
     project_name = resolved.name
     new_hash = compute_drive_agnostic_hash(str(resolved))
     legacy_hash = compute_legacy_hash(str(resolved))
-
-    # Prefer the current model's own dir, when it exists (side-effect-free lookup —
-    # unlike get_project_storage_dir, this never creates a directory).
-    config = get_search_config()
-    model_config = MODEL_REGISTRY.get(config.embedding.model_name)
-    if model_config is not None:
-        dimension = cast(
-            int, model_config.get("truncate_dim") or model_config["dimension"]
-        )
-        model_slug = get_model_slug(config.embedding.model_name)
-        current_dir = _find_existing_project_dir(
-            projects_dir, project_name, new_hash, legacy_hash, model_slug, dimension
-        )
-        if current_dir is not None:
-            info = current_dir / "project_info.json"
-            if info.exists():
-                return info
-
-    # Fallback: first existing project_info.json across any other model dir.
     for hash_val in (new_hash, legacy_hash):
         for model_dir in sorted(projects_dir.glob(f"{project_name}_{hash_val}_*")):
             info = model_dir / "project_info.json"

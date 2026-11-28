@@ -19,7 +19,7 @@ Three call sites already built this construction independently
 of adding a fourth.
 
 Lives under ``mcp_server/``, not ``search/``, because it depends on
-``mcp_server.storage_manager.get_project_storage_dir`` -- ``search/`` may not
+``mcp_server.storage_manager.find_project_storage_dir`` -- ``search/`` may not
 import ``mcp_server/`` at runtime (ADR-0004, enforced by
 ``tests/unit/search/test_layering_ownership.py``). All of this module's
 callers (``search_handlers.py``, ``status_handlers.py``) already live in
@@ -30,7 +30,7 @@ import json
 import logging
 
 from chunking.tree_sitter import TreeSitterChunker
-from mcp_server.storage_manager import get_project_storage_dir
+from mcp_server.storage_manager import find_project_storage_dir
 from merkle.change_detector import ChangeDetector
 from merkle.snapshot_manager import SnapshotManager
 from search.filters import get_effective_filters
@@ -72,13 +72,20 @@ def build_change_detector(
         so callers can reuse it for ``has_snapshot``/``get_snapshot_age``
         without constructing a second instance.
     """
-    project_storage = get_project_storage_dir(project_path)
-    project_info_file = project_storage / "project_info.json"
-
+    # The checked model's own storage dir: its project_info.json holds the
+    # filters that model was indexed with. Lookup only: a freshness check must
+    # not create a dir (get_project_storage_dir would, for the configured model).
+    # No dir -> no filters here, and ChangeDetector inherits the snapshot's own.
+    project_storage = find_project_storage_dir(
+        project_path, model_slug=model_slug, dimension=dimension
+    )
     include_dirs = None
     exclude_dirs = None
     include_exclusive = False
-    if project_info_file.exists():
+    project_info_file = (
+        project_storage / "project_info.json" if project_storage is not None else None
+    )
+    if project_info_file is not None and project_info_file.exists():
         try:
             with open(project_info_file) as f:
                 project_info = json.load(f)

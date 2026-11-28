@@ -458,22 +458,62 @@ async def test_handle_list_projects_check_freshness_true_returns_verdict_per_mod
         ),
         patch("mcp_server.state._app_state.current_project", str(tmp_path)),
         patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+        patch("mcp_server.freshness_batch.run_in_subprocess") as mock_subprocess,
+    ):
+        mock_snapshot_cls.return_value = Mock(load_metadata=Mock(return_value=None))
+        mock_subprocess.return_value = [
+            {
+                "state": "ok",
+                "verdict": {
+                    "index_is_current": False,
+                    "pending_changes": {"added": 0, "modified": 1, "removed": 0},
+                },
+            }
+        ]
+
+        result = await tool_specs.handle_list_projects({"check_freshness": True})
+
+    ((jobs,), _kwargs) = mock_subprocess.call_args
+    assert jobs == [(str(tmp_path), "bge-m3", 1024)]
+    model_info = result["projects"][0]["models_indexed"][0]
+    assert model_info["index_is_current"] is False
+    assert model_info["pending_changes"] == {"added": 0, "modified": 1, "removed": 0}
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_freshness_falls_back_in_process(tmp_path):
+    """A failed child process must not lose the verdicts: the checks run here."""
+    projects_dir = tmp_path / "projects"
+    _write_project_info(
+        projects_dir / "test_project",
+        project_path=str(tmp_path),
+        created_at="2026-08-22T13:12:06",
+    )
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+        patch(
+            "mcp_server.freshness_batch.run_in_subprocess",
+            side_effect=RuntimeError("freshness subprocess exited with 1"),
+        ),
         patch(
             "mcp_server.index_freshness.compute_index_freshness"
         ) as mock_compute_freshness,
     ):
         mock_snapshot_cls.return_value = Mock(load_metadata=Mock(return_value=None))
         mock_compute_freshness.return_value = {
-            "index_is_current": False,
-            "pending_changes": {"added": 0, "modified": 1, "removed": 0},
+            "index_is_current": True,
+            "pending_changes": {"added": 0, "modified": 0, "removed": 0},
         }
 
         result = await tool_specs.handle_list_projects({"check_freshness": True})
 
     mock_compute_freshness.assert_called_once()
-    model_info = result["projects"][0]["models_indexed"][0]
-    assert model_info["index_is_current"] is False
-    assert model_info["pending_changes"] == {"added": 0, "modified": 1, "removed": 0}
+    assert result["projects"][0]["models_indexed"][0]["index_is_current"] is True
 
 
 @pytest.mark.asyncio

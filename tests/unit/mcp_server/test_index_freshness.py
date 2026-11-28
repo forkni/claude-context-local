@@ -54,7 +54,7 @@ def _redirect_storage(scratch_snapshot_manager, tmp_path):
             return_value=scratch_snapshot_manager,
         ),
         patch(
-            "mcp_server.index_freshness.get_project_storage_dir",
+            "mcp_server.index_freshness.find_project_storage_dir",
             return_value=tmp_path / "project_storage",
         ),
     ):

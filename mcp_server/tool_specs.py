@@ -469,9 +469,9 @@ RETURNS:
   signal by itself, since an index can be old but still match the tree, or
   young but already behind it. index_is_current/pending_changes are the
   definitive answer — a content-only Merkle diff against the working tree —
-  and are ONLY present when check_freshness=True (default False, since a
-  full scan across every project/model costs ~14s sequential; this handler
-  fans checks out concurrently, bounded by the slowest project). Do not
+  and are ONLY present when check_freshness=True (default False, since it
+  scans every project/model's files; about 1-2s for ~16 projects, run in a
+  separate process pool). Do not
   infer staleness from created_at or last_indexed_at when index_is_current
   is available.
 - current_project: the currently active project path""",

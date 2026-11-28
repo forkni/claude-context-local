@@ -143,9 +143,11 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
     content-only ``index_is_current``/``pending_changes`` verdict per model
     via a Merkle diff against the working tree (see ADR-0058) — unlike
     ``created_at``/``last_indexed_at``, which only say *when* the indexer
-    last ran. Opt-in because it's a full filesystem scan per project/model:
-    measured ~13.9s sequential across 13 real projects, so it is fanned out
-    concurrently here (bounded by the slowest project, not the sum).
+    last ran. Opt-in because it's a full filesystem scan per project/model.
+    The checks run in a torch-free child process with a process pool
+    (``mcp_server.freshness_batch``): about 1.2 s for 16 projects (2026-11-27),
+    against 1.9 s with one thread per check here; in-process, one by one, if
+    the child fails.
     """
     check_freshness = bool(arguments.get("check_freshness", False))
     base_dir = get_storage_dir()
@@ -254,13 +256,7 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
         }
 
     if check_freshness:
-        from mcp_server.index_freshness import compute_index_freshness
-
-        def _freshness_for(project_path: str, model_info: dict) -> dict | None:
-            model_slug = get_model_slug(model_info["model"])
-            return compute_index_freshness(
-                project_path, model_slug=model_slug, dimension=model_info["dimension"]
-            )
+        from mcp_server import freshness_batch
 
         # Skip projects that no longer exist at their stored path (and have no
         # relocated_to) — nothing on disk to diff against.
@@ -270,21 +266,36 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
             if project.get("path_exists")
             for model_info in project["models_indexed"]
         ]
+        jobs = [
+            (path, get_model_slug(model_info["model"]), model_info["dimension"])
+            for path, model_info in targets
+        ]
 
-        results = await asyncio.gather(
-            *(
-                asyncio.to_thread(_freshness_for, path, model_info)
-                for path, model_info in targets
-            ),
-            return_exceptions=True,
-        )
-        for (path, _model_info), result in zip(targets, results, strict=True):
-            if isinstance(result, BaseException):
+        results: list[dict] = []
+        if jobs:
+            # A torch-free child process with its own process pool: the check
+            # holds the GIL, so threads here ran no faster than one loop and
+            # stalled the event loop meanwhile (see freshness_batch).
+            try:
+                results = await asyncio.to_thread(
+                    freshness_batch.run_in_subprocess, jobs
+                )
+            except (OSError, RuntimeError) as e:
+                logger.warning(
+                    f"[LIST_PROJECTS] Freshness subprocess failed ({e}); "
+                    "checking in-process"
+                )
+                results = await asyncio.to_thread(
+                    freshness_batch.check_many, jobs, workers=1
+                )
+        for (path, model_info), result in zip(targets, results, strict=True):
+            if result.get("state") != "ok":
                 logger.debug(f"Could not compute freshness for {path}: {result}")
                 continue
-            if result:
-                _model_info["index_is_current"] = result["index_is_current"]
-                _model_info["pending_changes"] = result["pending_changes"]
+            verdict = result.get("verdict")
+            if verdict:
+                model_info["index_is_current"] = verdict["index_is_current"]
+                model_info["pending_changes"] = verdict["pending_changes"]
 
     return {
         "projects": projects,
