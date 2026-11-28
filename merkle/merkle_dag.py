@@ -302,8 +302,19 @@ class MerkleDAG:
             or (bool(rel_paths) and relative_path.replace(os.sep, "/") in rel_paths)
         )
 
-    def _file_node(self, file_path: str, name: str, relative_path: str) -> MerkleNode:
-        """Build the node for a file."""
+    def _file_node(
+        self,
+        file_path: str,
+        name: str,
+        relative_path: str,
+        stat_result: os.stat_result | None = None,
+    ) -> MerkleNode:
+        """Build the node for a file.
+
+        ``stat_result``: the file's stat when the caller already has it (the
+        scandir entry's, which on Windows comes from the directory listing at
+        no extra syscall); otherwise ``os.stat`` runs here.
+        """
         if (
             self.supported_extensions is not None
             and extension_key(file_path) not in self.supported_extensions
@@ -312,7 +323,7 @@ class MerkleDAG:
             # hash on Windows (no Defender scan, no content read). Detects
             # renames/moves via mtime+size; accurate enough for change tracking.
             try:
-                stat = os.stat(file_path)
+                stat = stat_result if stat_result is not None else os.stat(file_path)
                 fast_content = f"{name}:{stat.st_size}:{int(stat.st_mtime)}"
             except OSError:
                 fast_content = file_path
@@ -385,7 +396,7 @@ class MerkleDAG:
         # and never fail, where Path.is_dir()/is_file() stat the path. Stat first
         # so an unreadable child is skipped (or dropped when missing) exactly as before.
         try:
-            entry.stat()
+            entry_stat = entry.stat()
         except OSError as exc:
             if (
                 exc.errno in _MISSING_ERRNOS
@@ -402,7 +413,7 @@ class MerkleDAG:
             return None
 
         if entry.is_file():
-            return self._file_node(entry.path, name, relative_path)
+            return self._file_node(entry.path, name, relative_path, entry_stat)
         if is_dir:
             # (a) Skip directory symlinks (see build_node).
             if entry.is_symlink():

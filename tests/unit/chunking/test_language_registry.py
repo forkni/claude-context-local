@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestExtensionKey:
     """extension_key() must prefer compound extensions over Path.suffix."""
@@ -35,6 +37,44 @@ class TestExtensionKey:
         from chunking.language_registry import extension_key
 
         assert extension_key("Makefile") == ""
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/lib.rs",
+        "SRC/MAIN.PY",
+        "dir.with.dots/file",
+        ".gitignore",
+        "dir/.env.local",
+        "name.",
+        "dir/name..",
+        "archive.tar.gz",
+        "Makefile",
+        "C:\\proj\\src\\mod.RS",
+        "a/b.c/",
+    ],
+    ids=[
+        "plain",
+        "upper",
+        "dotted-dir",
+        "dotfile",
+        "dotfile-ext",
+        "trailing-dot",
+        "two-trailing-dots",
+        "double-ext",
+        "no-ext",
+        "windows-sep",
+        "trailing-slash",
+    ],
+)
+def test_extension_key_matches_path_suffix(path: str) -> None:
+    """Without a compound match, extension_key gives Path(path).suffix.lower()."""
+    from pathlib import Path
+
+    from chunking.language_registry import extension_key
+
+    assert extension_key(path) == Path(path).suffix.lower()
 
 
 class TestTdPythonMirror:

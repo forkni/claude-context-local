@@ -506,6 +506,24 @@ class TestMerkleDAG(TestCase):
         # Supported files still get a content hash with their size recorded
         assert dag.nodes[str(Path("src") / "main.py")].size > 0
 
+    def test_stat_hash_reuses_the_directory_listing(self):
+        """The scandir entry's stat feeds the hash: no second os.stat per file."""
+        from unittest.mock import patch
+
+        self.create_test_files()
+        (self.test_path / "data.bin").write_bytes(b"\x00\x01\x02")
+        dag = MerkleDAG(self.temp_dir, supported_extensions={".py"})
+        real_stat = os.stat
+        calls: list[str] = []
+
+        def counting_stat(path, *args, **kwargs):
+            calls.append(str(path))
+            return real_stat(path, *args, **kwargs)
+
+        with patch("merkle.merkle_dag.os.stat", counting_stat):
+            dag.build()
+        assert not [c for c in calls if c.endswith("data.bin")]
+
     @pytest.mark.skipif(os.name != "nt", reason="Win32 reserved device names")
     def test_reserved_device_name_file_is_not_indexed(self):
         """A file literally named 'nul' is a device to Path.is_file(); keep skipping it."""
@@ -602,7 +620,11 @@ class TestMerkleDAG(TestCase):
         assert not dag.nodes["src"].children
 
     def test_unstatable_file_falls_back_to_path_hash(self):
-        """If os.stat fails when hashing a non-content file, the path is hashed."""
+        """If os.stat fails when hashing a non-content file, the path is hashed.
+
+        Only the build_node path stats here: the directory scan passes the
+        entry's own stat, and an unstatable entry is handled before this point.
+        """
         import hashlib
         from unittest.mock import patch
 
@@ -617,12 +639,12 @@ class TestMerkleDAG(TestCase):
                 raise OSError("simulated")
             return real_stat(path, *args, **kwargs)
 
+        dag = MerkleDAG(self.temp_dir, supported_extensions={".py"})
         with patch("merkle.merkle_dag.os.stat", side_effect=fake_stat):
-            dag = MerkleDAG(self.temp_dir, supported_extensions={".py"})
-            dag.build()
+            node = dag._file_node(str(asset.resolve()), "data.bin", "data.bin")
 
         expected = hashlib.sha256(str(asset.resolve()).encode()).hexdigest()
-        assert dag.nodes["data.bin"].hash == expected
+        assert node.hash == expected
 
     def test_unreadable_and_unstatable_file_gets_epoch_zero_sentinel(self):
         """No readable content and no mtime: the sentinel falls back to mtime 0."""

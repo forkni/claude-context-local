@@ -7,10 +7,10 @@ and per-language grammar specs used across the chunking and indexing subsystems.
 from __future__ import annotations
 
 import importlib
+import os
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Literal
 
 
@@ -112,7 +112,11 @@ def extension_key(path: str) -> str:
             best_match = compound_ext
     if best_match:
         return best_match
-    return Path(path).suffix.lower()
+    # Same result as Path(path).suffix.lower() without building a Path (a hot
+    # path: one call per file in every Merkle scan). splitext keeps a bare
+    # trailing "." ("name." -> "."), where Path.suffix gives "".
+    suffix = os.path.splitext(lowered.rstrip("/\\"))[1]
+    return "" if suffix == "." else suffix
 
 
 def is_td_network_file(path: str) -> bool:
