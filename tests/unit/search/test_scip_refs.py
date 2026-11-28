@@ -390,7 +390,9 @@ class TestScipStatus:
         (worktree / "lib.rs").write_text("fn copy() {}\n", encoding="utf-8")
         (project / "src" / "main.rs").write_text("// edit\n", encoding="utf-8")
         indexed = frozenset({"src/lib.rs", "src/extra.rs"})  # main.rs excluded
-        assert self._status(table, indexed=indexed).startswith("up to date")
+        assert self._status(table, indexed=indexed) == (
+            f"up to date (made {self._made()}, 2 .rs files)"  # count = checked files
+        )
         assert self._status(table).startswith("stale - 1 changed, 1 new, 0 removed")
 
     def test_text_is_safe_for_the_batch_launcher(self, table: Path) -> None:

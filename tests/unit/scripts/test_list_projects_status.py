@@ -254,7 +254,11 @@ class TestScipHintInputs:
         project = tmp_path / "rs_project"
         project.mkdir()
         model_dir = _add_project(storage, project)
-        meta = storage / "merkle" / "1a2b3c4d00000000_test-model_8d_metadata.json"
+        meta = (
+            storage
+            / "merkle"
+            / "1a2b3c4d000000000000000000000000_test-model_8d_metadata.json"
+        )
         meta.write_text(
             json.dumps(
                 {"project_path": str(project), "last_snapshot": "2026-11-27T15:40:00"}
@@ -271,7 +275,11 @@ class TestScipHintInputs:
         project = tmp_path / "rs_project"
         project.mkdir()
         model_dir = _add_project(storage, project)
-        meta = storage / "merkle" / "1a2b3c4d00000000_test-model_8d_metadata.json"
+        meta = (
+            storage
+            / "merkle"
+            / "1a2b3c4d000000000000000000000000_test-model_8d_metadata.json"
+        )
         meta.write_text(
             json.dumps(
                 {
@@ -295,7 +303,11 @@ class TestScipHintInputs:
             json.dumps({"project_path": str(project), "project_hash": "ab12cd34"}),
             encoding="utf-8",
         )
-        meta = storage / "merkle" / "ab12cd3400000000_odd_slug_8d_metadata.json"
+        meta = (
+            storage
+            / "merkle"
+            / "ab12cd34000000000000000000000000_odd_slug_8d_metadata.json"
+        )
         meta.write_text(
             json.dumps(
                 {"project_path": str(project), "last_snapshot": "2026-11-27T15:40:00"}
@@ -326,7 +338,11 @@ class TestScipHintInputs:
                 },
             ],
         }
-        snap = storage / "merkle" / "1a2b3c4d00000000_test-model_8d_snapshot.json"
+        snap = (
+            storage
+            / "merkle"
+            / "1a2b3c4d000000000000000000000000_test-model_8d_snapshot.json"
+        )
         snap.write_text(
             json.dumps({"dag": {"root_path": str(project), "root_node": tree}}),
             encoding="utf-8",
@@ -334,6 +350,89 @@ class TestScipHintInputs:
         assert scripts["status"].indexed_rust_files(
             storage, model_dir, str(project)
         ) == frozenset({"src/lib.rs"})
+
+    def _snapshot(self, storage: Path, project: Path, tree: dict) -> None:
+        snap = storage / "merkle" / f"1a2b3c4d{'0' * 24}_test-model_8d_snapshot.json"
+        snap.write_text(
+            json.dumps({"dag": {"root_path": str(project), "root_node": tree}}),
+            encoding="utf-8",
+        )
+
+    def test_new_file_in_an_indexed_folder_counts(
+        self, scripts, storage: Path, tmp_path: Path
+    ) -> None:
+        """Added after the last index: the next reindex sees it, so it is listed."""
+        project = tmp_path / "rs_project"
+        (project / "src").mkdir(parents=True)
+        (project / "src" / "lib.rs").write_text("\n", encoding="utf-8")
+        (project / "src" / "added.rs").write_text("\n", encoding="utf-8")
+        (project / "new_dir").mkdir()
+        (project / "new_dir" / "x.rs").write_text("\n", encoding="utf-8")
+        model_dir = _add_project(storage, project)
+        self._snapshot(
+            storage,
+            project,
+            {
+                "path": ".",
+                "is_file": False,
+                "children": [
+                    {
+                        "path": "src",
+                        "is_file": False,
+                        "children": [
+                            {"path": "src\\lib.rs", "is_file": True, "children": []}
+                        ],
+                    }
+                ],
+            },
+        )
+        assert scripts["status"].indexed_rust_files(
+            storage, model_dir, str(project)
+        ) == frozenset({"src/lib.rs", "src/added.rs"})
+
+    def test_merkle_lookup_ignores_a_longer_slug(
+        self, scripts, storage: Path, tmp_path: Path
+    ) -> None:
+        """``x_test-model`` ends like ``test-model`` but is another model."""
+        project = tmp_path / "rs_project"
+        project.mkdir()
+        model_dir = _add_project(storage, project)
+        other = storage / "merkle" / f"1a2b3c4d{'0' * 24}_x_test-model_8d_metadata.json"
+        other.write_text(
+            json.dumps(
+                {"project_path": str(project), "last_snapshot": "2026-11-27T15:40:00"}
+            ),
+            encoding="utf-8",
+        )
+        assert scripts["status"].last_indexed(storage, model_dir, str(project)) is None
+
+    def test_folder_name_fallback_without_project_info(
+        self, scripts, storage: Path, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "rs_project"
+        project.mkdir()
+        model_dir = _add_project(storage, project)
+        (model_dir / "project_info.json").unlink()
+        meta = storage / "merkle" / f"1a2b3c4d{'0' * 24}_test-model_8d_metadata.json"
+        meta.write_text(
+            json.dumps(
+                {"project_path": str(project), "last_snapshot": "2026-11-27T15:40:00"}
+            ),
+            encoding="utf-8",
+        )
+        assert scripts["status"].last_indexed(storage, model_dir, str(project)) == (
+            datetime(2026, 11, 27, 15, 40)
+        )
+
+    def test_padded_env_value_does_not_disable_overrides(
+        self, scripts, base_config: Path, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Same as the server's _bool_from_env, which does not strip."""
+        (tmp_path / "search_overrides.json").write_text(
+            json.dumps({"overrides": {"call_graph": {"rust_scip": True}}}), "utf-8"
+        )
+        monkeypatch.setenv("CLAUDE_DISABLE_PROJECT_OVERRIDES", " 1")
+        assert scripts["status"].rust_scip_enabled(tmp_path) is True
 
     def test_no_snapshot_means_no_index_filter(
         self, scripts, storage: Path, tmp_path: Path

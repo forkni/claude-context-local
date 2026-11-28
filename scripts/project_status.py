@@ -17,6 +17,7 @@ import functools
 import importlib.util
 import json
 import os
+import re
 import sqlite3
 import sys
 from collections.abc import Iterable
@@ -28,6 +29,11 @@ from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _OVERRIDES_NAME = "search_overrides.json"
+# Fallback parse of <project>_<hash8>_<model slug>_<dim>d: the greedy prefix
+# takes the last 8-hex segment that still leaves a "<slug>_<dim>d" tail.
+_MODEL_DIR = re.compile(r"\A.*_([0-9a-f]{8})_(.+?_\d+d)\Z")
+# Merkle file ids are 32 hex chars (merkle/snapshot_manager.py get_project_id).
+_MERKLE_ID_LEN = 32
 INDEX_WORKERS = 4
 
 
@@ -79,7 +85,8 @@ def rust_scip_enabled(model_dir: Path) -> bool:
         overrides_on = bool(
             (config.get("performance") or {}).get("enable_project_overrides", True)
         )
-    disabled = os.environ.get("CLAUDE_DISABLE_PROJECT_OVERRIDES", "").strip().lower()
+    # No strip(): SearchConfigManager._bool_from_env does not strip either.
+    disabled = os.environ.get("CLAUDE_DISABLE_PROJECT_OVERRIDES", "").lower()
     if overrides_on and disabled not in ("1", "true", "yes", "on", "enabled"):
         overrides = (_read_json(model_dir / _OVERRIDES_NAME) or {}).get("overrides")
         call_graph = (overrides or {}).get("call_graph") or {}
@@ -88,20 +95,35 @@ def rust_scip_enabled(model_dir: Path) -> bool:
     return value
 
 
-def _merkle_files(storage: Path, model_dir: Path, kind: str) -> list[Path]:
-    """``<storage>/merkle/<hash>*_<slug>_<dim>d_<kind>.json`` files for a model folder.
+def _hash_and_model_tail(model_dir: Path) -> tuple[str, str] | None:
+    """``(hash8, "<model slug>_<dim>d")`` from a ``<project>_<hash8>_<slug>_<dim>d`` folder.
 
-    The storage folder is ``<project>_<hash8>_<model slug>_<dim>d``. The hash
-    comes from the folder's ``project_info.json``, so neither an 8-hex segment
-    in the project name nor an ``_`` in the model slug can mislead the split.
+    The hash comes from the folder's ``project_info.json``, so neither an 8-hex
+    segment in the project name nor an ``_`` in the model slug can mislead the
+    split. Without a readable hash (file missing or caught mid-rewrite), the
+    folder name is parsed alone, taking the last ``_<8 hex>_`` segment.
     """
     info = _read_json(model_dir / "project_info.json") or {}
     short_hash = str(info.get("project_hash", ""))
     marker = f"_{short_hash}_"
-    if not short_hash or marker not in model_dir.name:
+    if short_hash and marker in model_dir.name:
+        return short_hash, model_dir.name.rsplit(marker, 1)[1]
+    match = _MODEL_DIR.match(model_dir.name)
+    return (match.group(1), match.group(2)) if match else None
+
+
+def _merkle_files(storage: Path, model_dir: Path, kind: str) -> list[Path]:
+    """``<storage>/merkle/<32-hex id>_<slug>_<dim>d_<kind>.json`` files for a model folder.
+
+    The id is matched at its exact length, so another model whose slug ends in
+    this one's (``x_bge-m3`` vs ``bge-m3``) cannot match.
+    """
+    parts = _hash_and_model_tail(model_dir)
+    if parts is None:
         return []
-    model_tail = model_dir.name.rsplit(marker, 1)[1]
-    return sorted((storage / "merkle").glob(f"{short_hash}*_{model_tail}_{kind}.json"))
+    short_hash, model_tail = parts
+    id_pattern = short_hash + "[0-9a-f]" * (_MERKLE_ID_LEN - len(short_hash))
+    return sorted((storage / "merkle").glob(f"{id_pattern}_{model_tail}_{kind}.json"))
 
 
 def last_indexed(storage: Path, model_dir: Path, project_path: str) -> datetime | None:
@@ -120,27 +142,51 @@ def last_indexed(storage: Path, model_dir: Path, project_path: str) -> datetime 
 def indexed_rust_files(
     storage: Path, model_dir: Path, project_path: str
 ) -> frozenset[str] | None:
-    """The ``.rs`` files the search index holds (relative, ``/``), from its Merkle snapshot.
+    """The ``.rs`` files the next reindex will hold (relative, ``/``), from the Merkle snapshot.
 
     Only these files reach the call graph, so only they can make the SCIP table
     stale: a git worktree or another excluded folder inside the project holds
-    ``.rs`` files that the index (and so the graph) never sees. None when there
-    is no snapshot (never indexed, or a reindex is running).
+    ``.rs`` files that the index (and so the graph) never sees. The set is the
+    snapshot's ``.rs`` files plus any ``.rs`` file now on disk directly in a
+    folder the snapshot holds, so a file added after the last index counts as
+    new. A file in a folder the snapshot does not hold (a new folder) is left
+    out until the next reindex. None when there is no snapshot (never indexed,
+    or a reindex is running).
     """
     for snap_file in _merkle_files(storage, model_dir, "snapshot"):
-        dag = (_read_json(snap_file) or {}).get("dag") or {}
-        if not _same_path(str(dag.get("root_path", "")), project_path):
+        dag = (_read_json(snap_file) or {}).get("dag")
+        if not isinstance(dag, dict) or not _same_path(
+            str(dag.get("root_path", "")), project_path
+        ):
             continue
         found: set[str] = set()
+        folders: list[str] = []
         stack = [dag.get("root_node")]
         while stack:
             node = stack.pop()
             if not isinstance(node, dict):
                 continue
-            path = str(node.get("path", ""))
-            if node.get("is_file") and path.endswith(".rs"):
-                found.add(path.replace("\\", "/"))
-            stack.extend(node.get("children") or ())
+            path = str(node.get("path", "")).replace("\\", "/")
+            if node.get("is_file"):
+                if path.endswith(".rs"):
+                    found.add(path)
+            else:
+                folders.append(path)
+            children = node.get("children")
+            if isinstance(children, list):
+                stack.extend(children)
+        root = Path(project_path)
+        for folder in folders:
+            prefix = "" if folder in ("", ".") else folder + "/"
+            try:
+                with os.scandir(root / folder) as entries:
+                    found.update(
+                        prefix + e.name
+                        for e in entries
+                        if e.name.endswith(".rs") and e.is_file()
+                    )
+            except OSError:
+                continue
         return frozenset(found)
     return None
 

@@ -304,6 +304,10 @@ class ScipRefs:
         """Every file the manifest has a hash for (relative, ``/``)."""
         return frozenset(self._files)
 
+    def recorded_hash(self, relative: str) -> str | None:
+        """The sha256 hex the manifest recorded for the file, or None."""
+        return self._files.get(relative)
+
     def is_hashed(self, relative: str) -> bool:
         """True when the manifest has a hash for the file (it existed at the SCIP run)."""
         return relative in self._files
@@ -443,11 +447,15 @@ def scip_status(
         # Compare against the hashes just taken: no second read of each file,
         # and the project on disk is the one checked (not the manifest's path).
         changed = sum(
-            1 for p in covered if p in on_disk and on_disk[p] != refs._files[p]
+            1 for p in covered if p in on_disk and on_disk[p] != refs.recorded_hash(p)
         )
         removed = sum(1 for p in covered if p not in on_disk)
         new = sum(1 for p in on_disk if not refs.is_hashed(p))
-        hashed = len(refs.hashed_files)
+        # The files the status checked: with the index filter, worktree copies
+        # and excluded folders are not shown in the count either.
+        hashed = len(
+            refs.hashed_files if indexed is None else refs.hashed_files & indexed
+        )
     finally:
         refs.close()
 
